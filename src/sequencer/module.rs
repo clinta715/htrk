@@ -1,0 +1,141 @@
+use crate::sequencer::instrument::Instrument;
+use crate::sequencer::pattern::Pattern;
+use crate::sequencer::sample::Sample;
+
+pub const MAX_CHANNELS: usize = 64;
+pub const MAX_VOICES: usize = 256;
+#[allow(dead_code)]
+pub const MAX_PATTERNS: usize = 256;
+#[allow(dead_code)]
+pub const MAX_SAMPLES: usize = 999;
+#[allow(dead_code)]
+pub const MAX_INSTRUMENTS: usize = 256;
+#[allow(dead_code)]
+pub const MAX_ORDER_LENGTH: usize = 1024;
+pub const MAX_ENVELOPE_POINTS: usize = 25;
+pub const MAX_PATTERN_ROWS: usize = 1024;
+
+pub const DEFAULT_BPM: u16 = 125;
+pub const DEFAULT_SPEED: u8 = 6;
+pub const DEFAULT_GLOBAL_VOLUME: u8 = 128;
+#[allow(dead_code)]
+pub const DEFAULT_ROWS: usize = 64;
+#[allow(dead_code)]
+pub const DEFAULT_OCTAVE: u8 = 4;
+
+pub const COMMAND_BUFFER_SIZE: usize = 256;
+
+#[allow(dead_code)]
+pub const VOLUME_MIN: u8 = 0;
+pub const VOLUME_MAX: u8 = 64;
+pub const PANNING_CENTER: u8 = 32;
+
+pub const BASE_NOTE_RATE: f64 = 261.6255653005961;
+#[allow(dead_code)]
+pub const MIDDLE_C: u8 = 60;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModuleFormat {
+    IT,
+    XM,
+    S3M,
+    MOD,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ModuleFlags {
+    pub stereo: bool,
+    pub use_instruments: bool,
+    pub linear_slides: bool,
+    pub old_effects: bool,
+    pub compatible_gxx: bool,
+    pub midi_enabled: bool,
+    pub request_embed: bool,
+    pub fast_volume_slides: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct Module {
+    pub name: String,
+    pub message: Option<String>,
+
+    pub format: ModuleFormat,
+    pub _version: u16,
+    pub tracker_name: String,
+
+    pub order_list: Vec<u8>,
+    pub patterns: Vec<Pattern>,
+    pub instruments: Vec<Instrument>,
+    pub samples: Vec<Sample>,
+
+    pub initial_bpm: u16,
+    pub initial_speed: u8,
+    pub initial_global_volume: u8,
+    pub initial_mixing_volume: u8,
+
+    pub channel_panning: Vec<u8>,
+    pub channel_volume: Vec<u8>,
+
+    pub flags: ModuleFlags,
+}
+
+impl Default for Module {
+    fn default() -> Self {
+        Module {
+            name: String::new(),
+            message: None,
+            format: ModuleFormat::IT,
+            _version: 0,
+            tracker_name: String::new(),
+            order_list: Vec::new(),
+            patterns: Vec::new(),
+            instruments: Vec::new(),
+            samples: Vec::new(),
+            initial_bpm: DEFAULT_BPM,
+            initial_speed: DEFAULT_SPEED,
+            initial_global_volume: DEFAULT_GLOBAL_VOLUME,
+            initial_mixing_volume: 128,
+            channel_panning: vec![PANNING_CENTER; MAX_CHANNELS],
+            channel_volume: vec![VOLUME_MAX; MAX_CHANNELS],
+            flags: ModuleFlags::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn module_default() {
+        let m = Module::default();
+        assert!(m.name.is_empty());
+        assert!(m.message.is_none());
+        assert_eq!(m.format, ModuleFormat::IT);
+        assert_eq!(m.initial_bpm, DEFAULT_BPM);
+        assert_eq!(m.initial_speed, DEFAULT_SPEED);
+        assert_eq!(m.initial_global_volume, DEFAULT_GLOBAL_VOLUME);
+        assert_eq!(m.channel_panning.len(), MAX_CHANNELS);
+        assert_eq!(m.channel_volume.len(), MAX_CHANNELS);
+    }
+
+    #[test]
+    fn module_with_pattern() {
+        let mut m = Module::default();
+        m.order_list = vec![0, 1, 0];
+        m.patterns.push(Pattern::new(64));
+        m.patterns.push(Pattern::new(32));
+        assert_eq!(m.order_list.len(), 3);
+        assert_eq!(m.patterns.len(), 2);
+        assert_eq!(m.patterns[0].num_rows, 64);
+        assert_eq!(m.patterns[1].num_rows, 32);
+    }
+
+    #[test]
+    fn module_flags_default() {
+        let f = ModuleFlags::default();
+        assert!(!f.stereo);
+        assert!(!f.use_instruments);
+        assert!(!f.linear_slides);
+    }
+}

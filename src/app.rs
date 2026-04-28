@@ -1,0 +1,1952 @@
+use std::sync::Arc;
+
+use eframe::egui;
+
+use crate::audio::commands::AudioCommand;
+use crate::audio::engine::{CommandSender, create_engine_and_sender};
+use crate::audio::playback_state::AtomicPlaybackState;
+use crate::edit::{
+    SetCellCommand, InsertRowCommand, UndoManager, SampleProperty, SetSamplePropertyCommand,
+    InstrumentProperty, SetInstrumentPropertyCommand, AddEnvelopePointCommand,
+    RemoveEnvelopePointCommand, SetEnvelopePointCommand, EnvelopeType, SetSampleDataCommand,
+    MapNoteToSampleCommand, SetEnvelopeSustainCommand, SetEnvelopeLoopCommand,
+    SetEnvelopeFlagsCommand, MapNoteToNoteCommand,
+};
+use crate::sequencer::instrument::EnvelopePoint;
+use crate::ui::sample_editor::SampleEditEvent;
+use crate::ui::instrument_editor::InstrumentEditEvent;
+use crate::formats;
+use crate::sequencer::pattern::Cell;
+use crate::sequencer::{Module, Note, MAX_CHANNELS};
+use crate::ui::pattern_grid::{CursorPosition, Selection, SubColumn, VISIBLE_ROWS};
+use crate::ui::TrackerTheme;
+
+const NOTE_KEYS_LOWER: [(egui::Key, u8); 13] = [
+    (egui::Key::Z, 0),
+    (egui::Key::S, 1),
+    (egui::Key::X, 2),
+    (egui::Key::D, 3),
+    (egui::Key::C, 4),
+    (egui::Key::V, 5),
+    (egui::Key::G, 6),
+    (egui::Key::B, 7),
+    (egui::Key::H, 8),
+    (egui::Key::N, 9),
+    (egui::Key::J, 10),
+    (egui::Key::M, 11),
+    (egui::Key::Comma, 12),
+];
+
+const NOTE_KEYS_UPPER: [(egui::Key, u8); 12] = [
+    (egui::Key::Q, 0),
+    (egui::Key::Num2, 1),
+    (egui::Key::W, 2),
+    (egui::Key::Num3, 3),
+    (egui::Key::E, 4),
+    (egui::Key::R, 5),
+    (egui::Key::Num5, 6),
+    (egui::Key::T, 7),
+    (egui::Key::Num6, 8),
+    (egui::Key::Y, 9),
+    (egui::Key::Num7, 10),
+    (egui::Key::U, 11),
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppView {
+    Pattern,
+    Sample,
+    Instrument,
+}
+
+pub struct HtrkApp {
+    command_sender: Option<CommandSender>,
+    playback_state: Arc<AtomicPlaybackState>,
+    stream: Option<cpal::Stream>,
+
+    output_device_names: Vec<String>,
+    selected_device_name: Option<String>,
+    current_sample_rate: u32,
+    current_sample_format: String,
+    pending_device_switch: Option<String>,
+
+    module: Option<Arc<Module>>,
+    loaded_module_name: String,
+    file_path: Option<String>,
+
+    current_view: AppView,
+
+    cursor: CursorPosition,
+    selection: Option<Selection>,
+    selection_anchor: Option<CursorPosition>,
+    scroll_row: usize,
+    scroll_channel: usize,
+
+    current_octave: u8,
+    follow_playback: bool,
+    selected_order: usize,
+    selected_sample: usize,
+    selected_instrument: usize,
+
+    muted_channels: Vec<bool>,
+    solo_channels: Vec<bool>,
+    channel_names: Vec<String>,
+    channel_rename_state: crate::ui::channel_headers::ChannelRenameState,
+
+    undo_manager: UndoManager,
+
+    clipboard: Option<Vec<Vec<Cell>>>,
+    clipboard_width: usize,
+
+    theme: TrackerTheme,
+    theme_preset: crate::ui::theme::ThemePreset,
+    show_shortcuts: bool,
+    show_about: bool,
+    sample_selection: Option<(usize, usize)>,
+    sample_clipboard: Option<Arc<Vec<f32>>>,
+    amplify_factor: f32,
+}
+
+impl Default for HtrkApp {
+    fn default() -> Self {
+        HtrkApp {
+            command_sender: None,
+            playback_state: Arc::new(AtomicPlaybackState::default()),
+            stream: None,
+            output_device_names: Vec::new(),
+            selected_device_name: None,
+            current_sample_rate: 0,
+            current_sample_format: String::new(),
+            pending_device_switch: None,
+            module: None,
+            loaded_module_name: String::new(),
+            file_path: None,
+            current_view: AppView::Pattern,
+            cursor: CursorPosition {
+                row: 0,
+                channel: 0,
+                sub_column: SubColumn::Note,
+            },
+            selection: None,
+            selection_anchor: None,
+            scroll_row: 0,
+            scroll_channel: 0,
+            current_octave: 4,
+            follow_playback: true,
+            selected_order: 0,
+            selected_sample: 1,
+            selected_instrument: 1,
+            muted_channels: vec![false; MAX_CHANNELS],
+            solo_channels: vec![false; MAX_CHANNELS],
+            channel_names: (0..MAX_CHANNELS).map(|i| format!("Ch{}", i + 1)).collect(),
+            channel_rename_state: crate::ui::channel_headers::ChannelRenameState::default(),
+            undo_manager: UndoManager::default(),
+            clipboard: None,
+            clipboard_width: 0,
+            theme: TrackerTheme::default(),
+            theme_preset: crate::ui::theme::ThemePreset::DarkModern,
+            show_shortcuts: false,
+            show_about: false,
+            sample_selection: None,
+            sample_clipboard: None,
+            amplify_factor: 2.0,
+        }
+    }
+}
+
+impl HtrkApp {
+    pub fn refresh_output_devices(&mut self) {
+        use cpal::traits::{HostTrait, DeviceTrait};
+        let host = cpal::default_host();
+        self.output_device_names = host
+            .output_devices()
+            .map(|iter| iter.filter_map(|d| d.name().ok()).collect())
+            .unwrap_or_default();
+        if self.selected_device_name.is_none() {
+            self.selected_device_name = host.default_output_device().and_then(|d| d.name().ok());
+        }
+    }
+
+    pub fn init_audio(&mut self) {
+        if self.stream.is_some() {
+            return;
+        }
+        if self.output_device_names.is_empty() {
+            self.refresh_output_devices();
+        }
+
+        use cpal::traits::{HostTrait, DeviceTrait, StreamTrait};
+
+        let host = cpal::default_host();
+        let device = if let Some(ref name) = self.selected_device_name {
+            host.output_devices()
+                .ok()
+                .and_then(|mut devs| devs.find(|d| d.name().ok().as_deref() == Some(name.as_str())))
+        } else {
+            None
+        };
+        let device = device.or_else(|| host.default_output_device());
+
+        let device = match device {
+            Some(d) => {
+                eprintln!("[AUDIO] Using device: {:?}", d.name());
+                d
+            }
+            None => {
+                eprintln!("[AUDIO] No audio output device available");
+                return;
+            }
+        };
+
+        let supported_config = match device.default_output_config() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[AUDIO] Failed to get default output config: {}", e);
+                return;
+            }
+        };
+
+        let actual_sample_rate = supported_config.sample_rate();
+        let sample_format = supported_config.sample_format();
+        let config = supported_config.config();
+        eprintln!("[AUDIO] Sample rate: {}, format: {:?}, channels: {}", actual_sample_rate, sample_format, config.channels);
+
+        self.current_sample_rate = actual_sample_rate;
+        self.current_sample_format = format!("{:?}", sample_format);
+        if self.selected_device_name.is_none() {
+            self.selected_device_name = device.name().ok();
+        }
+
+        let state = self.playback_state.clone();
+        let (mut engine, sender) = create_engine_and_sender(state, actual_sample_rate, config.channels);
+
+        let stream_result = match sample_format {
+            cpal::SampleFormat::F32 => device.build_output_stream(
+                &config,
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    engine.process_callback(data);
+                },
+                |err| eprintln!("Audio stream error: {}", err),
+                None,
+            ),
+            cpal::SampleFormat::I16 => {
+                device.build_output_stream(
+                    &config,
+                    move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                        let frames = data.len() / 2;
+                        let mut float_buf = vec![0.0f32; data.len()];
+                        engine.process_callback(&mut float_buf);
+                        for (out, inp) in data.iter_mut().zip(float_buf.iter()) {
+                            *out = (*inp * 32768.0).clamp(-32768.0, 32767.0) as i16;
+                        }
+                        let _ = frames;
+                    },
+                    |err| eprintln!("Audio stream error: {}", err),
+                    None,
+                )
+            }
+            cpal::SampleFormat::U16 => {
+                device.build_output_stream(
+                    &config,
+                    move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
+                        let mut float_buf = vec![0.0f32; data.len()];
+                        engine.process_callback(&mut float_buf);
+                        for (out, inp) in data.iter_mut().zip(float_buf.iter()) {
+                            let s = (*inp * 32768.0).clamp(-32768.0, 32767.0) as i16;
+                            *out = (s as i32 + 32768) as u16;
+                        }
+                    },
+                    |err| eprintln!("Audio stream error: {}", err),
+                    None,
+                )
+            }
+            _ => {
+                eprintln!("Unsupported sample format: {:?}", sample_format);
+                return;
+            }
+        };
+
+        match stream_result {
+            Ok(stream) => {
+                if let Err(e) = stream.play() {
+                    eprintln!("[AUDIO] Failed to start audio stream: {}", e);
+                    return;
+                }
+                eprintln!("[AUDIO] Audio stream started successfully");
+                self.stream = Some(stream);
+                self.command_sender = Some(sender);
+                if let Some(ref module) = self.module {
+                    eprintln!("[AUDIO] Loading module: {} ({} samples, {} instruments)", 
+                        module.name, module.samples.len(), module.instruments.len());
+                    self.send_command(AudioCommand::LoadModule(module.clone()));
+                }
+            }
+            Err(e) => {
+                eprintln!("[AUDIO] Failed to create audio stream: {}", e);
+            }
+        }
+    }
+
+    fn switch_output_device(&mut self, device_name: String) {
+        self.stream = None;
+        self.command_sender = None;
+        self.selected_device_name = Some(device_name);
+        self.init_audio();
+    }
+
+    fn send_command(&mut self, cmd: AudioCommand) {
+        #[cfg(feature = "audio_debug")]
+        eprintln!("[CMD] {:?}", cmd);
+        if let Some(ref mut sender) = self.command_sender {
+            sender.send(cmd);
+        }
+    }
+
+    fn load_file(&mut self, path: &str) {
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Failed to read file: {}", e);
+                return;
+            }
+        };
+
+        if data.len() < 4 {
+            eprintln!("File too small to be a valid module");
+            return;
+        }
+
+        match formats::load_module(&data) {
+            Ok(module) => {
+                self.loaded_module_name = module.name.clone();
+                self.file_path = Some(path.to_string());
+                let module = Arc::new(module);
+                self.module = Some(module.clone());
+                self.send_command(AudioCommand::Stop);
+                self.send_command(AudioCommand::LoadModule(module));
+                self.cursor = CursorPosition::default();
+                self.selection = None;
+                self.scroll_row = 0;
+                self.scroll_channel = 0;
+                self.selected_order = 0;
+                self.selected_sample = 0;
+                self.selected_instrument = 0;
+                self.undo_manager.clear();
+            }
+            Err(e) => {
+                eprintln!("Failed to load module: {}", e);
+            }
+        }
+    }
+
+    fn new_song(&mut self) {
+        let mut module = Module::default();
+        module.name = "Untitled".to_string();
+        module.order_list = vec![0];
+        module.patterns.push(crate::sequencer::Pattern::new(64));
+
+        self.loaded_module_name = module.name.clone();
+        self.file_path = None;
+        let module = Arc::new(module);
+        self.module = Some(module.clone());
+        self.send_command(AudioCommand::Stop);
+        self.send_command(AudioCommand::LoadModule(module));
+        self.cursor = CursorPosition::default();
+        self.selection = None;
+        self.scroll_row = 0;
+        self.scroll_channel = 0;
+        self.selected_order = 0;
+        self.undo_manager.clear();
+    }
+
+    fn current_pattern(&self) -> Option<&crate::sequencer::Pattern> {
+        let module = self.module.as_ref()?;
+        let order = *module.order_list.get(self.selected_order)?;
+        module.patterns.get(order as usize)
+    }
+
+    #[allow(dead_code)]
+    fn current_pattern_mut(&mut self) -> Option<&mut crate::sequencer::Pattern> {
+        let module = Arc::get_mut(self.module.as_mut()?)?;
+        let order = *module.order_list.get(self.selected_order)?;
+        module.patterns.get_mut(order as usize)
+    }
+
+    fn num_channels(&self) -> usize {
+        self.module.as_ref().map_or(8, |m| {
+            let mut max_ch = 0;
+            for &pat_idx in &m.order_list {
+                if let Some(pat) = m.patterns.get(pat_idx as usize) {
+                    for row in &pat.data {
+                        for (ch, cell) in row.iter().enumerate() {
+                            if !cell.is_empty() && ch + 1 > max_ch {
+                                max_ch = ch + 1;
+                            }
+                        }
+                    }
+                }
+            }
+            max_ch.max(8)
+        })
+    }
+
+    fn num_channels_checked(&self) -> usize {
+        let n = self.num_channels();
+        if n == 0 { 1 } else { n }
+    }
+
+    fn get_cell_at_cursor(&self) -> Cell {
+        if let Some(pattern) = self.current_pattern() {
+            if self.cursor.row < pattern.num_rows && self.cursor.channel < MAX_CHANNELS {
+                *pattern.cell(self.cursor.row, self.cursor.channel)
+            } else {
+                Cell::default()
+            }
+        } else {
+            Cell::default()
+        }
+    }
+
+    fn set_cell_at_cursor(&mut self, new_cell: Cell) {
+        let cursor = self.cursor;
+        let order = self.selected_order;
+        let old_cell = self.get_cell_at_cursor();
+
+        if old_cell == new_cell {
+            return;
+        }
+
+        let cmd = Box::new(SetCellCommand {
+            order,
+            row: cursor.row,
+            channel: cursor.channel,
+            old_cell,
+            new_cell,
+        });
+
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let _ = self.undo_manager.execute(cmd, arc_module);
+            }
+        }
+    }
+
+    fn advance_cursor_down(&mut self, step: usize) {
+        if let Some(pattern) = self.current_pattern() {
+            let max_row = pattern.num_rows;
+            self.cursor.row = (self.cursor.row + step).min(max_row - 1);
+            self.ensure_cursor_visible();
+        }
+    }
+
+    fn advance_cursor_up(&mut self, step: usize) {
+        self.cursor.row = self.cursor.row.saturating_sub(step);
+        self.ensure_cursor_visible();
+    }
+
+    fn ensure_cursor_visible(&mut self) {
+        if self.cursor.row < self.scroll_row {
+            self.scroll_row = self.cursor.row;
+        }
+        if self.cursor.row >= self.scroll_row + VISIBLE_ROWS {
+            self.scroll_row = self.cursor.row - VISIBLE_ROWS + 1;
+        }
+    }
+
+    fn clear_cell_at_cursor(&mut self) {
+        self.set_cell_at_cursor(Cell::default());
+    }
+
+    fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
+        let modifiers = ctx.input(|i| i.modifiers);
+
+        if modifiers.ctrl && !modifiers.shift {
+            let mut handled = false;
+            ctx.input(|i| {
+                for event in &i.events {
+                    if let egui::Event::Key { key, pressed: true, .. } = event {
+                        match key {
+                            egui::Key::Z => {
+                                if let Some(ref mut module) = self.module {
+                                    if let Some(arc_module) = Arc::get_mut(module) {
+                                        let _ = self.undo_manager.undo(arc_module);
+                                    }
+                                }
+                                handled = true;
+                            }
+                            egui::Key::Y => {
+                                if let Some(ref mut module) = self.module {
+                                    if let Some(arc_module) = Arc::get_mut(module) {
+                                        let _ = self.undo_manager.redo(arc_module);
+                                    }
+                                }
+                                handled = true;
+                            }
+                            egui::Key::C => {
+                                self.copy_selection();
+                                handled = true;
+                            }
+                            egui::Key::X => {
+                                self.copy_selection();
+                                self.delete_selection();
+                                handled = true;
+                            }
+                            egui::Key::V => {
+                                self.paste_at_cursor();
+                                handled = true;
+                            }
+                            egui::Key::A => {
+                                self.select_all();
+                                handled = true;
+                            }
+                            egui::Key::N => {
+                                self.new_song();
+                                handled = true;
+                            }
+                            egui::Key::O => {
+                                self.open_file_dialog();
+                                handled = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            });
+            if handled {
+                return;
+            }
+        }
+
+        if modifiers.ctrl && modifiers.shift {
+            ctx.input(|i| {
+                for event in &i.events {
+                    if let egui::Event::Key { key, pressed: true, .. } = event {
+                        if *key == egui::Key::S {
+                            self.save_as_dialog();
+                        }
+                    }
+                }
+            });
+            return;
+        }
+
+        if modifiers.ctrl {
+            return;
+        }
+
+        ctx.input(|i| {
+            for event in &i.events {
+                match event {
+                    egui::Event::Key { key, pressed: true, .. } => match key {
+                        egui::Key::ArrowDown => {
+                            if modifiers.shift {
+                                self.extend_selection_down();
+                            } else if modifiers.alt {
+                                self.transpose_selection(-1);
+                            } else {
+                                self.selection = None;
+                                self.advance_cursor_down(1);
+                            }
+                        }
+                        egui::Key::ArrowUp => {
+                            if modifiers.shift {
+                                self.extend_selection_up();
+                            } else if modifiers.alt {
+                                self.transpose_selection(1);
+                            } else {
+                                self.selection = None;
+                                self.advance_cursor_up(1);
+                            }
+                        }
+                        egui::Key::ArrowRight => {
+                            if modifiers.shift {
+                                self.extend_selection_right();
+                            } else {
+                                self.selection = None;
+                                self.move_cursor_right();
+                            }
+                        }
+                        egui::Key::ArrowLeft => {
+                            if modifiers.shift {
+                                self.extend_selection_left();
+                            } else {
+                                self.selection = None;
+                                self.move_cursor_left();
+                            }
+                        }
+                        egui::Key::Tab => {
+                            self.selection = None;
+                            if modifiers.shift {
+                                self.cursor.channel = self.cursor.channel.saturating_sub(1);
+                            } else {
+                                self.cursor.channel += 1;
+                                self.cursor.channel = self.cursor.channel.min(self.num_channels_checked() - 1);
+                            }
+                            self.ensure_cursor_visible();
+                        }
+                        egui::Key::PageUp => {
+                            self.selection = None;
+                            self.advance_cursor_up(16);
+                        }
+                        egui::Key::PageDown => {
+                            self.selection = None;
+                            self.advance_cursor_down(16);
+                        }
+                        egui::Key::Home => {
+                            self.selection = None;
+                            self.cursor.row = 0;
+                            self.scroll_row = 0;
+                        }
+                        egui::Key::End => {
+                            self.selection = None;
+                            if let Some(pattern) = self.current_pattern() {
+                                self.cursor.row = pattern.num_rows - 1;
+                                self.ensure_cursor_visible();
+                            }
+                        }
+                        egui::Key::Backspace => {
+                            self.clear_cell_at_cursor();
+                        }
+                        egui::Key::Delete if !modifiers.alt => {
+                            self.clear_cell_at_cursor();
+                            self.advance_cursor_down(1);
+                        }
+                        egui::Key::Insert => {
+                            if let Some(ref mut module) = self.module {
+                                if let Some(arc_module) = Arc::get_mut(module) {
+                                    let pat_idx = *arc_module.order_list.get(self.selected_order).unwrap_or(&0) as usize;
+                                    if pat_idx < arc_module.patterns.len() {
+                                        let cmd = Box::new(InsertRowCommand {
+                                            pattern_index: pat_idx,
+                                            row: self.cursor.row,
+                                            _channel: None,
+                                        });
+                                        let _ = self.undo_manager.execute(cmd, arc_module);
+                                    }
+                                }
+                            }
+                        }
+                        egui::Key::Delete if modifiers.alt => {
+                            if let Some(ref mut module) = self.module {
+                                if let Some(arc_module) = Arc::get_mut(module) {
+                                    let pat_idx = *arc_module.order_list.get(self.selected_order).unwrap_or(&0) as usize;
+                                    if pat_idx < arc_module.patterns.len() && arc_module.patterns[pat_idx].num_rows > 1 {
+                                        let row_data = arc_module.patterns[pat_idx].data[self.cursor.row].to_vec();
+                                        let cmd = Box::new(crate::edit::DeleteRowCommand {
+                                            pattern_index: pat_idx,
+                                            row: self.cursor.row,
+                                            _channel: None,
+                                            deleted_data: row_data,
+                                        });
+                                        let _ = self.undo_manager.execute(cmd, arc_module);
+                                    }
+                                }
+                            }
+                        }
+                        egui::Key::Space => {
+                            let playing = self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
+                            if playing {
+                                self.send_command(AudioCommand::Stop);
+                            } else {
+                                self.send_command(AudioCommand::Play);
+                            }
+                        }
+                        egui::Key::F5 => {
+                            self.send_command(AudioCommand::Play);
+                        }
+                        egui::Key::F8 => {
+                            self.send_command(AudioCommand::Stop);
+                        }
+                        egui::Key::Escape => {
+                            self.selection = None;
+                        }
+                        egui::Key::F1 => {
+                            if self.current_octave > 0 {
+                                self.current_octave -= 1;
+                            }
+                        }
+                        egui::Key::F2 => {
+                            if self.current_octave < 9 {
+                                self.current_octave += 1;
+                            }
+                        }
+                        egui::Key::OpenBracket => {
+                            self.skip_to_prev_pattern();
+                        }
+                        egui::Key::CloseBracket => {
+                            self.skip_to_next_pattern();
+                        }
+                        egui::Key::F3 => {
+                            self.show_shortcuts = !self.show_shortcuts;
+                        }
+                        _ => {}
+                    },
+                    egui::Event::Text(text) => {
+                        if self.module.is_none() {
+                            return;
+                        }
+                        let ch = text.chars().next().unwrap_or('\0');
+                        self.handle_text_input(ch);
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+
+    fn handle_text_input(&mut self, ch: char) {
+        if self.current_pattern().is_none() {
+            return;
+        }
+
+        if self.cursor.sub_column.accepts_note() {
+            for (key, tone) in NOTE_KEYS_LOWER.iter() {
+                let key_char = key.name();
+                if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_lowercase()) {
+                    let note = if *tone == 12 {
+                        Note::On((self.current_octave as u8 + 1) * 12)
+                    } else {
+                        Note::On(self.current_octave as u8 * 12 + tone)
+                    };
+                    let mut new_cell = self.get_cell_at_cursor();
+                    new_cell.note = note;
+                    self.set_cell_at_cursor(new_cell);
+                    self.advance_cursor_down(1);
+                    return;
+                }
+            }
+            for (key, tone) in NOTE_KEYS_UPPER.iter() {
+                let key_char = key.name();
+                if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_lowercase()) {
+                    let note = Note::On((self.current_octave as u8 + 1) * 12 + tone);
+                    let mut new_cell = self.get_cell_at_cursor();
+                    new_cell.note = note;
+                    self.set_cell_at_cursor(new_cell);
+                    self.advance_cursor_down(1);
+                    return;
+                }
+            }
+            if ch == '.' {
+                let mut new_cell = self.get_cell_at_cursor();
+                new_cell.note = Note::Off;
+                self.set_cell_at_cursor(new_cell);
+                self.advance_cursor_down(1);
+                return;
+            }
+        }
+
+        if self.cursor.sub_column.accepts_hex() {
+            let digit = ch.to_ascii_uppercase().to_digit(16);
+            if let Some(d) = digit {
+                let d = d as u8;
+                let mut cell = self.get_cell_at_cursor();
+
+                match self.cursor.sub_column {
+                    SubColumn::InstrumentHigh => {
+                        let current = cell.instrument.unwrap_or(0);
+                        cell.instrument = Some((d << 4) | (current & 0x0F));
+                    }
+                    SubColumn::InstrumentLow => {
+                        let current = cell.instrument.unwrap_or(0);
+                        cell.instrument = Some((current & 0xF0) | d);
+                    }
+                    SubColumn::VolumeHigh => {
+                        let current = cell.volume.unwrap_or(0);
+                        cell.volume = Some((d << 4) | (current & 0x0F));
+                    }
+                    SubColumn::VolumeLow => {
+                        let current = cell.volume.unwrap_or(0);
+                        cell.volume = Some((current & 0xF0) | d);
+                    }
+                    SubColumn::EffectType => {
+                        cell.effect = hex_to_effect(d);
+                    }
+                    SubColumn::EffectParamHigh => {
+                        let param = effect_param(&cell.effect);
+                        let new_param = (d << 4) | (param & 0x0F);
+                        cell.effect = set_effect_param(&cell.effect, new_param);
+                    }
+                    SubColumn::EffectParamLow => {
+                        let param = effect_param(&cell.effect);
+                        let new_param = (param & 0xF0) | d;
+                        cell.effect = set_effect_param(&cell.effect, new_param);
+                    }
+                    SubColumn::Note => return,
+                }
+
+                self.set_cell_at_cursor(cell);
+
+                if let Some(next) = self.cursor.sub_column.next() {
+                    self.cursor.sub_column = next;
+                } else {
+                    self.cursor.sub_column = SubColumn::Note;
+                    self.advance_cursor_down(1);
+                }
+            }
+        }
+    }
+
+    fn move_cursor_right(&mut self) {
+        if let Some(next) = self.cursor.sub_column.next() {
+            self.cursor.sub_column = next;
+        } else {
+            let num_ch = self.num_channels();
+            if self.cursor.channel < num_ch - 1 {
+                self.cursor.channel += 1;
+                self.cursor.sub_column = SubColumn::Note;
+            }
+        }
+        self.ensure_cursor_visible();
+    }
+
+    fn move_cursor_left(&mut self) {
+        if let Some(prev) = self.cursor.sub_column.prev() {
+            self.cursor.sub_column = prev;
+        } else if self.cursor.channel > 0 {
+            self.cursor.channel -= 1;
+            self.cursor.sub_column = SubColumn::EffectParamLow;
+        }
+        self.ensure_cursor_visible();
+    }
+
+    fn extend_selection_down(&mut self) {
+        if self.selection.is_none() {
+            self.selection_anchor = Some(self.cursor);
+        }
+        self.advance_cursor_down(1);
+        if let Some(anchor) = self.selection_anchor {
+            self.selection = Some(Selection {
+                start: anchor,
+                end: self.cursor,
+            });
+        }
+    }
+
+    fn extend_selection_up(&mut self) {
+        if self.selection.is_none() {
+            self.selection_anchor = Some(self.cursor);
+        }
+        self.advance_cursor_up(1);
+        if let Some(anchor) = self.selection_anchor {
+            self.selection = Some(Selection {
+                start: anchor,
+                end: self.cursor,
+            });
+        }
+    }
+
+    fn extend_selection_right(&mut self) {
+        if self.selection.is_none() {
+            self.selection_anchor = Some(self.cursor);
+        }
+        self.move_cursor_right();
+        if let Some(anchor) = self.selection_anchor {
+            self.selection = Some(Selection {
+                start: anchor,
+                end: self.cursor,
+            });
+        }
+    }
+
+    fn extend_selection_left(&mut self) {
+        if self.selection.is_none() {
+            self.selection_anchor = Some(self.cursor);
+        }
+        self.move_cursor_left();
+        if let Some(anchor) = self.selection_anchor {
+            self.selection = Some(Selection {
+                start: anchor,
+                end: self.cursor,
+            });
+        }
+    }
+
+    fn select_all(&mut self) {
+        if let Some(pattern) = self.current_pattern() {
+            let num_ch = self.num_channels();
+            let sel = Selection {
+                start: CursorPosition {
+                    row: 0,
+                    channel: 0,
+                    sub_column: SubColumn::Note,
+                },
+                end: CursorPosition {
+                    row: pattern.num_rows - 1,
+                    channel: num_ch - 1,
+                    sub_column: SubColumn::EffectParamLow,
+                },
+            };
+            self.selection = Some(sel);
+        }
+    }
+
+    fn transpose_selection(&mut self, delta: i8) {
+        let sel = match &self.selection {
+            Some(s) => s.clone(),
+            None => {
+                let cursor = self.cursor;
+                Selection {
+                    start: cursor,
+                    end: cursor,
+                }
+            }
+        };
+        let (min, max) = sel.normalized();
+
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                for row in min.row..=max.row {
+                    for ch in min.channel..=max.channel {
+                        let cell = arc_module.patterns.get_mut(
+                            *arc_module.order_list.get(self.selected_order).unwrap_or(&0) as usize
+                        );
+                        if let Some(pattern) = cell {
+                            if let Note::On(key) = pattern.data[row][ch].note {
+                                let new_key = (key as i8 + delta).max(0).min(119) as u8;
+                                pattern.data[row][ch].note = Note::On(new_key);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn skip_to_prev_pattern(&mut self) {
+        let order_len = self.module.as_ref().map_or(0, |m| m.order_list.len());
+        if order_len == 0 {
+            return;
+        }
+        self.selected_order = if self.selected_order == 0 {
+            order_len - 1
+        } else {
+            self.selected_order - 1
+        };
+        self.cursor.row = 0;
+        self.scroll_row = 0;
+        self.selection = None;
+        if self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
+            self.send_command(AudioCommand::PlayFrom { order: self.selected_order as u16, row: 0 });
+        }
+    }
+
+    fn skip_to_next_pattern(&mut self) {
+        let order_len = self.module.as_ref().map_or(0, |m| m.order_list.len());
+        if order_len == 0 {
+            return;
+        }
+        self.selected_order = if self.selected_order >= order_len - 1 {
+            0
+        } else {
+            self.selected_order + 1
+        };
+        self.cursor.row = 0;
+        self.scroll_row = 0;
+        self.selection = None;
+        if self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
+            self.send_command(AudioCommand::PlayFrom { order: self.selected_order as u16, row: 0 });
+        }
+    }
+
+    fn copy_selection(&mut self) {
+        if let Some(sel) = &self.selection {
+            let (min, max) = sel.normalized();
+            if let Some(pattern) = self.current_pattern() {
+                let mut data = Vec::new();
+                for row in min.row..=max.row {
+                    let mut row_data = Vec::new();
+                    for ch in min.channel..=max.channel {
+                        row_data.push(*pattern.cell(row, ch));
+                    }
+                    data.push(row_data);
+                }
+                self.clipboard = Some(data);
+                self.clipboard_width = max.channel - min.channel + 1;
+            }
+        }
+    }
+
+    fn delete_selection(&mut self) {
+        if let Some(sel) = &self.selection {
+            let (min, max) = sel.normalized();
+            for row in min.row..=max.row {
+                for ch in min.channel..=max.channel {
+                    let cursor = CursorPosition {
+                        row,
+                        channel: ch,
+                        sub_column: SubColumn::Note,
+                    };
+                    let old_cursor = self.cursor;
+                    self.cursor = cursor;
+                    self.clear_cell_at_cursor();
+                    self.cursor = old_cursor;
+                }
+            }
+        }
+    }
+
+    fn paste_at_cursor(&mut self) {
+        let clipboard = self.clipboard.clone();
+        if let Some(ref clipboard_data) = clipboard {
+            for (row_offset, row_data) in clipboard_data.iter().enumerate() {
+                let target_row = self.cursor.row + row_offset;
+                for (ch_offset, cell) in row_data.iter().enumerate() {
+                    let target_ch = self.cursor.channel + ch_offset;
+                    let cursor = CursorPosition {
+                        row: target_row,
+                        channel: target_ch,
+                        sub_column: SubColumn::Note,
+                    };
+                    let old_cursor = self.cursor;
+                    self.cursor = cursor;
+                    self.set_cell_at_cursor(*cell);
+                    self.cursor = old_cursor;
+                }
+            }
+        }
+    }
+
+    fn open_file_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Tracker Modules", &["it", "xm", "s3m", "mod"])
+            .add_filter("WAV Samples", &["wav"])
+            .pick_file()
+        {
+            if let Some(path_str) = path.to_str() {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                if ext == "wav" {
+                    self.import_wav(path_str);
+                } else {
+                    self.load_file(path_str);
+                }
+            }
+        }
+    }
+
+    fn import_wav(&mut self, path: &str) {
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Failed to read WAV file: {}", e);
+                return;
+            }
+        };
+        match crate::formats::wav::import_wav(&data) {
+            Ok(sample) => {
+                if let Some(ref mut module_arc) = self.module {
+                    if let Some(m) = Arc::get_mut(module_arc) {
+                        m.samples.push(sample);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to import WAV: {}", e);
+            }
+        }
+    }
+
+    fn save_current_file(&mut self) {
+        let path = match &self.file_path {
+            Some(p) => p.clone(),
+            None => {
+                self.save_as_dialog();
+                return;
+            }
+        };
+        let format = {
+            let ext = std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("it")
+                .to_lowercase();
+            match ext.as_str() {
+                "xm" => crate::sequencer::ModuleFormat::XM,
+                "s3m" => crate::sequencer::ModuleFormat::S3M,
+                "mod" => crate::sequencer::ModuleFormat::MOD,
+                _ => crate::sequencer::ModuleFormat::IT,
+            }
+        };
+        self.save_file(&path, format);
+    }
+
+    fn save_file(&mut self, path: &str, format: crate::sequencer::ModuleFormat) {
+        let module = match &self.module {
+            Some(m) => m,
+            None => return,
+        };
+        let data = formats::save_module(module, format);
+        match std::fs::write(path, &data) {
+            Ok(()) => {
+                self.file_path = Some(path.to_string());
+            }
+            Err(e) => {
+                eprintln!("Failed to save file: {}", e);
+            }
+        }
+    }
+
+    fn save_as_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("IT Module", &["it"])
+            .add_filter("XM Module", &["xm"])
+            .add_filter("S3M Module", &["s3m"])
+            .save_file()
+        {
+            if let Some(path_str) = path.to_str() {
+                let format = {
+                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("it").to_lowercase();
+                    match ext.as_str() {
+                        "xm" => crate::sequencer::ModuleFormat::XM,
+                        "s3m" => crate::sequencer::ModuleFormat::S3M,
+                        _ => crate::sequencer::ModuleFormat::IT,
+                    }
+                };
+                self.save_file(path_str, format);
+            }
+        }
+    }
+
+    fn handle_sample_edit(&mut self, event: SampleEditEvent) {
+        let sample_idx = self.selected_sample;
+        let module = match &self.module {
+            Some(m) => m,
+            None => return,
+        };
+        let sample = match module.samples.get(sample_idx) {
+            Some(s) => s,
+            None => return,
+        };
+
+        let cmd: Box<dyn crate::edit::EditCommand> = match event {
+            SampleEditEvent::NameChanged(n) => Box::new(SetSamplePropertyCommand {
+                sample_index: sample_idx,
+                property: SampleProperty::Name(n),
+                old_property: SampleProperty::Name(sample.name.clone()),
+            }),
+            SampleEditEvent::VolumeChanged(v) => Box::new(SetSamplePropertyCommand {
+                sample_index: sample_idx,
+                property: SampleProperty::DefaultVolume(v),
+                old_property: SampleProperty::DefaultVolume(sample.default_volume),
+            }),
+            SampleEditEvent::PanningChanged(p) => Box::new(SetSamplePropertyCommand {
+                sample_index: sample_idx,
+                property: SampleProperty::DefaultPanning(p),
+                old_property: SampleProperty::DefaultPanning(sample.default_panning),
+            }),
+            SampleEditEvent::GlobalVolumeChanged(v) => Box::new(SetSamplePropertyCommand {
+                sample_index: sample_idx,
+                property: SampleProperty::GlobalVolume(v),
+                old_property: SampleProperty::GlobalVolume(sample.global_volume),
+            }),
+            SampleEditEvent::LoopTypeChanged(t) => Box::new(SetSamplePropertyCommand {
+                sample_index: sample_idx,
+                property: SampleProperty::LoopType(t),
+                old_property: SampleProperty::LoopType(sample.loop_type),
+            }),
+            SampleEditEvent::LoopStartChanged(s) => Box::new(SetSamplePropertyCommand {
+                sample_index: sample_idx,
+                property: SampleProperty::LoopStart(s),
+                old_property: SampleProperty::LoopStart(sample.loop_start),
+            }),
+            SampleEditEvent::LoopEndChanged(e) => Box::new(SetSamplePropertyCommand {
+                sample_index: sample_idx,
+                property: SampleProperty::LoopEnd(e),
+                old_property: SampleProperty::LoopEnd(sample.loop_end),
+            }),
+            SampleEditEvent::RelativeNoteChanged(n) => Box::new(SetSamplePropertyCommand {
+                sample_index: sample_idx,
+                property: SampleProperty::RelativeNote(n),
+                old_property: SampleProperty::RelativeNote(sample.relative_note),
+            }),
+            SampleEditEvent::FineTuneChanged(t) => Box::new(SetSamplePropertyCommand {
+                sample_index: sample_idx,
+                property: SampleProperty::FineTune(t),
+                old_property: SampleProperty::FineTune(sample.fine_tune),
+            }),
+            SampleEditEvent::Normalize => {
+                let mut data = (*sample.data).clone();
+                let max = data.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+                if max > 0.0 {
+                    let factor = 1.0 / max;
+                    for x in data.iter_mut() {
+                        *x *= factor;
+                    }
+                }
+                Box::new(SetSampleDataCommand {
+                    sample_index: sample_idx,
+                    old_data: sample.data.clone(),
+                    new_data: Arc::new(data),
+                })
+            }
+            SampleEditEvent::Reverse => {
+                let mut data = (*sample.data).clone();
+                data.reverse();
+                Box::new(SetSampleDataCommand {
+                    sample_index: sample_idx,
+                    old_data: sample.data.clone(),
+                    new_data: Arc::new(data),
+                })
+            }
+            SampleEditEvent::CutRegion(s, e) => {
+                let s = s.min(e);
+                let e = s.max(e);
+                let mut data = (*sample.data).clone();
+                self.sample_clipboard = Some(Arc::new(data[s..e].to_vec()));
+                data.drain(s..e);
+                Box::new(SetSampleDataCommand {
+                    sample_index: sample_idx,
+                    old_data: sample.data.clone(),
+                    new_data: Arc::new(data),
+                })
+            }
+            SampleEditEvent::CopyRegion(s, e) => {
+                let s = s.min(e);
+                let e = s.max(e);
+                self.sample_clipboard = Some(Arc::new(sample.data[s..e].to_vec()));
+                return;
+            }
+            SampleEditEvent::PasteRegion(pos) => {
+                let clip = match self.sample_clipboard.as_ref() {
+                    Some(c) => c.clone(),
+                    None => return,
+                };
+                let mut data = (*sample.data).clone();
+                let pos = pos.min(data.len());
+                // Insert clipboard data at position
+                let mut new_data = Vec::with_capacity(data.len() + clip.len());
+                new_data.extend_from_slice(&data[..pos]);
+                new_data.extend_from_slice(&clip);
+                new_data.extend_from_slice(&data[pos..]);
+                Box::new(SetSampleDataCommand {
+                    sample_index: sample_idx,
+                    old_data: sample.data.clone(),
+                    new_data: Arc::new(new_data),
+                })
+            }
+            SampleEditEvent::CropRegion(s, e) => {
+                let s = s.min(e);
+                let e = s.max(e);
+                let data = sample.data[s..e].to_vec();
+                Box::new(SetSampleDataCommand {
+                    sample_index: sample_idx,
+                    old_data: sample.data.clone(),
+                    new_data: Arc::new(data),
+                })
+            }
+            SampleEditEvent::Amplify(factor) => {
+                let mut data = (*sample.data).clone();
+                for x in data.iter_mut() {
+                    *x *= factor;
+                }
+                Box::new(SetSampleDataCommand {
+                    sample_index: sample_idx,
+                    old_data: sample.data.clone(),
+                    new_data: Arc::new(data),
+                })
+            }
+            SampleEditEvent::SilenceRegion(s, e) => {
+                let s = s.min(e);
+                let e = s.max(e);
+                let mut data = (*sample.data).clone();
+                for x in data[s..e].iter_mut() {
+                    *x = 0.0;
+                }
+                Box::new(SetSampleDataCommand {
+                    sample_index: sample_idx,
+                    old_data: sample.data.clone(),
+                    new_data: Arc::new(data),
+                })
+            }
+            SampleEditEvent::TrimSilence => {
+                let data = &sample.data;
+                let threshold = 0.001;
+                let start = data.iter().position(|&x| x.abs() > threshold).unwrap_or(0);
+                let end = data.iter().rposition(|&x| x.abs() > threshold).map(|p| p + 1).unwrap_or(data.len());
+                let trimmed = if start < end { data[start..end].to_vec() } else { Vec::new() };
+                Box::new(SetSampleDataCommand {
+                    sample_index: sample_idx,
+                    old_data: sample.data.clone(),
+                    new_data: Arc::new(trimmed),
+                })
+            }
+            SampleEditEvent::SetLoopFromSelection(start, end) => {
+                let start_cmd: Box<dyn crate::edit::EditCommand> = Box::new(SetSamplePropertyCommand {
+                    sample_index: sample_idx,
+                    property: SampleProperty::LoopStart(start),
+                    old_property: SampleProperty::LoopStart(sample.loop_start),
+                });
+                let end_cmd: Box<dyn crate::edit::EditCommand> = Box::new(SetSamplePropertyCommand {
+                    sample_index: sample_idx,
+                    property: SampleProperty::LoopEnd(end),
+                    old_property: SampleProperty::LoopEnd(sample.loop_end),
+                });
+                let type_cmd: Box<dyn crate::edit::EditCommand> = Box::new(SetSamplePropertyCommand {
+                    sample_index: sample_idx,
+                    property: SampleProperty::LoopType(crate::sequencer::sample::LoopType::Forward),
+                    old_property: SampleProperty::LoopType(sample.loop_type),
+                });
+                if let Some(ref mut module_arc) = self.module {
+                    if let Some(m) = Arc::get_mut(module_arc) {
+                        let _ = self.undo_manager.execute(start_cmd, m);
+                        let _ = self.undo_manager.execute(end_cmd, m);
+                        let _ = self.undo_manager.execute(type_cmd, m);
+                    } else {
+                        let mut new_module = (**module_arc).clone();
+                        let _ = start_cmd.execute(&mut new_module);
+                        let _ = end_cmd.execute(&mut new_module);
+                        let _ = type_cmd.execute(&mut new_module);
+                        let new_arc = Arc::new(new_module);
+                        self.module = Some(new_arc.clone());
+                        self.send_command(AudioCommand::LoadModule(new_arc));
+                    }
+                }
+                return;
+            }
+        };
+
+        if let Some(ref mut module_arc) = self.module {
+            if let Some(m) = Arc::get_mut(module_arc) {
+                let _ = self.undo_manager.execute(cmd, m);
+            } else {
+                // If we can't get mut (playing), we clone.
+                let mut new_module = (**module_arc).clone();
+                if let Ok(_) = cmd.execute(&mut new_module) {
+                    let new_arc = Arc::new(new_module);
+                    self.module = Some(new_arc.clone());
+                    self.send_command(AudioCommand::LoadModule(new_arc));
+                }
+            }
+        }
+    }
+
+    fn handle_instrument_edit(&mut self, event: InstrumentEditEvent) {
+        let inst_idx = self.selected_instrument;
+        let module = match &self.module {
+            Some(m) => m,
+            None => return,
+        };
+        let inst = match module.instruments.get(inst_idx) {
+            Some(i) => i,
+            None => return,
+        };
+
+        let cmd: Box<dyn crate::edit::EditCommand> = match event {
+            InstrumentEditEvent::NameChanged(n) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::Name(n),
+                old_property: InstrumentProperty::Name(inst.name.clone()),
+            }),
+            InstrumentEditEvent::NnaChanged(n) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::Nna(n),
+                old_property: InstrumentProperty::Nna(inst.nna),
+            }),
+            InstrumentEditEvent::DuplicateCheckTypeChanged(t) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::DuplicateCheckType(t),
+                old_property: InstrumentProperty::DuplicateCheckType(inst.duplicate_check_type),
+            }),
+            InstrumentEditEvent::DuplicateCheckActionChanged(a) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::DuplicateCheckAction(a),
+                old_property: InstrumentProperty::DuplicateCheckAction(inst.duplicate_check_action),
+            }),
+            InstrumentEditEvent::FadeoutChanged(f) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::Fadeout(f),
+                old_property: InstrumentProperty::Fadeout(inst.fade_out),
+            }),
+            InstrumentEditEvent::GlobalVolumeChanged(v) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::GlobalVolume(v),
+                old_property: InstrumentProperty::GlobalVolume(inst.global_volume),
+            }),
+            InstrumentEditEvent::PitchPanSeparationChanged(s) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::PitchPanSeparation(s),
+                old_property: InstrumentProperty::PitchPanSeparation(inst.pitch_pan_separation),
+            }),
+            InstrumentEditEvent::PitchPanCenterChanged(c) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::PitchPanCenter(c),
+                old_property: InstrumentProperty::PitchPanCenter(inst.pitch_pan_center),
+            }),
+            InstrumentEditEvent::RandomVolumeChanged(v) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::RandomVolume(v),
+                old_property: InstrumentProperty::RandomVolume(inst.random_volume),
+            }),
+            InstrumentEditEvent::RandomPanningChanged(p) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::RandomPanning(p),
+                old_property: InstrumentProperty::RandomPanning(inst.random_panning),
+            }),
+            InstrumentEditEvent::EnvelopePointMoved(env_type, idx, t, v) => {
+                let env = match env_type {
+                    EnvelopeType::Volume => &inst.volume_envelope,
+                    EnvelopeType::Panning => &inst.panning_envelope,
+                    EnvelopeType::Pitch => &inst.pitch_envelope,
+                };
+                let old_pt = env.as_ref().map(|e| e.points[idx]).unwrap_or_default();
+                Box::new(SetEnvelopePointCommand {
+                    instrument_index: inst_idx,
+                    envelope_type: env_type,
+                    point_index: idx,
+                    old_point: old_pt,
+                    new_point: EnvelopePoint { tick: t, value: v },
+                })
+            }
+            InstrumentEditEvent::EnvelopePointAdded(env_type, t, v) => Box::new(AddEnvelopePointCommand {
+                instrument_index: inst_idx,
+                envelope_type: env_type,
+                point: EnvelopePoint { tick: t, value: v },
+            }),
+            InstrumentEditEvent::EnvelopePointRemoved(env_type, idx) => {
+                let env = match env_type {
+                    EnvelopeType::Volume => &inst.volume_envelope,
+                    EnvelopeType::Panning => &inst.panning_envelope,
+                    EnvelopeType::Pitch => &inst.pitch_envelope,
+                };
+                let old_pt = env.as_ref().map(|e| e.points[idx]).unwrap_or_default();
+                Box::new(RemoveEnvelopePointCommand {
+                    instrument_index: inst_idx,
+                    envelope_type: env_type,
+                    point_index: idx,
+                    old_point: old_pt,
+                })
+            }
+            InstrumentEditEvent::EnvelopeSustainChanged(env_type, new_sustain) => {
+                let env = match env_type {
+                    EnvelopeType::Volume => &inst.volume_envelope,
+                    EnvelopeType::Panning => &inst.panning_envelope,
+                    EnvelopeType::Pitch => &inst.pitch_envelope,
+                };
+                Box::new(SetEnvelopeSustainCommand {
+                    instrument_index: inst_idx,
+                    envelope_type: env_type,
+                    old_sustain: env.as_ref().and_then(|e| e.sustain_point),
+                    new_sustain,
+                })
+            }
+            InstrumentEditEvent::EnvelopeLoopChanged(env_type, new_enabled, new_start, new_end) => {
+                let env = match env_type {
+                    EnvelopeType::Volume => &inst.volume_envelope,
+                    EnvelopeType::Panning => &inst.panning_envelope,
+                    EnvelopeType::Pitch => &inst.pitch_envelope,
+                };
+                Box::new(SetEnvelopeLoopCommand {
+                    instrument_index: inst_idx,
+                    envelope_type: env_type,
+                    old_loop_enabled: env.as_ref().map_or(false, |e| e.flags.loop_),
+                    new_loop_enabled: new_enabled,
+                    old_loop_start: env.as_ref().and_then(|e| e.loop_start),
+                    new_loop_start: new_start,
+                    old_loop_end: env.as_ref().and_then(|e| e.loop_end),
+                    new_loop_end: new_end,
+                })
+            }
+            InstrumentEditEvent::EnvelopeFlagsChanged(env_type, new_flags) => {
+                let env = match env_type {
+                    EnvelopeType::Volume => &inst.volume_envelope,
+                    EnvelopeType::Panning => &inst.panning_envelope,
+                    EnvelopeType::Pitch => &inst.pitch_envelope,
+                };
+                Box::new(SetEnvelopeFlagsCommand {
+                    instrument_index: inst_idx,
+                    envelope_type: env_type,
+                    old_flags: env.as_ref().map(|e| e.flags).unwrap_or_default(),
+                    new_flags,
+                })
+            }
+            InstrumentEditEvent::SampleMapChanged(note, new_idx) => Box::new(MapNoteToSampleCommand {
+                instrument_index: inst_idx,
+                note,
+                old_sample: inst.sample_map[note as usize],
+                new_sample: new_idx,
+            }),
+            InstrumentEditEvent::NoteMapChanged(note, new_dest) => Box::new(MapNoteToNoteCommand {
+                instrument_index: inst_idx,
+                note,
+                old_dest: inst.note_map[note as usize],
+                new_dest,
+            }),
+        };
+
+        if let Some(ref mut module_arc) = self.module {
+            if let Some(m) = Arc::get_mut(module_arc) {
+                let _ = self.undo_manager.execute(cmd, m);
+            } else {
+                let mut new_module = (**module_arc).clone();
+                if let Ok(_) = cmd.execute(&mut new_module) {
+                    let new_arc = Arc::new(new_module);
+                    self.module = Some(new_arc.clone());
+                    self.send_command(AudioCommand::LoadModule(new_arc));
+                }
+            }
+        }
+    }
+}
+
+fn hex_to_effect(d: u8) -> crate::sequencer::Effect {
+    match d {
+        0 => crate::sequencer::Effect::Arpeggio { note1: 0, note2: 0 },
+        1 => crate::sequencer::Effect::PortamentoUp { speed: 0 },
+        2 => crate::sequencer::Effect::PortamentoDown { speed: 0 },
+        3 => crate::sequencer::Effect::TonePortamento { speed: 0 },
+        4 => crate::sequencer::Effect::Vibrato { speed: 0, depth: 0 },
+        5 => crate::sequencer::Effect::TonePortamentoVolumeSlide { up: 0 },
+        6 => crate::sequencer::Effect::VibratoVolumeSlide { up: 0 },
+        7 => crate::sequencer::Effect::Tremolo { speed: 0, depth: 0 },
+        8 => crate::sequencer::Effect::SetPanning { pan: 0 },
+        9 => crate::sequencer::Effect::SetSampleOffset { offset: 0 },
+        0xA => crate::sequencer::Effect::VolumeSlide { up: 0, down: 0 },
+        0xB => crate::sequencer::Effect::PositionJump { order: 0 },
+        0xC => crate::sequencer::Effect::SetVolume { volume: 0 },
+        0xD => crate::sequencer::Effect::PatternBreak { row: 0 },
+        0xE => crate::sequencer::Effect::ExtendedEffect { param: 0 },
+        0xF => crate::sequencer::Effect::SetSpeed { speed: 0 },
+        _ => crate::sequencer::Effect::None,
+    }
+}
+
+fn effect_param(effect: &crate::sequencer::Effect) -> u8 {
+    match effect {
+        crate::sequencer::Effect::Arpeggio { note1, note2 } => (*note1 << 4) | note2,
+        crate::sequencer::Effect::PortamentoUp { speed } => *speed,
+        crate::sequencer::Effect::PortamentoDown { speed } => *speed,
+        crate::sequencer::Effect::TonePortamento { speed } => *speed,
+        crate::sequencer::Effect::Vibrato { speed, depth } => (*speed << 4) | depth,
+        crate::sequencer::Effect::VolumeSlide { up, down } => (*up << 4) | down,
+        crate::sequencer::Effect::SetSampleOffset { offset } => *offset as u8,
+        crate::sequencer::Effect::PositionJump { order } => *order,
+        crate::sequencer::Effect::SetVolume { volume } => *volume,
+        crate::sequencer::Effect::PatternBreak { row } => *row,
+        crate::sequencer::Effect::ExtendedEffect { param } => *param,
+        crate::sequencer::Effect::SetSpeed { speed } => *speed,
+        crate::sequencer::Effect::SetTempo { bpm } => *bpm,
+        _ => 0,
+    }
+}
+
+fn set_effect_param(effect: &crate::sequencer::Effect, param: u8) -> crate::sequencer::Effect {
+    match effect {
+        crate::sequencer::Effect::Arpeggio { .. } => crate::sequencer::Effect::Arpeggio {
+            note1: param >> 4,
+            note2: param & 0x0F,
+        },
+        crate::sequencer::Effect::PortamentoUp { .. } => crate::sequencer::Effect::PortamentoUp { speed: param },
+        crate::sequencer::Effect::PortamentoDown { .. } => crate::sequencer::Effect::PortamentoDown { speed: param },
+        crate::sequencer::Effect::TonePortamento { .. } => crate::sequencer::Effect::TonePortamento { speed: param },
+        crate::sequencer::Effect::Vibrato { .. } => crate::sequencer::Effect::Vibrato {
+            speed: param >> 4,
+            depth: param & 0x0F,
+        },
+        crate::sequencer::Effect::VolumeSlide { .. } => crate::sequencer::Effect::VolumeSlide {
+            up: param >> 4,
+            down: param & 0x0F,
+        },
+        crate::sequencer::Effect::SetSampleOffset { .. } => {
+            crate::sequencer::Effect::SetSampleOffset { offset: (param as u16) << 8 }
+        }
+        crate::sequencer::Effect::PositionJump { .. } => crate::sequencer::Effect::PositionJump { order: param },
+        crate::sequencer::Effect::SetVolume { .. } => crate::sequencer::Effect::SetVolume { volume: param },
+        crate::sequencer::Effect::PatternBreak { .. } => crate::sequencer::Effect::PatternBreak { row: param },
+        crate::sequencer::Effect::ExtendedEffect { .. } => {
+            crate::sequencer::Effect::ExtendedEffect { param }
+        }
+        crate::sequencer::Effect::SetSpeed { .. } => {
+            if param < 32 {
+                crate::sequencer::Effect::SetSpeed { speed: param }
+            } else {
+                crate::sequencer::Effect::SetTempo { bpm: param }
+            }
+        }
+        crate::sequencer::Effect::SetTempo { .. } => {
+            if param < 32 {
+                crate::sequencer::Effect::SetSpeed { speed: param }
+            } else {
+                crate::sequencer::Effect::SetTempo { bpm: param }
+            }
+        }
+        _ => effect.clone(),
+    }
+}
+
+impl eframe::App for HtrkApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.stream.is_none() {
+            self.init_audio();
+        }
+
+        self.handle_keyboard_input(ctx);
+
+        let (playback_row, playback_order, playback_pattern) = {
+            let playing = self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
+            if playing {
+                let order = self.playback_state.current_order.load(std::sync::atomic::Ordering::Relaxed) as usize;
+                let row = self.playback_state.current_row.load(std::sync::atomic::Ordering::Relaxed) as usize;
+                let pat = self.playback_state.current_pattern.load(std::sync::atomic::Ordering::Relaxed) as usize;
+                (Some(row), Some(order), Some(pat))
+            } else {
+                (None, None, None)
+            }
+        };
+
+        if let Some(order) = playback_order {
+            if self.follow_playback && order != self.selected_order {
+                if let Some(ref module) = self.module {
+                    if order < module.order_list.len() {
+                        self.selected_order = order;
+                        self.cursor.row = 0;
+                    }
+                }
+            }
+        }
+
+        if let Some(row) = playback_row {
+            if self.follow_playback {
+                if let Some(ref module) = self.module {
+                    if !module.order_list.is_empty() {
+                        let order_idx = self.selected_order.min(module.order_list.len().saturating_sub(1));
+                        let displayed_pat = module.order_list[order_idx] as usize;
+                        let active_pat = playback_pattern.unwrap_or(0);
+                        if displayed_pat == active_pat {
+                            if row < self.scroll_row {
+                                self.scroll_row = row;
+                            }
+                            if row >= self.scroll_row + VISIBLE_ROWS {
+                                self.scroll_row = row - VISIBLE_ROWS + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            let menu_resp = crate::ui::menu_bar::draw_menu_bar(
+                ui,
+                self.undo_manager.can_undo(),
+                self.undo_manager.can_redo(),
+                self.selection.is_some(),
+                self.follow_playback,
+                self.theme_preset,
+                &self.theme,
+                &self.output_device_names,
+                self.selected_device_name.as_deref(),
+                self.current_sample_rate,
+                &self.current_sample_format,
+            );
+            if menu_resp.new_song {
+                self.new_song();
+            }
+            if menu_resp.open_file {
+                self.open_file_dialog();
+            }
+            if menu_resp.save_file {
+                self.save_current_file();
+            }
+            if menu_resp.save_as {
+                self.save_as_dialog();
+            }
+            if menu_resp.undo {
+                if let Some(ref mut module) = self.module {
+                    if let Some(arc_module) = Arc::get_mut(module) {
+                        let _ = self.undo_manager.undo(arc_module);
+                    }
+                }
+            }
+            if menu_resp.redo {
+                if let Some(ref mut module) = self.module {
+                    if let Some(arc_module) = Arc::get_mut(module) {
+                        let _ = self.undo_manager.redo(arc_module);
+                    }
+                }
+            }
+            if menu_resp.cut {
+                self.copy_selection();
+                self.delete_selection();
+            }
+            if menu_resp.copy {
+                self.copy_selection();
+            }
+            if menu_resp.paste {
+                self.paste_at_cursor();
+            }
+            if menu_resp.select_all {
+                self.select_all();
+            }
+            if menu_resp.follow_playback {
+                self.follow_playback = !self.follow_playback;
+            }
+            if let Some(preset) = menu_resp.theme_changed {
+                self.theme_preset = preset;
+                self.theme = TrackerTheme::from_preset(preset);
+            }
+            if menu_resp.refresh_devices {
+                self.refresh_output_devices();
+            }
+            if let Some(device_name) = menu_resp.select_device {
+                self.pending_device_switch = Some(device_name);
+            }
+            if menu_resp.show_shortcuts {
+                self.show_shortcuts = true;
+            }
+            if menu_resp.show_about {
+                self.show_about = true;
+            }
+        });
+
+        if let Some(device_name) = self.pending_device_switch.take() {
+            self.switch_output_device(device_name);
+        }
+
+        egui::TopBottomPanel::top("transport_bar").show(ctx, |ui| {
+            let transport_resp = crate::ui::transport::draw_transport(
+                ui,
+                &self.playback_state,
+                &mut self.command_sender,
+                &self.theme,
+            );
+            if transport_resp.prev_pattern_clicked {
+                self.skip_to_prev_pattern();
+            }
+            if transport_resp.next_pattern_clicked {
+                self.skip_to_next_pattern();
+            }
+        });
+
+        egui::TopBottomPanel::top("oscilloscope")
+            .exact_height(64.0)
+            .show(ctx, |ui| {
+                crate::ui::oscilloscope::draw_oscilloscope(ui, &self.playback_state, &self.theme);
+            });
+
+        egui::TopBottomPanel::bottom("status_bar")
+            .exact_height(22.0)
+            .show(ctx, |ui| {
+                let cpu = self.playback_state.cpu_usage_pct.load(std::sync::atomic::Ordering::Relaxed);
+                let total_rows = self.current_pattern().map_or(64, |p| p.num_rows);
+                crate::ui::status_bar::draw_status_bar(
+                    ui,
+                    self.module.as_ref().map(|m| m.as_ref()),
+                    self.selected_order,
+                    self.cursor.row,
+                    total_rows,
+                    self.num_channels(),
+                    cpu,
+                    &self.theme,
+                );
+            });
+
+        egui::SidePanel::left("order_list")
+            .min_width(120.0)
+            .default_width(150.0)
+            .show(ctx, |ui| {
+                if let Some(ref module) = self.module {
+                    let order_resp = crate::ui::order_list::draw_order_list(
+                        ui,
+                        module,
+                        self.selected_order,
+                        playback_order,
+                        &self.theme,
+                    );
+                    let should_insert = order_resp.insert_clicked;
+                    let should_delete = order_resp.delete_clicked;
+                    let pattern_changed = order_resp.pattern_changed;
+                    if let Some(idx) = order_resp.selected_order {
+                        self.selected_order = idx;
+                        self.cursor.row = 0;
+                        self.scroll_row = 0;
+                    }
+                    if let Some((order_idx, new_pat)) = pattern_changed {
+                        if let Some(ref mut m) = self.module {
+                            if let Some(arc_module) = Arc::get_mut(m) {
+                                if order_idx < arc_module.order_list.len() {
+                                    arc_module.order_list[order_idx] = new_pat;
+                                }
+                            }
+                        }
+                    }
+                    if should_insert || should_delete {
+                        if let Some(ref mut m) = self.module {
+                            if let Some(arc_module) = Arc::get_mut(m) {
+                                if should_insert {
+                                    let new_pat = arc_module.patterns.len() as u8;
+                                    arc_module.patterns.push(crate::sequencer::Pattern::new(64));
+                                    arc_module.order_list.insert(self.selected_order + 1, new_pat);
+                                }
+                                if should_delete && arc_module.order_list.len() > 1 {
+                                    if self.selected_order < arc_module.order_list.len() {
+                                        arc_module.order_list.remove(self.selected_order);
+                                        if self.selected_order >= arc_module.order_list.len() {
+                                            self.selected_order = arc_module.order_list.len().saturating_sub(1);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    ui.label("No module loaded");
+                }
+            });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if self.module.is_none() {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(100.0);
+                    ui.heading("htrk - tracker");
+                    ui.add_space(20.0);
+                    ui.label("No module loaded. Press Ctrl+O to open a file, or Ctrl+N for a new song.");
+                });
+                return;
+            }
+
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.current_view, AppView::Pattern, "Pattern");
+                ui.selectable_value(&mut self.current_view, AppView::Sample, "Sample");
+                ui.selectable_value(&mut self.current_view, AppView::Instrument, "Instrument");
+            });
+            ui.separator();
+
+            match self.current_view {
+                AppView::Pattern => {
+                    let num_channels = self.num_channels();
+                    let visible_channels = num_channels.min(16);
+
+                    let ch_resp = crate::ui::channel_headers::draw_channel_headers(
+                        ui,
+                        num_channels,
+                        self.scroll_channel,
+                        visible_channels,
+                        &self.muted_channels,
+                        &self.solo_channels,
+                        &self.channel_names,
+                        &mut self.channel_rename_state,
+                        &self.theme,
+                        &self.playback_state,
+                    );
+
+                    if let Some(ch) = ch_resp.toggle_mute {
+                        self.muted_channels[ch] = !self.muted_channels[ch];
+                        self.send_command(AudioCommand::SetChannelMuted {
+                            channel: ch,
+                            muted: self.muted_channels[ch],
+                        });
+                    }
+                    if let Some(ch) = ch_resp.toggle_solo {
+                        self.solo_channels[ch] = !self.solo_channels[ch];
+                        self.send_command(AudioCommand::SetChannelSolo {
+                            channel: ch,
+                            solo: self.solo_channels[ch],
+                        });
+                    }
+                    if let Some((ch, name)) = ch_resp.rename_channel {
+                        if ch < self.channel_names.len() {
+                            self.channel_names[ch] = name;
+                        }
+                    }
+
+                    if let Some(module) = &self.module {
+                        if !module.order_list.is_empty() {
+                            let order_idx = self.selected_order.min(module.order_list.len().saturating_sub(1));
+                            let pat_idx = module.order_list[order_idx] as usize;
+                            let grid_playback_row = if playback_pattern == Some(pat_idx) { playback_row } else { None };
+                            if let Some(pattern) = module.patterns.get(pat_idx) {
+                                let grid_resp = crate::ui::pattern_grid::draw_pattern_grid(
+                                    ui,
+                                    pattern,
+                                    &self.cursor,
+                                    self.selection.as_ref(),
+                                    grid_playback_row,
+                                    self.scroll_row,
+                                    self.scroll_channel,
+                                    num_channels,
+                                    &self.theme,
+                                );
+
+                                if let Some(pos) = grid_resp.clicked_position {
+                                    self.cursor = pos;
+                                    self.selection = None;
+                                    self.selection_anchor = None;
+                                    self.ensure_cursor_visible();
+                                }
+                                if let Some(pos) = grid_resp.drag_position {
+                                    if self.selection_anchor.is_none() {
+                                        self.selection_anchor = Some(self.cursor);
+                                    }
+                                    self.cursor = pos;
+                                    if let Some(anchor) = self.selection_anchor {
+                                        self.selection = Some(Selection {
+                                            start: anchor,
+                                            end: self.cursor,
+                                        });
+                                    }
+                                    self.ensure_cursor_visible();
+                                }
+                            }
+                        }
+                    }
+                }
+                AppView::Sample => {
+                    if let Some(module) = &self.module {
+                        if let Some(event) = crate::ui::sample_editor::draw_sample_editor(
+                            ui,
+                            module,
+                            &mut self.selected_sample,
+                            &self.theme,
+                            &mut self.sample_selection,
+                            &mut self.sample_clipboard,
+                            &mut self.amplify_factor,
+                        ) {
+                            self.handle_sample_edit(event);
+                        }
+                    }
+                }
+                AppView::Instrument => {
+                    if let Some(module) = &self.module {
+                        if let Some(event) = crate::ui::instrument_editor::draw_instrument_editor(
+                            ui,
+                            module,
+                            &mut self.selected_instrument,
+                            &self.theme,
+                        ) {
+                            self.handle_instrument_edit(event);
+                        }
+                    }
+                }
+            }
+        });
+
+        if self.show_shortcuts {
+            crate::ui::help_screen::draw_shortcuts_window(ctx, &mut self.show_shortcuts);
+        }
+
+        if self.show_about {
+            egui::Window::new("About htrk")
+                .open(&mut self.show_about)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .resizable(false)
+                .default_width(350.0)
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.heading("htrk v0.1");
+                        ui.add_space(8.0);
+                        ui.label("A modern tracker / music sequencer");
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new("Built with Rust + egui + cpal")
+                                .size(11.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                        ui.add_space(12.0);
+                        ui.label("Supports .it, .xm, .s3m, .mod formats");
+                        ui.add_space(8.0);
+                    });
+                });
+        }
+
+        ctx.request_repaint();
+    }
+}

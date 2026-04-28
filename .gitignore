@@ -1,0 +1,7 @@
+/target
+*.log
+*.mod
+*.it
+*.s3m
+crash_log.txt
+run_log.txt

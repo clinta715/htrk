@@ -1,0 +1,15 @@
+[package]
+name = "htrk"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+audio_debug = []
+
+[dependencies]
+eframe = "0.31"
+cpal = "0.17"
+ringbuf = "0.4"
+hound = "3.5"
+midir = "0.10"
+rfd = "0.15"
