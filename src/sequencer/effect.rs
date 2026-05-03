@@ -59,7 +59,57 @@ impl Default for Effect {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+impl Effect {
+    pub fn effect_byte(&self) -> Option<u8> {
+        match self {
+            Effect::None => None,
+            Effect::Arpeggio { note1, note2 } => Some((note1 << 4) | (note2 & 0x0F)),
+            Effect::PortamentoUp { speed } => Some(*speed),
+            Effect::PortamentoDown { speed } => Some(*speed),
+            Effect::TonePortamento { speed } => Some(*speed),
+            Effect::Vibrato { speed, depth } => Some((speed << 4) | (depth & 0x0F)),
+            Effect::TonePortamentoVolumeSlide { up } => Some(*up as u8),
+            Effect::VibratoVolumeSlide { up } => Some(*up as u8),
+            Effect::Tremolo { speed, depth } => Some((speed << 4) | (depth & 0x0F)),
+            Effect::SetPanning { pan } => Some(*pan),
+            Effect::SetSampleOffset { offset } => Some((offset >> 8) as u8),
+            Effect::VolumeSlide { up, down } => Some((up << 4) | (down & 0x0F)),
+            Effect::PositionJump { order } => Some(*order),
+            Effect::SetVolume { volume } => Some(*volume),
+            Effect::PatternBreak { row } => Some(((row / 10) << 4) | (row % 10)),
+            Effect::ExtendedEffect { param } => Some(*param),
+            Effect::SetSpeed { speed } => Some(*speed),
+            Effect::SetTempo { bpm } => Some(*bpm),
+            Effect::SetGlobalVolume { volume } => Some(*volume),
+            Effect::GlobalVolumeSlide { up, down } => Some(((*up).max(0) as u8) << 4 | ((*down).unsigned_abs().min(15) as u8)),
+            Effect::SetEnvelopePosition { tick } => Some((tick & 0xFF) as u8),
+            Effect::Panbrello { speed, depth } => Some((speed << 4) | (depth & 0x0F)),
+            Effect::PatternDelay { ticks } => Some(*ticks),
+            Effect::SetPanPosition { pan } => Some(*pan),
+            Effect::GlissandoControl { on } => if *on { Some(1) } else { Some(0) },
+            Effect::VibratoWaveform { waveform } => Some(*waveform),
+            Effect::SetFineTune { tune } => Some(*tune),
+            Effect::PatternLoop { count } => Some(*count),
+            Effect::TremoloWaveform { waveform } => Some(*waveform),
+            Effect::SetPanning16 { pan } => Some(*pan),
+            Effect::Retrigger { interval } => Some(*interval),
+            Effect::NoteCutAfter { ticks } => Some(*ticks),
+            Effect::NoteDelay { ticks } => Some(*ticks),
+            Effect::FinePortamentoUp { speed } => Some(*speed),
+            Effect::FinePortamentoDown { speed } => Some(*speed),
+            Effect::FineVolumeSlideUp { amount } => Some(*amount),
+            Effect::FineVolumeSlideDown { amount } => Some(*amount),
+            Effect::Tremor { ontime, offtime } => Some((ontime << 4) | (offtime & 0x0F)),
+            Effect::VolSetVolume { vol } => Some(*vol),
+            Effect::VolFineSlideUp { amount } => Some(*amount),
+            Effect::VolFineSlideDown { amount } => Some(*amount),
+            Effect::VolSlideUp { amount } => Some(*amount),
+            Effect::VolSlideDown { amount } => Some(*amount),
+            Effect::VolPortamento { speed } => Some(*speed),
+            Effect::VolVibrato { speed } => Some(*speed),
+        }
+    }
+}#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum ExtendedEffect {
     NoteCut,

@@ -460,7 +460,7 @@ The loader extracts only the left (first) channel for playback.
 | Pattern packing | RLE with channel mask | RLE with note/instrument/vol/effect |
 | Sample mapping | Per-note sample map | Per-note range (key regions) |
 | Envelopes | Volume, panning, pitch | Volume, panning |
-| NNAs | Cut/Continue/Off/Fade | N/A (always cut) |
+| NNAs | Cut/Continue/Off/Fade | Cut/Continue/Off/Fade (parsed from extended header; default NoteCut) |
 | Sample compression | IT214/IT215 | Delta-packed (optional ADPCM in some) |
 | Frequency mode | Linear or Amiga | Always linear |
 | Effect codes | Letters (A-Z, S1x-SFx) | Hex (0x0-0xF, Exx, Fxx) |
@@ -491,26 +491,70 @@ XM instruments use "key assignments" — a 96-byte table mapping each note (rela
 first note) to a sample number:
 
 ```
-Instrument header (263+ bytes):
-  - magic: not present (XM has no instrument magic)
-  - header_size: u32
-  - name: 22 bytes
-  - type: u8
-  - num_samples: u16
+Instrument header (varies):
+  - header_size: u32           (offset +0, total header size including this field)
+  - name: 22 bytes             (+4)
+  - type: u8                   (+26, always 0)
+  - num_samples: u16           (+27)
   - If num_samples > 0:
-    - sample_key_map: 96 bytes (note → sample index, 0 = no sample)
-    - envelope_points: 48 bytes (volume) + points for panning
-    - envelope_points: 12 points × 4 bytes (tick:u16, value:u16)
-    - num_volume_points, num_panning_points: u8
-    - volume_sustain, volume_loop_start/end: u8
-    - panning_sustain, panning_loop_start/end: u8
-    - volume_type, panning_type: u8 (bitfield: on/sustain/loop)
-    - vibrato_type, vibrato_sweep, vibrato_depth, vibrato_rate: u8
-    - volume_fadeout: u16
-    - reserved: 22 bytes
-    - Then: sample headers (40 bytes each × num_samples)
-    - Then: sample data (raw delta-packed PCM)
+    - sample_key_map: 96 bytes          (+29, note → sample index, 0 = no sample)
+    - volume envelope: 12 × 4 = 48 bytes (+125, tick:u16, value:u16 each)
+    - panning envelope: 12 × 4 = 48 bytes (+173, tick:u16, value:u16 each)
+    - num_volume_points: u8             (+221)
+    - num_panning_points: u8            (+222)
+    - volume_sustain_point: u8          (+223)
+    - volume_loop_start: u8             (+224)
+    - volume_loop_end: u8               (+225)
+    - panning_sustain_point: u8         (+226)
+    - panning_loop_start: u8            (+227)
+    - panning_loop_end: u8              (+228)
+    - volume_type: u8                   (+229, bitfield)
+    - panning_type: u8                  (+230, bitfield)
+    - vibrato_type: u8                  (+231)
+    - vibrato_sweep: u8                 (+232)
+    - vibrato_depth: u8                 (+233)
+    - vibrato_rate: u8                  (+234)
+    - volume_fadeout: u16               (+235)
+    - reserved: u16                     (+237)
+    --- Extended fields (OpenMPT) ---
+    - nna: u16                          (+241, 0=Cut, 1=Continue, 2=NoteOff, 3=NoteFade)
+    - dct: u16                          (+243, 0=Disabled, 1=Note, 2=Sample, 3=Instrument)
+    - dca: u16                          (+245, 0=NoteCut, 1=NoteOff, 2=NoteFade)
+    - (more extended fields continue...)
+    --- End extended fields ---
+    Then: sample headers (40 bytes each × num_samples, starting at offset header_size)
+    Then: sample data (raw delta-packed PCM)
 ```
+
+#### Type Byte Bitfields
+
+The volume_type and panning_type bytes encode envelope behavior:
+
+| Bit | Mask | Flag | Description |
+|-----|------|------|-------------|
+| 0 | 0x01 | enabled | Envelope is active |
+| 1 | 0x02 | sustain | Sustain point enabled (holds at sustain until note-off) |
+| 2 | 0x04 | loop | Loop region enabled |
+| 3-4 | 0x18 | reserved | Reserved |
+| 5 | 0x20 | carry | Carry envelope position across note triggers |
+
+#### Notes on XM Instrument Parsing
+
+**Envelopes**: Both volume and panning envelopes are parsed **in a single pass** from the
+24-point pool (12 vol + 12 pan). The volume points occupy the first 48 bytes, panning
+points the next 48 bytes. The control bytes (num_points, sustain, loop, type) are read
+once and split per-envelope. Earlier versions of htrk called `parse_xm_envelope` twice,
+which caused the second call to read garbage from beyond the envelope sub-block.
+
+**Carry flag**: Bit 5 of the type byte (`0x20`) enables envelope carry — without it,
+every new note on the same channel resets the envelope to its initial state. This was
+previously hardcoded to `false`.
+
+**NNA/DCT/DCA**: These extended fields are only read when the instrument header is
+large enough (≥247 bytes). If absent, defaults are `NoteCut`, `Disabled`, `NoteCut`
+respectively. Previously all were hardcoded regardless of the file. This was the
+primary cause of premature sample cutoff in XM playback — files authored with
+`NoteOff` or `NoteFade` NNA would abruptly kill voices on re-trigger.
 
 ### XM Sample Data
 
@@ -762,7 +806,7 @@ When loading a non-IT format, we convert to the internal IT-style `Module` struc
 |--------|-----------|
 | MOD → IT | Period → note, 4 ch → expand to 64, no instruments, create instrument per sample |
 | S3M → IT | S3M notes → IT notes, samples become instruments with 1:1 mapping, stereo hard-pan → channel panning |
-| XM → IT | XM delta samples → raw, XM envelopes → IT envelopes, XM key map → IT sample map, no NNAs → NoteCut |
+| XM → IT | XM delta samples → raw, XM envelopes → IT envelopes, XM key map → IT sample map, XM NNAs → mapped 1:1 |
 
 When saving in a non-IT format, we apply constraints:
 

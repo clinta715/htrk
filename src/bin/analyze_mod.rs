@@ -87,10 +87,21 @@ fn flag_warnings(module: &Module, ord_idx: usize, row: usize, ch: usize, cell: &
     }
     if let Note::On(_) = cell.note {
         if let Some(inst) = cell.instrument {
-            if inst as usize >= module.samples.len() {
-                println!("        *** WARNING: instrument {} >= samples.len() {} at order {} row {} ch {}", inst, module.samples.len(), ord_idx, row, ch);
-            } else if inst > 0 && module.samples[inst as usize].data.is_empty() {
-                println!("        *** WARNING: instrument {} has empty sample data at order {} row {} ch {}", inst, ord_idx, row, ch);
+            if inst as usize >= module.instruments.len() {
+                println!("        *** WARNING: instrument {} >= instruments.len() {} at order {} row {} ch {}", inst, module.instruments.len(), ord_idx, row, ch);
+            } else if inst > 0 {
+                let inst_data = &module.instruments[inst as usize];
+                let sample_idx = match cell.note {
+                    Note::On(key) if (key as usize) < 120 => inst_data.sample_map[key as usize],
+                    _ => 0,
+                };
+                if sample_idx == 0 {
+                    println!("        *** WARNING: instrument {} maps note {} to sample 0 at order {} row {} ch {} (no sample for this key)", inst, cell.note, ord_idx, row, ch);
+                } else if (sample_idx as usize) >= module.samples.len() {
+                    println!("        *** WARNING: instrument {} maps to sample {} >= samples.len() {} at order {} row {} ch {}", inst, sample_idx, module.samples.len(), ord_idx, row, ch);
+                } else if module.samples[sample_idx as usize].data.is_empty() {
+                    println!("        *** WARNING: sample {} (from instrument {}) has empty data at order {} row {} ch {}", sample_idx, inst, ord_idx, row, ch);
+                }
             }
         } else {
             println!("        *** WARNING: Note without instrument at order {} row {} ch {}", ord_idx, row, ch);
@@ -119,6 +130,7 @@ fn dump_header(module: &Module) {
     println!("Orders: {} entries, first = {:?}",
         module.order_list.len(),
         module.order_list.first().copied().unwrap_or(0));
+    println!("Instruments: {} total", module.instruments.len());
     println!("Samples: {} total", module.samples.len());
     println!("Patterns: {} total", module.patterns.len());
     println!();

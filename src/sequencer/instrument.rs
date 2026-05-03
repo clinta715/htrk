@@ -108,6 +108,11 @@ pub struct Instrument {
     pub random_volume: u8,
     pub random_panning: u8,
     pub _random_cutoff: u8,
+
+    pub vib_type: u8,
+    pub vib_sweep: u8,
+    pub vib_depth: u8,
+    pub vib_rate: u8,
 }
 
 impl Default for Instrument {
@@ -135,6 +140,10 @@ impl Default for Instrument {
             random_volume: 0,
             random_panning: 0,
             _random_cutoff: 0,
+            vib_type: 0,
+            vib_sweep: 0,
+            vib_depth: 0,
+            vib_rate: 0,
         }
     }
 }

@@ -22,9 +22,8 @@ processing effect commands on each tick, and triggering/cutting voices on the au
                      └──────────┘
 ```
 
-## Tick/Row Processing Flow
+## Tick/Row Processing Flow (non-XM)
 
-```
 For each audio sample:
   sample_counter++
   if sample_counter >= samples_per_tick:
@@ -69,52 +68,84 @@ For each audio sample:
     if current_tick >= speed:
       current_tick = 0
       advance_row()
+
+## XM-Specific Tick Processing
+
+When `module_format == ModuleFormat::XM`, a **separate code path** is used
+(`process_tick_zero_xm` / `process_effects_tick_xm`) that implements FT2-accurate
+playback:
+
+### Tick Zero (XM)
+
+1. The raw effect type byte (`eff_typ_xm`) and parameter byte (`eff_xm`) are stored
+   on the `ChannelState` for per-tick effect dispatch.
+2. **Volume column** effects are processed through the format loader (not the engine).
+   `Cell.volume` holds decoded volume values (0-64) or None for effect-based columns.
+3. **Note triggering** uses pitch computed from the Amiga/Linear period table:
+   - `period = get_note_period(note, fine_tune, linear_slides)`
+   - `frequency = period_to_frequency(period, linear_slides, 8363)`
+4. Tone portamento stores the target period (`want_period`) and direction (`porta_dir`)
+   without retriggering the voice.
+5. **Portamento up/down** apply immediately on tick 0 for XM (not deferred like MOD).
+6. Effects are dispatched by their raw type byte (`eff_typ_xm`) via a match block
+   that mirrors FT2's function pointer array structure.
+
+### Ticks 1..N (XM)
+
+1. Continuous effects are dispatched by `eff_typ_xm` byte value:
+   - `0` → Arpeggio (uses `get_arp_tab()` 256-entry table matching FT2 overflow)
+   - `1` → Portamento up (period-based)
+   - `2` → Portamento down (period-based)
+   - `3` → Tone portamento (period slide toward target, optional glissando)
+   - `4` → Vibrato (period modulation with 32-entry vibTab)
+   - `5` → Tone portamento + volume slide
+   - `6` → Vibrato + volume slide
+   - `7` → Tremolo (with FT2 vibPos bug)
+   - `0xA` → Volume slide
+   - `0xE` → Extended effects (retrig, note cut, note delay)
+   - `0x1D` → Tremor
+   - `0x1B` → Multi retrig (Rxy)
+2. Volume column non-zero tick effects are applied from the raw `vol_kol` byte:
+   - `0x6x` → Volume slide down
+   - `0x7x` → Volume slide up
+   - `0xDx` → Pan slide left
+   - `0xEx` → Pan slide right
+   - `0xFx` → Tone portamento
+3. Envelopes are advanced **after** all effects (matching FT2's `fixaEnvelopeVibrato`).
 ```
 
 ## Row Advancement
 
 ```rust
-impl SequencerState {
-    fn advance_row(&mut self, module: &Module) {
-        // Handle pattern break
-        let break_row = self.pattern_break_row.take();
-        let jump_order = self.position_jump_order.take();
+impl SequencerEngine {
+    fn advance_row(&mut self) {
+        self.state.current_tick = 0;
 
-        if let Some(order) = jump_order {
-            if (order as usize) < module.order_list.len() {
-                self.current_order = order as u16;
-                self.current_row = break_row.unwrap_or(0);
-                self.current_pattern = module.order_list[order as usize];
-                return;
+        // Clear per-voice cutoff ticks
+        for voice in &mut self.voices {
+            if voice.active {
+                voice.cutoff_tick = None;
             }
         }
 
-        if let Some(row) = break_row {
-            self.current_order += 1;
-            if (self.current_order as usize) >= module.order_list.len() {
-                // Song end
-                self.playing = false;
-                return;
-            }
-            self.current_pattern = module.order_list[self.current_order as usize];
-            self.current_row = row.min(self.get_current_pattern(module).num_rows as u8 - 1);
+        // Reset per-channel row-level state
+        for ch in &mut self.state.channels {
+            ch.retrigger_set_this_row = false;
+            ch.delayed_cell = None;
+            ch.note_delay_ticks = 0;
+            ch.active_effects = ActiveEffects::default();  // Prevent carryover between patterns
+        }
+
+        // Handle pattern delay
+        if self.state.row_delay_active && self.state.pattern_delay_ticks > 0 {
+            self.state.pattern_delay_ticks -= 1;
             return;
         }
+        self.state.row_delay_active = false;
+        self.state.pattern_delay_ticks = 0;
 
-        // Normal advancement
-        self.current_row += 1;
-        let pattern = self.get_current_pattern(module);
-
-        if self.current_row as usize >= pattern.num_rows {
-            // End of pattern, advance order
-            self.current_order += 1;
-            if (self.current_order as usize) >= module.order_list.len() {
-                self.playing = false;
-                return;
-            }
-            self.current_pattern = module.order_list[self.current_order as usize];
-            self.current_row = 0;
-        }
+        // Handle position jump / pattern break
+        // ... (same logic as before)
     }
 }
 ```
@@ -299,7 +330,9 @@ fn process_row_effects(
             engine.set_note_cut_after(channel, ticks);
         }
         Effect::NoteDelay { ticks } => {
-            engine.set_note_delay(channel, ticks);
+            // NoteDelay is handled in process_cell, not in apply_effect.
+            // The cell is stored in channel_state.delayed_cell and triggered
+            // on the target tick via trigger_delayed_note.
         }
         Effect::Retrigger { interval } => {
             channel_state.last_retrigger_interval = interval;
@@ -317,11 +350,11 @@ fn process_tick_effects(
     channel: usize,
     channel_state: &mut ChannelState,
 ) {
-    // Note delay check
-    if let Some(target_tick) = engine.get_note_delay_tick(channel) {
-        if engine.sequencer.current_tick == target_tick {
-            engine.trigger_delayed_note(channel);
-        }
+    // Note delay check (per-channel, not per-voice)
+    if channel_state.delayed_cell.is_some()
+        && engine.sequencer.current_tick == channel_state.note_delay_ticks
+    {
+        engine.trigger_delayed_note(channel);
     }
 
     // Note cut check
@@ -383,11 +416,12 @@ fn process_tick_effects(
         engine.apply_arpeggio(channel, semitone_offset);
     }
 
-    // Retrigger
-    if channel_state.last_retrigger_interval > 0 {
-        if engine.sequencer.current_tick % channel_state.last_retrigger_interval == 0 {
-            engine.retrigger_channel(channel);
-        }
+    // Retrigger (based on effect memory, continues across rows until overridden)
+    if channel_state.last_retrigger_interval > 0
+        && engine.sequencer.current_tick > 0
+        && engine.sequencer.current_tick % channel_state.last_retrigger_interval == 0
+    {
+        engine.retrigger_channel(channel);
     }
 }
 ```
@@ -466,6 +500,75 @@ fn period_to_frequency(period: f64) -> f64 {
     8363.0 * 1712.0 / period
 }
 ```
+
+## Effect Activity Tracking
+
+Each channel maintains an `ActiveEffects` bitmask that tracks which continuous effects
+are currently active. This replaces the old approach of checking effect parameters
+(> 0) directly, which caused side effects from inactive effects.
+
+```rust
+struct ActiveEffects {
+    volume_slide: bool,
+    portamento_up: bool,
+    portamento_down: bool,
+    tone_portamento: bool,
+    vibrato: bool,
+    tremolo: bool,
+    arpeggio: bool,
+    panbrello: bool,
+    tremor: bool,
+}
+```
+
+Effects set their corresponding flag in `ActiveEffects` when applied via `apply_effect`.
+On tick 0 of each row, the flags are reset.     Only effects whose flag is set are
+processed on subsequent ticks (1..N). This prevents stale effect data from a previous
+row from unintentionally affecting the current row.
+
+For XM playback, a separate set of effect flags is not used — instead the raw
+`eff_typ_xm` byte from the pattern cell is stored on `ChannelState` and effects
+fire based on whether their effect type was written to the channel.
+
+For MOD format, some effects (portamento, volume slide) are **not** applied on tick 0
+(they only set the flag and store parameters). The effect takes effect starting from
+tick 1. For IT/XM, these effects also apply on tick 0.
+
+## Note Delay Processing
+
+Note Delay (EEx / EDx) is handled via per-channel state rather than per-voice:
+
+```rust
+struct ChannelState {
+    // ...
+    delayed_cell: Option<Cell>,     // The cell to trigger on the delayed tick
+    note_delay_ticks: u8,           // Which tick to fire the delayed note on
+    active_effects: ActiveEffects,  // Which continuous effects are active
+}
+```
+
+When `process_cell_with_module` encounters a cell with a NoteDelay effect:
+1. The full cell is stored in `delayed_cell`
+2. `note_delay_ticks` is set from the effect parameter
+3. `last_note` is updated immediately (for display / subsequent effect targeting)
+4. Volume column and sample offset effects are applied immediately
+5. The note trigger itself is deferred
+
+On the target tick, `trigger_delayed_note` re-processes the stored cell:
+1. Resolves the instrument and sample (using the current `last_instrument` + key mapping)
+2. Resets `channel_volume` to the sample's default volume when a new instrument is specified
+3. Applies volume column and SetVolume from the cell
+4. Triggers the note via `trigger_channel_note` (which handles sample offset from the cell)
+
+**Critical detail**: The `channel_volume` reset (step 2) was missing in earlier versions,
+causing delayed notes to inherit whatever volume was left by previous per-row effects
+(e.g., volume slides). For example, at pattern 8 row 30 of `cry4bass.mod`, channel 0's
+delayed C-5 played at a reduced volume because `VolSlide(0F)` on row 29 had slid the
+volume down, and the delayed trigger used that stale value instead of sample 12's
+default volume (64).
+
+This replaces the old approach of storing a `delay_tick` on the `Voice` struct and
+re-triggering using `last_note` / `last_sample` without re-evaluating the cell.
 
 ## Special Row Events
 

@@ -4,9 +4,9 @@ use crate::errors::{FormatError, FormatResult};
 use crate::formats::common::*;
 use crate::formats::FormatHandler;
 use crate::sequencer::{
-    Cell, Effect, Envelope, EnvelopeFlags, EnvelopePoint, Instrument, LoopType, Module,
-    ModuleFlags, ModuleFormat, NewNoteAction, Note, Pattern, Sample, SampleFlags,
-    VibratoWaveform, MAX_CHANNELS,
+    Cell, DuplicateCheckAction, DuplicateCheckType, Effect, Envelope, EnvelopeFlags,
+    EnvelopePoint, Instrument, LoopType, Module, ModuleFlags, ModuleFormat, NewNoteAction,
+    Note, Pattern, Sample, SampleFlags, VibratoWaveform, MAX_CHANNELS,
 };
 
 const XM_HEADER_MAGIC: &[u8; 17] = b"Extended Module: ";
@@ -73,7 +73,7 @@ impl FormatHandler for XmHandler {
         }
 
         let num_channels = num_channels.clamp(1, XM_MAX_CHANNELS);
-        let linear_slides = (flags & 0x02) != 0;
+        let linear_slides = (flags & 0x01) != 0;
 
         let patterns_base = 60 + header_size;
         let _patterns: Vec<Pattern> = (0..num_patterns)
@@ -145,15 +145,103 @@ impl FormatHandler for XmHandler {
                     }
                 }
 
-                let vol_env = parse_xm_envelope(data, &mut pos, true)?;
-                let pan_env = parse_xm_envelope(data, &mut pos, false)?;
+                let mut vol_points_raw = Vec::with_capacity(12);
+                for _ in 0..12 {
+                    let tick = read_u16_le(data, &mut pos)?;
+                    let value = read_u16_le(data, &mut pos)?;
+                    vol_points_raw.push(EnvelopePoint { tick, value: (value & 0xFF) as u8 });
+                }
 
-                let _vibrato_type = read_u8(data, &mut pos)?;
-                let _vibrato_sweep = read_u8(data, &mut pos)?;
-                let _vibrato_depth = read_u8(data, &mut pos)?;
-                let _vibrato_rate = read_u8(data, &mut pos)?;
+                let mut pan_points_raw = Vec::with_capacity(12);
+                for _ in 0..12 {
+                    let tick = read_u16_le(data, &mut pos)?;
+                    let value = read_u16_le(data, &mut pos)?;
+                    pan_points_raw.push(EnvelopePoint { tick, value: (value & 0xFF) as u8 });
+                }
+
+                let num_vol_points = read_u8(data, &mut pos)?;
+                let num_pan_points = read_u8(data, &mut pos)?;
+                let vol_sustain = read_u8(data, &mut pos)?;
+                let vol_loop_start = read_u8(data, &mut pos)?;
+                let vol_loop_end = read_u8(data, &mut pos)?;
+                let pan_sustain = read_u8(data, &mut pos)?;
+                let pan_loop_start = read_u8(data, &mut pos)?;
+                let pan_loop_end = read_u8(data, &mut pos)?;
+                let vol_env_type = read_u8(data, &mut pos)?;
+                let pan_env_type = read_u8(data, &mut pos)?;
+                let vibrato_type = read_u8(data, &mut pos)?;
+                let vibrato_sweep = read_u8(data, &mut pos)?;
+                let vibrato_depth = read_u8(data, &mut pos)?;
+                let vibrato_rate = read_u8(data, &mut pos)?;
                 let fade_out = read_u16_le(data, &mut pos)?;
                 let _reserved = read_u16_le(data, &mut pos)?;
+
+                let vol_points = (num_vol_points as usize).min(12).min(vol_points_raw.len());
+                vol_points_raw.truncate(vol_points);
+                let pan_points = (num_pan_points as usize).min(12).min(pan_points_raw.len());
+                pan_points_raw.truncate(pan_points);
+
+                let vol_env = if vol_env_type == 0 && vol_points_raw.is_empty() {
+                    None
+                } else {
+                    Some(Envelope {
+                        points: vol_points_raw,
+                        sustain_point: if (vol_env_type & 0x02) != 0 && (vol_sustain as usize) < vol_points { Some(vol_sustain as usize) } else { None },
+                        loop_start: if (vol_env_type & 0x04) != 0 && (vol_loop_start as usize) < vol_points { Some(vol_loop_start as usize) } else { None },
+                        loop_end: if (vol_env_type & 0x04) != 0 && (vol_loop_end as usize) < vol_points { Some(vol_loop_end as usize) } else { None },
+                        flags: EnvelopeFlags {
+                            enabled: (vol_env_type & 0x01) != 0,
+                            sustain: (vol_env_type & 0x02) != 0,
+                            loop_: (vol_env_type & 0x04) != 0,
+                            carry: (vol_env_type & 0x20) != 0,
+                        },
+                    })
+                };
+
+                let pan_env = if pan_env_type == 0 && pan_points_raw.is_empty() {
+                    None
+                } else {
+                    Some(Envelope {
+                        points: pan_points_raw,
+                        sustain_point: if (pan_env_type & 0x02) != 0 && (pan_sustain as usize) < pan_points { Some(pan_sustain as usize) } else { None },
+                        loop_start: if (pan_env_type & 0x04) != 0 && (pan_loop_start as usize) < pan_points { Some(pan_loop_start as usize) } else { None },
+                        loop_end: if (pan_env_type & 0x04) != 0 && (pan_loop_end as usize) < pan_points { Some(pan_loop_end as usize) } else { None },
+                        flags: EnvelopeFlags {
+                            enabled: (pan_env_type & 0x01) != 0,
+                            sustain: (pan_env_type & 0x02) != 0,
+                            loop_: (pan_env_type & 0x04) != 0,
+                            carry: (pan_env_type & 0x20) != 0,
+                        },
+                    })
+                };
+
+                let mut nna = NewNoteAction::NoteCut;
+                let mut dct = DuplicateCheckType::Disabled;
+                let mut dca = DuplicateCheckAction::NoteCut;
+                let extended_offset = inst_start + 241;
+                if inst_header_size >= extended_offset + 6 {
+                    let mut ext_pos = extended_offset;
+                    let nna_val = read_u16_le(data, &mut ext_pos)?;
+                    let dct_val = read_u16_le(data, &mut ext_pos)?;
+                    let dca_val = read_u16_le(data, &mut ext_pos)?;
+                    nna = match nna_val {
+                        1 => NewNoteAction::Continue,
+                        2 => NewNoteAction::NoteOff,
+                        3 => NewNoteAction::NoteFade,
+                        _ => NewNoteAction::NoteCut,
+                    };
+                    dct = match dct_val {
+                        1 => DuplicateCheckType::Note,
+                        2 => DuplicateCheckType::Sample,
+                        3 => DuplicateCheckType::Instrument,
+                        _ => DuplicateCheckType::Disabled,
+                    };
+                    dca = match dca_val {
+                        1 => DuplicateCheckAction::NoteOff,
+                        2 => DuplicateCheckAction::NoteFade,
+                        _ => DuplicateCheckAction::NoteCut,
+                    };
+                }
 
                 pos = inst_start + inst_header_size;
 
@@ -185,9 +273,9 @@ impl FormatHandler for XmHandler {
                     panning_envelope: pan_env,
                     pitch_envelope: None,
                     fade_out,
-                    nna: NewNoteAction::NoteCut,
-                    duplicate_check_type: crate::sequencer::DuplicateCheckType::Disabled,
-                    duplicate_check_action: crate::sequencer::DuplicateCheckAction::NoteCut,
+                    nna,
+                    duplicate_check_type: dct,
+                    duplicate_check_action: dca,
                     pitch_pan_separation: 0,
                     pitch_pan_center: 60,
                     global_volume: 128,
@@ -196,6 +284,10 @@ impl FormatHandler for XmHandler {
                     random_volume: 0,
                     random_panning: 0,
                     _random_cutoff: 0,
+                    vib_type: vibrato_type,
+                    vib_sweep: vibrato_sweep,
+                    vib_depth: vibrato_depth,
+                    vib_rate: vibrato_rate,
                 });
             } else {
                 instruments.push(Instrument {
@@ -247,7 +339,7 @@ impl FormatHandler for XmHandler {
             samples: all_samples,
             initial_bpm: default_bpm,
             initial_speed: default_tempo as u8,
-            initial_global_volume: 128,
+            initial_global_volume: 64,
             initial_mixing_volume: 48,
             channel_panning,
             channel_volume,
@@ -364,10 +456,10 @@ fn decode_xm_sample(data: &[u8], pos: &mut usize, sh: &XmSampleHeader) -> Format
 
 fn decode_delta_8bit(raw: &[u8]) -> Vec<f32> {
     let mut result = Vec::with_capacity(raw.len());
-    let mut acc: i16 = 0;
+    let mut acc: u8 = 0;
     for &b in raw {
-        acc = acc.wrapping_add(b as i8 as i16);
-        result.push(acc as f32 / 128.0);
+        acc = acc.wrapping_add(b);
+        result.push((acc as i8) as f32 / 128.0);
     }
     result
 }
@@ -375,15 +467,16 @@ fn decode_delta_8bit(raw: &[u8]) -> Vec<f32> {
 fn decode_delta_16bit(raw: &[u8]) -> Vec<f32> {
     let num_samples = raw.len() / 2;
     let mut result = Vec::with_capacity(num_samples);
-    let mut acc: i32 = 0;
+    let mut acc: u16 = 0;
     for chunk in raw.chunks_exact(2) {
         let delta = i16::from_le_bytes([chunk[0], chunk[1]]);
-        acc = acc.wrapping_add(delta as i32);
-        result.push(acc as f32 / 32768.0);
+        acc = acc.wrapping_add(delta as u16);
+        result.push((acc as i16) as f32 / 32768.0);
     }
     result
 }
 
+#[allow(dead_code)]
 fn parse_xm_envelope(
     data: &[u8],
     pos: &mut usize,
@@ -1096,10 +1189,10 @@ fn write_xm_instrument(out: &mut Vec<u8>, xm_inst: &XmInstrumentInfo, module: &M
         out.push(vol_env_type);
         out.push(pan_env_type);
 
-        out.push(0);
-        out.push(0);
-        out.push(0);
-        out.push(0);
+        out.push(inst.vib_type);
+        out.push(inst.vib_sweep);
+        out.push(inst.vib_depth);
+        out.push(inst.vib_rate);
         out.extend_from_slice(&inst.fade_out.to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes());
 

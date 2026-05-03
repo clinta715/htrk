@@ -242,6 +242,10 @@ fn parse_it_instrument(data: &[u8], offset: usize) -> FormatResult<Instrument> {
         random_volume,
         random_panning,
         _random_cutoff: 0,
+        vib_type: 0,
+        vib_sweep: 0,
+        vib_depth: 0,
+        vib_rate: 0,
     })
 }
 

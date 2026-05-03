@@ -5,6 +5,87 @@
 The audio engine runs entirely within the cpal audio callback on a real-time thread.
 It must never allocate, block, or panic. All buffers are pre-allocated at init time.
 
+## XM Playback Accuracy
+
+The XM format uses **FastTracker 2's** period-based pitch system, which differs
+fundamentally from the MIDI frequency-based system used by IT/S3M. The sequencer
+maintains a separate code path (`process_effects_tick_xm` / `process_tick_zero_xm`)
+for XM format that replicates FT2's exact behavior:
+
+### Period System
+
+Two period tables are generated (1936 entries each):
+- **Amiga mode**: `period = 1712 / 2^(index / (12*16))`
+- **Linear mode**: `period = 7680 - note*64 + fine/2`, with `logTab[768]` for frequency conversion
+
+The `LINEAR_FREQUENCIES` flag from the XM header is now respected. When set, the
+linear period table and logTab-based frequency conversion are used instead of the
+Amiga formula.
+
+### Portamento (period-based)
+
+```
+XM:   real_period -= speed * 4     (linear period units)
+IT:   frequency *= 2^(speed / 768) (exponential frequency)
+```
+
+This matches FT2's exact period-sliding behavior where each semitone spans 16
+period units, and the command parameter maps directly to period deltas.
+
+### Vibrato
+
+Uses a **32-entry** `vibTab[]` table matching FT2's original, instead of the
+64-entry sine table. The vibrato modulates the **period** (not frequency):
+
+```
+period_offset = (vibTab[phase] * depth) >> 5
+out_period = real_period + period_offset  (additive, signed)
+```
+
+### Tremolo (with FT2 bug replication)
+
+The ramp waveform sign check uses `vibPos` instead of `tremPos`, replicating a
+known FT2.08/FT2.09 bug for maximum playback accuracy:
+
+```c
+// FT2 bug: should be ch->tremPos, not ch->vibPos
+if (ch->vibPos < 0)
+    tmp_trem = ~tmp_trem;
+```
+
+### Envelope Timing
+
+On trigger, envelope position starts at -1 (equivalent to FT2's counter starting at
+65535, which wraps to 0 on the first advance). Envelopes advance before effect
+processing, matching FT2's `fixaEnvelopeVibrato()` ordering.
+
+### Fadeout
+
+XM fadeout uses a 32768-range integer system matching FT2:
+
+```
+fadeOutAmp: 0..32768
+fadeOutSpeed: raw from XM header (0..4095)
+Volume: (envVal * outVol * fadeOutAmp) >> 18 then * globVol >> 7
+```
+
+This contrasts with the non-XM path which uses float multiplication and a 4096
+divisor.
+
+### Auto-Vibrato (Instrument Header)
+
+Instrument-level auto-vibrato is now fully implemented with:
+- Sine, square, ramp-up, ramp-down waveforms (256-entry `vibSineTab`)
+- Sweep: amplitude starts at 0 and ramps linearly to `vibDepth*256`
+- Modulates the base period directly
+
+### Volume Column
+
+For XM format, the volume column is decoded by the format loader (not the engine)
+into the standard XM effects via `decode_xm_volume_column()`. Volume column
+non-zero tick effects (slide down/up, vibrato, pan slide, tone portamento) are
+processed in the XM tick-zero effects path using the raw `vol_kol` byte.
+
 ## Pipeline
 
 ```
@@ -369,13 +450,23 @@ impl AudioEngine {
             portamento_target: None,
             portamento_speed: 0.0,
             cutoff_tick: None,
-            delay_tick: None,
         };
     }
 }
 ```
 
 ### NNA (New Note Action) Handling
+
+NNA is determined per-instrument (parsed from file for IT, and from extended XM
+headers). Previously XM NNAs were hardcoded to `NoteCut`, causing premature sample
+cutoff. Now NNA, DCT, and DCA are read from the XM extended header when available:
+
+| XM Value | NNA Enum |
+|----------|----------|
+| 0 | NoteCut |
+| 1 | Continue |
+| 2 | NoteOff |
+| 3 | NoteFade |
 
 ```rust
 impl AudioEngine {
@@ -480,62 +571,46 @@ fn resample_cubic(data: &[f32], position: f64) -> f32 {
 }
 ```
 
-### Sample Position Advancement
+### Mixer Sample Position Advancement
+
+The mixer advances voice positions per-sample and handles loop wrapping with
+**float-based boundary checks** (`voice.position >= loop_end as f64`) rather than
+truncated integer checks (`voice.position as usize >= loop_end`). This avoids
+off-by-loop-boundary errors when the fractional part of position approaches `loop_end`.
 
 ```rust
-impl Voice {
-    fn advance_position(&mut self, samples: usize) {
-        for _ in 0..samples {
-            self.position += self.direction * self.sample_delta;
-
-            match self.loop_type {
-                LoopType::None => {
-                    if self.position >= self.position_end {
-                        self.active = false;
-                        return;
-                    }
-                }
-                LoopType::Forward => {
-                    if self.position >= self.loop_end as f64 {
-                        self.position = self.loop_start as f64
-                            + (self.position - self.loop_end as f64);
-                    }
-                }
-                LoopType::PingPong => {
-                    if self.direction > 0.0 && self.position >= self.loop_end as f64 {
-                        self.direction = -1.0;
-                        self.position = self.loop_end as f64
-                            - (self.position - self.loop_end as f64);
-                    } else if self.direction < 0.0
-                           && self.position <= self.loop_start as f64 {
-                        self.direction = 1.0;
-                        self.position = self.loop_start as f64
-                            + (self.loop_start as f64 - self.position);
-                    }
-                }
-                LoopType::Backward => {
-                    // Same as PingPong but initial direction is -1
-                    // (handled at voice init)
-                    if self.direction < 0.0 && self.position <= self.loop_start as f64 {
-                        self.direction = 1.0;
-                        self.position = self.loop_start as f64;
-                    } else if self.direction > 0.0
-                           && self.position >= self.loop_end as f64 {
-                        self.direction = -1.0;
-                        self.position = self.loop_end as f64;
-                    }
-                }
+match loop_type {
+    LoopType::Forward => {
+        if loop_end > loop_start && voice.position >= loop_end as f64 {
+            let loop_len = (loop_end - loop_start) as f64;
+            voice.position = loop_start as f64
+                + (voice.position - loop_start as f64) % loop_len;
+        }
+    }
+    LoopType::PingPong => {
+        if loop_end > loop_start {
+            if voice.direction > 0.0 && voice.position >= loop_end as f64 {
+                voice.position = 2.0 * loop_end as f64 - voice.position;
+                voice.direction = -1.0;
+            } else if voice.direction < 0.0 && voice.position < loop_start as f64 {
+                voice.position = 2.0 * loop_start as f64 - voice.position;
+                voice.direction = 1.0;
             }
-
-            // Bounds check
-            if self.position < 0.0 || self.position >= self.sample_data_len() {
-                if self.loop_type == LoopType::None {
-                    self.active = false;
-                    return;
-                }
-                self.position = self.position.max(0.0)
-                    .min(self.position_end - 1.0);
+        }
+    }
+    LoopType::Backward => {
+        if loop_end > loop_start && voice.position < loop_start as f64 {
+            let underflow = loop_start as f64 - voice.position;
+            voice.position = (loop_end - 1) as f64 - underflow;
+            // Safety clamp
+            if voice.position < loop_start as f64 {
+                voice.position = (loop_end - 1) as f64;
             }
+        }
+    }
+    LoopType::None => {
+        if voice.position as usize >= sample_data.len() || voice.position < 0.0 {
+            voice.active = false;
         }
     }
 }
@@ -824,3 +899,38 @@ frequency = 8363 * 1712 / period
 ```
 
 Where period comes from the period table (see data-model.md).
+
+### XM Frequency Mode
+
+For XM with `LINEAR_FREQUENCIES` disabled (Amiga mode):
+
+```
+frequency = 8363 * 1712 / period
+```
+
+For XM with `LINEAR_FREQUENCIES` enabled:
+
+```
+logTab[x] = floor(65536 * 2^(x / 768))
+invPeriod = 7680 - period
+quotient = invPeriod / 768
+remainder = invPeriod % 768
+frequency = logTab[remainder] * 8363 / 65536 * 2^(5 - quotient)
+```
+
+## Reference Implementation
+
+The XM playback accuracy work is based on the `ft2play` reference implementation
+(in the `ft2play-main/` directory of this repository), which replicates FastTracker 2
+version 2.08/2.09 behavior. Key differences corrected by this work:
+
+| Area | Before | After |
+|------|--------|-------|
+| Pitch system | MIDI frequency (all formats) | Period-based tables for XM |
+| Portamento | Exponential frequency slide | Linear period slide (`speed*4`) |
+| Vibrato | 64-entry table, frequency multiplier | 32-entry FT2 `vibTab`, period additive |
+| Tremolo ramp | Uses correct `tremPos` sign | Uses `vibPos` (FT2 bug) |
+| Fadeout | float 0..1, divisor 4096 | integer 0..32768, divisor from header |
+| Envelope timing | position=0 on trigger | position=-1 (counter 65535 wraparound) |
+| Auto-vibrato | not implemented | Full implementation with sweep |
+| LINEAR_FREQUENCIES flag | stored but ignored | respected for period/frequency lookup |

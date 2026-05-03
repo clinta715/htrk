@@ -1,7 +1,21 @@
 use crate::sequencer::effect::Effect;
 use crate::sequencer::note::Note;
+use crate::sequencer::pattern::Cell;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ActiveEffects {
+    pub volume_slide: bool,
+    pub portamento_up: bool,
+    pub portamento_down: bool,
+    pub tone_portamento: bool,
+    pub vibrato: bool,
+    pub tremolo: bool,
+    pub arpeggio: bool,
+    pub panbrello: bool,
+    pub tremor: bool,
+}
+
+#[derive(Clone, Debug)]
 pub struct ChannelState {
     pub last_note: Note,
     pub last_instrument: u8,
@@ -38,6 +52,36 @@ pub struct ChannelState {
 
     pub muted: bool,
     pub solo: bool,
+
+    pub delayed_cell: Option<Cell>,
+    pub note_delay_ticks: u8,
+    pub active_effects: ActiveEffects,
+
+    pub real_period: u16,
+    pub want_period: u16,
+    pub out_period: u16,
+    pub porta_speed_period: u16,
+    pub porta_dir: u8,
+    pub vib_pos: u8,
+    pub trem_pos: u8,
+    pub vib_speed: u8,
+    pub vib_depth: u8,
+    pub trem_speed: u8,
+    pub trem_depth: u8,
+    pub wave_ctrl: u8,
+    pub retrig_cnt: u8,
+    pub retrig_speed: u8,
+    pub retrig_vol: u8,
+
+    pub eff_typ_xm: u8,
+    pub eff_xm: u8,
+    pub vol_kol: u8,
+    pub rel_ton: i8,
+    pub real_vol: u8,
+    pub old_vol: u8,
+    pub old_pan: u8,
+    pub tremor_pos_byte: u8,
+    pub note_cut_tick: Option<u8>,
 }
 
 impl Default for ChannelState {
@@ -73,6 +117,33 @@ impl Default for ChannelState {
             portamento_target_period: None,
             muted: false,
             solo: false,
+            delayed_cell: None,
+            note_delay_ticks: 0,
+            active_effects: ActiveEffects::default(),
+            real_period: 0,
+            want_period: 0,
+            out_period: 0,
+            porta_speed_period: 0,
+            porta_dir: 0,
+            vib_pos: 0,
+            trem_pos: 0,
+            vib_speed: 0,
+            vib_depth: 0,
+            trem_speed: 0,
+            trem_depth: 0,
+            wave_ctrl: 0,
+            retrig_cnt: 0,
+            retrig_speed: 0,
+            retrig_vol: 0,
+            eff_typ_xm: 0xFF,
+            eff_xm: 0,
+            vol_kol: 0,
+            rel_ton: 0,
+            real_vol: 64,
+            old_vol: 64,
+            old_pan: 32,
+            tremor_pos_byte: 0,
+            note_cut_tick: None,
         }
     }
 }
@@ -111,7 +182,9 @@ pub struct SequencerState {
 
     pub pattern_break_row: Option<u8>,
     pub position_jump_order: Option<u8>,
+    pub position_jump_flag: bool,
     pub pattern_delay_ticks: u8,
+    pub pattern_delay_ticks2: u8,
     pub row_delay_active: bool,
     pub pattern_loop_start: Option<(u16, u8)>,
     pub pattern_loop_count: u8,
@@ -138,7 +211,9 @@ impl Default for SequencerState {
             paused: false,
             pattern_break_row: None,
             position_jump_order: None,
+            position_jump_flag: false,
             pattern_delay_ticks: 0,
+            pattern_delay_ticks2: 0,
             row_delay_active: false,
             pattern_loop_start: None,
             pattern_loop_count: 0,

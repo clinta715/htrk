@@ -67,7 +67,6 @@ pub struct Voice {
     pub fading: bool,
     pub note_off: bool,
     pub cutoff_tick: Option<u16>,
-    pub delay_tick: Option<u16>,
 
     pub instrument_index: Option<u8>,
     pub sample_index: Option<u8>,
@@ -77,6 +76,14 @@ pub struct Voice {
     pub channel: Option<usize>,
 
     pub direction: f64,
+
+    pub auto_vib_pos: u8,
+    pub auto_vib_amp: i32,
+    pub auto_vib_sweep: i32,
+    pub env_sustain_active: bool,
+    pub fade_out_amp: i32,
+    pub fade_out_speed_i32: i32,
+    pub auto_vib_period_base: u16,
 }
 
 impl Voice {
@@ -143,7 +150,6 @@ self.tremor_mute = false;
         self.fading = false;
         self.note_off = false;
         self.cutoff_tick = None;
-        self.delay_tick = None;
         self.instrument_index = instrument_index;
         self.sample_index = sample_index;
         self.note = note;
@@ -152,6 +158,13 @@ self.tremor_mute = false;
         self.channel = None;
 
         self.direction = 1.0;
+        self.auto_vib_pos = 0;
+        self.auto_vib_amp = 0;
+        self.auto_vib_sweep = 0;
+        self.env_sustain_active = true;
+        self.fade_out_amp = 32768i32;
+        self.fade_out_speed_i32 = 0;
+        self.auto_vib_period_base = 0;
     }
 
     pub fn deactivate(&mut self) {
@@ -205,7 +218,6 @@ impl Default for Voice {
             fading: false,
             note_off: false,
             cutoff_tick: None,
-            delay_tick: None,
             instrument_index: None,
             sample_index: None,
             note: Note::None,
@@ -213,6 +225,13 @@ impl Default for Voice {
             fade_out_rate: 0,
             channel: None,
             direction: 1.0,
+            auto_vib_pos: 0,
+            auto_vib_amp: 0,
+            auto_vib_sweep: 0,
+            env_sustain_active: true,
+            fade_out_amp: 32768i32,
+            fade_out_speed_i32: 0,
+            auto_vib_period_base: 0,
         }
     }
 }

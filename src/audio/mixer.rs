@@ -63,7 +63,7 @@ pub fn mix_voices(
 
             match loop_type {
                 LoopType::Forward => {
-                    if loop_end > loop_start && voice.position as usize >= loop_end {
+                    if loop_end > loop_start && voice.position >= loop_end as f64 {
                         let loop_len = (loop_end - loop_start) as f64;
                         if loop_len > 0.0 {
                             voice.position = loop_start as f64 + (voice.position - loop_start as f64) % loop_len;
@@ -79,10 +79,10 @@ pub fn mix_voices(
                 }
                 LoopType::PingPong => {
                     if loop_end > loop_start {
-                        if voice.direction > 0.0 && voice.position as usize >= loop_end {
+                        if voice.direction > 0.0 && voice.position >= loop_end as f64 {
                             voice.position = 2.0 * loop_end as f64 - voice.position;
                             voice.direction = -1.0;
-                        } else if voice.direction < 0.0 && (voice.position < loop_start as f64 || (voice.position as usize) < loop_start) {
+                        } else if voice.direction < 0.0 && voice.position < loop_start as f64 {
                             voice.position = 2.0 * loop_start as f64 - voice.position;
                             voice.direction = 1.0;
                         }

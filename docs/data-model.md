@@ -505,7 +505,6 @@ struct Voice {
     fading: bool,
     note_off: bool,                      // True after note-off received
     cutoff_tick: Option<u16>,            // Tick at which to cut this voice (ECx)
-    delay_tick: Option<u16>,             // Tick at which to trigger this voice (EDx)
 
     // Instrument data
     instrument_index: Option<u8>,
@@ -587,9 +586,28 @@ struct ChannelState {
     // Tone portamento target
     portamento_target_period: Option<f64>,
 
+    // Note delay (replaces per-voice delay_tick)
+    delayed_cell: Option<Cell>,          // Stored cell for delayed trigger (EDx)
+    note_delay_ticks: u8,                // Tick at which to trigger the delayed note
+
+    // Effect activity flags (reset at row/pattern boundaries)
+    active_effects: ActiveEffects,
+
     // Flags
     muted: bool,
     solo: bool,
+}
+
+struct ActiveEffects {
+    volume_slide: bool,
+    portamento_up: bool,
+    portamento_down: bool,
+    tone_portamento: bool,
+    vibrato: bool,
+    tremolo: bool,
+    arpeggio: bool,
+    panbrello: bool,
+    tremor: bool,
 }
 ```
 
