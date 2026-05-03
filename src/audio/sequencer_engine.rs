@@ -2889,6 +2889,20 @@ impl SequencerEngine {
                     }
                 }
 
+                if voice.note_off {
+                    let env_done = voice.vol_env.as_ref().map_or(true, |e| {
+                        e.finished || !e.envelope.flags.enabled
+                    });
+                    if env_done {
+                        if voice.fade_out_rate == 0 {
+                            voice.deactivate();
+                            continue;
+                        } else if !voice.fading {
+                            voice.fading = true;
+                        }
+                    }
+                }
+
                 if voice.tremor_mute {
                     voice.final_volume = 0.0;
                 } else {
@@ -3447,5 +3461,138 @@ mod tests {
         let mut engine = SequencerEngine::new(48000.0);
         let idx = engine.allocate_voice(0);
         assert!(!engine.voices[idx].active);
+    }
+
+    #[test]
+    fn mod_playback_produces_audio() {
+        use crate::formats::modfile::ModHandler;
+        use crate::formats::FormatHandler;
+
+        let sample_data: &[u8] = &[0x00, 0x40, 0x7F, 0x40, 0x00, 0xC0, 0x7F, 0xC0];
+        let sample_len_words = (sample_data.len() / 2) as u16;
+        let pattern_size = 64 * 4 * 4;
+        let total_size = 1084 + pattern_size + sample_data.len();
+        let mut data = vec![0u8; total_size];
+
+        data[950] = 1;
+        data[952] = 0;
+        data[1080..1084].copy_from_slice(b"M.K.");
+
+        let s0_base = 20;
+        data[s0_base + 22] = (sample_len_words >> 8) as u8;
+        data[s0_base + 23] = (sample_len_words & 0xFF) as u8;
+        data[s0_base + 25] = 64;
+
+        data[1084 + pattern_size..1084 + pattern_size + sample_data.len()].copy_from_slice(sample_data);
+
+        let period_c3: u16 = 428;
+        data[1084] = ((period_c3 >> 8) & 0x0F) as u8;
+        data[1085] = (period_c3 & 0xFF) as u8;
+        data[1086] = 0x10;
+        data[1087] = 0x00;
+
+        let handler = ModHandler;
+        let module = Arc::new(handler.load(&data).unwrap());
+
+        let cell = module.patterns[0].cell(0, 0);
+        assert!(cell.instrument.is_some(), "MOD cell should have instrument");
+        assert!(matches!(cell.note, Note::On(_)), "MOD cell should have note, got {:?}", cell.note);
+
+        assert!(!module.samples[1].data.is_empty(), "Sample 1 should have data");
+        assert_eq!(module.samples[1].sample_rate, 8363);
+
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.load_module(module.clone());
+        engine.play();
+
+        assert!(engine.state.playing, "Engine should be playing after play()");
+
+        let active_after_play = engine.voices.iter().filter(|v| v.active).count();
+        assert!(active_after_play > 0, "Should have at least 1 active voice after play, got {}", active_after_play);
+
+        let voice = engine.voices.iter().find(|v| v.active).unwrap();
+        assert!(voice.sample.is_some(), "Active voice should have sample data");
+        let sample_ref = voice.sample.as_ref().unwrap();
+        assert!(!sample_ref.is_empty(), "Sample data should not be empty");
+        assert!(voice.sample_delta > 0.0, "Sample delta should be positive, got {}", voice.sample_delta);
+        assert!(voice.final_volume > 0.0, "Final volume should be positive, got {}", voice.final_volume);
+
+        engine.advance(4800);
+
+        let mut left = vec![0.0f32; 4800];
+        let mut right = vec![0.0f32; 4800];
+        crate::audio::mixer::mix_voices(
+            &mut engine.voices,
+            &mut left,
+            &mut right,
+            1.0,
+            crate::audio::commands::InterpolationType::Linear,
+            &[],
+        );
+
+        let max_sample = left.iter().chain(right.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);
+        assert!(max_sample > 0.0001, "MOD playback should produce audio output, max sample = {:.6}", max_sample);
+    }
+
+    #[test]
+    fn mod_note_off_deactivates_voice() {
+        use crate::formats::modfile::ModHandler;
+        use crate::formats::FormatHandler;
+
+        let sample_data: Vec<u8> = vec![64, 32, 16, 224, 192, 240, 100, 50, 156, 206, 0, 0];
+        let sample_len_words = (sample_data.len() / 2) as u16;
+        let pattern_size = 64 * 4 * 4;
+        let total_size = 1084 + pattern_size + sample_data.len();
+        let mut data = vec![0u8; total_size];
+
+        data[950] = 1;
+        data[952] = 0;
+        data[1080..1084].copy_from_slice(b"M.K.");
+
+        let s0_base = 20;
+        data[s0_base + 22] = (sample_len_words >> 8) as u8;
+        data[s0_base + 23] = (sample_len_words & 0xFF) as u8;
+        data[s0_base + 25] = 64;
+        data[s0_base + 26] = 0;
+        data[s0_base + 27] = 2;
+        data[s0_base + 28] = 0;
+        data[s0_base + 29] = 2;
+
+        data[1084 + pattern_size..1084 + pattern_size + sample_data.len()]
+            .copy_from_slice(&sample_data);
+
+        let period_c3: u16 = 428;
+        data[1084] = ((period_c3 >> 8) & 0x0F) as u8;
+        data[1085] = (period_c3 & 0xFF) as u8;
+        data[1086] = 0x10;
+        data[1087] = 0x00;
+
+        let handler = ModHandler;
+        let module = Arc::new(handler.load(&data).unwrap());
+
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.load_module(module.clone());
+        engine.play();
+
+        let mut left = vec![0.0f32; 256];
+        let mut right = vec![0.0f32; 256];
+        crate::audio::mixer::mix_voices(
+            &mut engine.voices,
+            &mut left,
+            &mut right,
+            1.0,
+            crate::audio::commands::InterpolationType::Linear,
+            &[],
+        );
+
+        let active_voice = engine.voices.iter_mut().find(|v| v.active).unwrap();
+        assert!(active_voice.active, "Voice should be active before note-off");
+
+        active_voice.note_off = true;
+
+        engine.advance(2000);
+
+        let still_active = engine.voices.iter().any(|v| v.active);
+        assert!(!still_active, "Voice should be deactivated after note-off with fade_out_rate=0");
     }
 }
