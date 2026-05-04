@@ -121,19 +121,16 @@ impl SequencerEngine {
     fn advance_row(&mut self) {
         self.state.current_tick = 0;
 
-        // Clear per-voice cutoff ticks
-        for voice in &mut self.voices {
-            if voice.active {
-                voice.cutoff_tick = None;
-            }
-        }
-
         // Reset per-channel row-level state
         for ch in &mut self.state.channels {
             ch.retrigger_set_this_row = false;
             ch.delayed_cell = None;
             ch.note_delay_ticks = 0;
-            ch.active_effects = ActiveEffects::default();  // Prevent carryover between patterns
+            ch.active_effects = ActiveEffects::default(); // Prevent carryover between rows
+            ch.last_retrigger_interval = 0;               // Reset per-row counters
+            ch.note_cut_tick = None;
+            ch.eff_typ_xm = 0xFF;                         // Reset XM-specific effect type
+            ch.vol_kol = 0;                               // Reset volume column state
         }
 
         // Handle pattern delay

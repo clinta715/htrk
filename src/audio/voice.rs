@@ -67,6 +67,7 @@ pub struct Voice {
     pub fading: bool,
     pub note_off: bool,
     pub cutoff_tick: Option<u16>,
+    pub delay_tick: Option<u16>,
 
     pub instrument_index: Option<u8>,
     pub sample_index: Option<u8>,
@@ -150,6 +151,7 @@ self.tremor_mute = false;
         self.fading = false;
         self.note_off = false;
         self.cutoff_tick = None;
+        self.delay_tick = None;
         self.instrument_index = instrument_index;
         self.sample_index = sample_index;
         self.note = note;
@@ -218,6 +220,7 @@ impl Default for Voice {
             fading: false,
             note_off: false,
             cutoff_tick: None,
+            delay_tick: None,
             instrument_index: None,
             sample_index: None,
             note: Note::None,

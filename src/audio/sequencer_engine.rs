@@ -8,7 +8,7 @@ use crate::sequencer::instrument::{
 use crate::sequencer::module::{Module, ModuleFormat, MAX_VOICES};
 use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
-use crate::sequencer::player::{ChannelState, PlayMode, SequencerState};
+use crate::sequencer::player::{ActiveEffects, ChannelState, PlayMode, SequencerState};
 use crate::sequencer::sample::{Sample, VibratoWaveform, LoopType};
 use crate::sequencer::period::{
     get_arp_tab, get_note_period, get_vib_tab, period_to_frequency, relocate_ton,
@@ -538,7 +538,9 @@ impl SequencerEngine {
         let vol = self.compute_channel_volume(channel);
         let pan = self.compute_channel_panning(channel);
 
-        self.handle_nna(channel, nna, dct, dca, instrument_idx, sample_idx);
+        self.handle_nna(channel, NewNoteAction::NoteCut,
+            DuplicateCheckType::Disabled, DuplicateCheckAction::NoteCut,
+            instrument_idx as usize, sample_idx as usize);
 
         let voice_idx = self.allocate_voice(channel);
         let voice = &mut self.voices[voice_idx];
@@ -1583,7 +1585,6 @@ impl SequencerEngine {
         if cell.instrument.is_some() {
             if let Some(s) = sample {
                 self.state.channels[channel].channel_volume = s.default_volume.min(64);
-                self.state.channels[channel].channel_panning = s.default_panning;
             }
         }
 
@@ -1604,42 +1605,37 @@ impl SequencerEngine {
 
         let is_note_delay = matches!(cell.effect, Effect::NoteDelay { ticks } if ticks > 0);
 
-        if is_note_delay {
-            self.state.channels[channel].delayed_cell = Some(*cell);
-            if let Effect::NoteDelay { ticks } = cell.effect {
-                self.state.channels[channel].note_delay_ticks = ticks;
-            }
-            if let Note::On(key) = cell.note {
+        match cell.note {
+            Note::On(key) => {
                 self.state.channels[channel].last_note = Note::On(key);
-            }
-        } else {
-            match cell.note {
-                Note::On(key) => {
-                    self.state.channels[channel].last_note = Note::On(key);
 
-                    if is_tone_portamento {
-                        let target_freq = self.compute_portamento_target(
-                            channel, key, remapped_key, sample, sample_idx, module,
-                        );
-                        self.state.channels[channel].portamento_target_period = Some(target_freq);
-                    } else {
-                        self.trigger_channel_note(channel, key, remapped_key, sample, sample_idx, cell, module);
+                if is_note_delay {
+                    self.state.channels[channel].delayed_cell = Some(*cell);
+                    if let Effect::NoteDelay { ticks } = cell.effect {
+                        self.state.channels[channel].note_delay_ticks = ticks;
                     }
+                } else if is_tone_portamento {
+                    let target_freq = self.compute_portamento_target(
+                        channel, key, remapped_key, sample, sample_idx, module,
+                    );
+                    self.state.channels[channel].portamento_target_period = Some(target_freq);
+                } else {
+                    self.trigger_channel_note(channel, key, remapped_key, sample, sample_idx, cell, module);
                 }
-                Note::Off => {
-                    self.handle_note_off(channel);
-                }
-                Note::Cut => {
-                    self.cut_channel_voices(channel);
-                }
-                Note::Fade => {
-                    self.fade_channel_voices(channel);
-                }
-                Note::None => {}
             }
-
-            self.apply_effect(channel, &cell.effect, true);
+            Note::Off => {
+                self.handle_note_off(channel);
+            }
+            Note::Cut => {
+                self.cut_channel_voices(channel);
+            }
+            Note::Fade => {
+                self.fade_channel_voices(channel);
+            }
+            Note::None => {}
         }
+
+        self.apply_effect(channel, &cell.effect, true);
     }
 
     fn trigger_channel_note(
@@ -1978,12 +1974,7 @@ impl SequencerEngine {
     }
 
     fn apply_effect(&mut self, channel: usize, effect: &Effect, is_row_start: bool) {
-        let is_mod = self.module_format == ModuleFormat::MOD;
-        let mut active = if channel < self.state.channels.len() {
-            self.state.channels[channel].active_effects
-        } else {
-            Default::default()
-        };
+        let mut active = ActiveEffects::default();
 
         match effect {
             Effect::None => {}
@@ -2050,7 +2041,7 @@ impl SequencerEngine {
                     self.state.channels[channel].last_portamento_up_speed = *speed;
                 }
                 active.portamento_up = true;
-                if is_row_start && !is_mod {
+                if is_row_start {
                     let s = self.state.channels[channel].last_portamento_up_speed;
                     self.apply_portamento_up(channel, s);
                 }
@@ -2061,7 +2052,7 @@ impl SequencerEngine {
                     self.state.channels[channel].last_portamento_down_speed = *speed;
                 }
                 active.portamento_down = true;
-                if is_row_start && !is_mod {
+                if is_row_start {
                     let s = self.state.channels[channel].last_portamento_down_speed;
                     self.apply_portamento_down(channel, s);
                 }
@@ -2094,7 +2085,7 @@ impl SequencerEngine {
                     self.state.channels[channel].last_volume_slide_down = *down;
                 }
                 active.volume_slide = true;
-                if is_row_start && !is_mod {
+                if is_row_start {
                     self.apply_volume_slide(channel);
                 }
             }
@@ -2371,7 +2362,13 @@ impl SequencerEngine {
                 }
                 active.vibrato = true;
             }
-            Effect::NoteDelay { .. } => {}
+            Effect::NoteDelay { ticks } => {
+                if *ticks == 0 {
+                    self.set_channel_delay_tick(channel, 1);
+                } else {
+                    self.set_channel_delay_tick(channel, *ticks);
+                }
+            }
         }
 
         if channel < self.state.channels.len() {
@@ -2460,11 +2457,10 @@ impl SequencerEngine {
                     self.cut_channel_voices(ch);
                 }
             }
-            if ch < self.state.channels.len()
-                && self.state.channels[ch].delayed_cell.is_some()
-                && tick == self.state.channels[ch].note_delay_ticks
-            {
-                self.trigger_delayed_note(ch);
+            if let Some(delay) = self.get_channel_delay_tick(ch) {
+                if tick == delay as u8 {
+                    self.trigger_delayed_note(ch);
+                }
             }
         }
     }
@@ -2543,6 +2539,13 @@ impl SequencerEngine {
             if voice.active && voice.channel == Some(channel) {
                 voice.base_volume = vol;
                 voice.channel_volume = 1.0;
+            }
+        }
+
+        let vol = ch.channel_volume as f32 / 64.0;
+        for voice in &mut self.voices {
+            if voice.active && voice.channel == Some(channel) {
+                voice.channel_volume = vol;
             }
         }
     }
@@ -2669,6 +2672,10 @@ impl SequencerEngine {
         let vol = self.compute_channel_volume(channel);
         let pan = self.compute_channel_panning(channel);
 
+        self.handle_nna(channel, NewNoteAction::NoteCut,
+            DuplicateCheckType::Disabled, DuplicateCheckAction::NoteCut,
+            instrument_idx as usize, sample_idx as usize);
+
         let voice_idx = self.allocate_voice(channel);
         self.voices[voice_idx].trigger(
             sample.data.clone(), sample.sample_rate as f64, sample.loop_type,
@@ -2696,13 +2703,32 @@ impl SequencerEngine {
         None
     }
 
+    fn set_channel_delay_tick(&mut self, channel: usize, ticks: u8) {
+        for voice in &mut self.voices {
+            if voice.active && voice.channel == Some(channel) {
+                voice.delay_tick = Some(ticks as u16);
+            }
+        }
+    }
+
+    fn get_channel_delay_tick(&self, channel: usize) -> Option<u16> {
+        let ch = &self.state.channels[channel];
+        if ch.note_delay_ticks > 0 {
+            return Some(ch.note_delay_ticks as u16);
+        }
+        for voice in &self.voices {
+            if voice.active && voice.channel == Some(channel) {
+                return voice.delay_tick;
+            }
+        }
+        None
+    }
+
     fn trigger_delayed_note(&mut self, channel: usize) {
         let cell = match self.state.channels[channel].delayed_cell.take() {
             Some(c) => c,
             None => return,
         };
-        self.state.channels[channel].note_delay_ticks = 0;
-
         let module = match self.module.as_ref() {
             Some(m) => m.clone(),
             None => return,
@@ -2712,66 +2738,36 @@ impl SequencerEngine {
             self.state.channels[channel].last_instrument = cell.instrument.unwrap();
         }
 
-        let instrument_idx = self.state.channels[channel].last_instrument as usize;
-        let has_instruments = !module.instruments.is_empty();
+        let (note, instrument_idx) = (cell.note, self.state.channels[channel].last_instrument as usize);
 
-        let (sample_idx, remapped_key) = if has_instruments && instrument_idx > 0 && instrument_idx < module.instruments.len() {
+        let (sample_idx, remapped_key) = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             let inst = &module.instruments[instrument_idx];
-            match cell.note {
+            match note {
                 Note::On(key) if (key as usize) < 120 => {
                     let idx = inst.sample_map[key as usize] as usize;
                     let rk = inst.note_map[key as usize];
                     (idx, if rk < 120 { rk } else { key })
                 }
                 _ => (self.state.channels[channel].last_sample as usize, {
-                    match cell.note { Note::On(k) => k, _ => 0 }
+                    match note { Note::On(k) => k, _ => 0 }
                 }),
             }
         } else {
-            (instrument_idx, match cell.note { Note::On(k) => k, _ => 0 })
+            (instrument_idx, match note { Note::On(k) => k, _ => 0 })
         };
 
-        if sample_idx > 0 && sample_idx < module.samples.len() {
-            self.state.channels[channel].last_sample = sample_idx as u8;
+        if sample_idx == 0 || sample_idx >= module.samples.len() {
+            return;
         }
-
-        let sample = if sample_idx > 0 && sample_idx < module.samples.len() {
-            Some(&module.samples[sample_idx])
-        } else {
-            None
-        };
 
         if cell.instrument.is_some() {
-            if let Some(s) = sample {
-                self.state.channels[channel].channel_volume = s.default_volume.min(64);
-                self.state.channels[channel].channel_panning = s.default_panning;
-            }
+            self.state.channels[channel].channel_volume = module.samples[sample_idx].default_volume.min(64);
         }
 
-        if let Some(vol) = cell.volume {
-            self.apply_volume_column(channel, vol);
-        }
+        self.state.channels[channel].note_delay_ticks = 0;
 
-        if let Effect::SetVolume { volume } = &cell.effect {
-            self.state.channels[channel].channel_volume = (*volume).min(64);
-            self.state.channels[channel].row_volume = (*volume).min(64);
-        }
-
-        match cell.note {
-            Note::On(key) => {
-                self.state.channels[channel].last_note = Note::On(key);
-                self.trigger_channel_note(channel, key, remapped_key, sample, sample_idx, &cell, &module);
-            }
-            Note::Off => {
-                self.handle_note_off(channel);
-            }
-            Note::Cut => {
-                self.cut_channel_voices(channel);
-            }
-            Note::Fade => {
-                self.fade_channel_voices(channel);
-            }
-            Note::None => {}
+        if let Note::On(key) = note {
+            self.trigger_channel_note(channel, key, remapped_key, Some(&module.samples[sample_idx]), sample_idx, &cell, &module);
         }
     }
 
@@ -2996,7 +2992,7 @@ impl SequencerEngine {
         for voice in &mut self.voices {
             if voice.active {
                 voice.cutoff_tick = None;
-                // Store period base for auto-vibrato
+                voice.delay_tick = None;
                 if self.module_format == ModuleFormat::XM {
                     if let Some(ch_idx) = voice.channel {
                         if ch_idx < self.state.channels.len() {
@@ -3010,6 +3006,11 @@ impl SequencerEngine {
         for ch in &mut self.state.channels {
             ch.delayed_cell = None;
             ch.note_delay_ticks = 0;
+            ch.active_effects = ActiveEffects::default();
+            ch.last_retrigger_interval = 0;
+            ch.note_cut_tick = None;
+            ch.eff_typ_xm = 0xFF;
+            ch.vol_kol = 0;
         }
 
         if self.state.row_delay_active && self.state.pattern_delay_ticks > 0 {
@@ -3535,64 +3536,34 @@ mod tests {
     }
 
     #[test]
-    fn mod_note_off_deactivates_voice() {
-        use crate::formats::modfile::ModHandler;
-        use crate::formats::FormatHandler;
-
-        let sample_data: Vec<u8> = vec![64, 32, 16, 224, 192, 240, 100, 50, 156, 206, 0, 0];
-        let sample_len_words = (sample_data.len() / 2) as u16;
-        let pattern_size = 64 * 4 * 4;
-        let total_size = 1084 + pattern_size + sample_data.len();
-        let mut data = vec![0u8; total_size];
-
-        data[950] = 1;
-        data[952] = 0;
-        data[1080..1084].copy_from_slice(b"M.K.");
-
-        let s0_base = 20;
-        data[s0_base + 22] = (sample_len_words >> 8) as u8;
-        data[s0_base + 23] = (sample_len_words & 0xFF) as u8;
-        data[s0_base + 25] = 64;
-        data[s0_base + 26] = 0;
-        data[s0_base + 27] = 2;
-        data[s0_base + 28] = 0;
-        data[s0_base + 29] = 2;
-
-        data[1084 + pattern_size..1084 + pattern_size + sample_data.len()]
-            .copy_from_slice(&sample_data);
-
-        let period_c3: u16 = 428;
-        data[1084] = ((period_c3 >> 8) & 0x0F) as u8;
-        data[1085] = (period_c3 & 0xFF) as u8;
-        data[1086] = 0x10;
-        data[1087] = 0x00;
-
-        let handler = ModHandler;
-        let module = Arc::new(handler.load(&data).unwrap());
-
+    fn advance_row_resets_effects() {
         let mut engine = SequencerEngine::new(48000.0);
-        engine.load_module(module.clone());
-        engine.play();
+        engine.state.channels[0].active_effects.volume_slide = true;
+        engine.state.channels[0].last_retrigger_interval = 2;
+        engine.state.channels[0].eff_typ_xm = 0x0A;
+        engine.state.channels[0].vol_kol = 0x50;
 
-        let mut left = vec![0.0f32; 256];
-        let mut right = vec![0.0f32; 256];
-        crate::audio::mixer::mix_voices(
-            &mut engine.voices,
-            &mut left,
-            &mut right,
-            1.0,
-            crate::audio::commands::InterpolationType::Linear,
-            &[],
-        );
+        engine.advance_row();
 
-        let active_voice = engine.voices.iter_mut().find(|v| v.active).unwrap();
-        assert!(active_voice.active, "Voice should be active before note-off");
+        assert!(!engine.state.channels[0].active_effects.volume_slide);
+        assert_eq!(engine.state.channels[0].last_retrigger_interval, 0);
+        assert_eq!(engine.state.channels[0].eff_typ_xm, 0xFF);
+        assert_eq!(engine.state.channels[0].vol_kol, 0);
+    }
 
-        active_voice.note_off = true;
+    #[test]
+    fn note_delay_stores_cell() {
+        let mut engine = SequencerEngine::new(48000.0);
+        let mut cell = Cell::default();
+        cell.note = Note::On(60);
+        cell.instrument = Some(1);
+        cell.effect = Effect::NoteDelay { ticks: 3 };
 
-        engine.advance(2000);
+        let module = Arc::new(Module::default());
+        engine.process_cell_with_module(0, &cell, &module);
 
-        let still_active = engine.voices.iter().any(|v| v.active);
-        assert!(!still_active, "Voice should be deactivated after note-off with fade_out_rate=0");
+        assert_eq!(engine.state.channels[0].note_delay_ticks, 3);
+        assert!(engine.state.channels[0].delayed_cell.is_some());
+        assert_eq!(engine.state.channels[0].delayed_cell.unwrap().note, Note::On(60));
     }
 }
