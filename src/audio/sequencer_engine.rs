@@ -494,7 +494,7 @@ impl SequencerEngine {
         } else {
             NewNoteAction::NoteCut
         };
-        let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             module.instruments[instrument_idx].duplicate_check_type
         } else {
             DuplicateCheckType::Disabled
@@ -544,15 +544,17 @@ impl SequencerEngine {
         }
 
         // Voice sample offset
-        if let Effect::SetSampleOffset { offset } = &cell.effect {
+        let sample_offset = if let Effect::SetSampleOffset { offset } = &cell.effect {
             let off = *offset as usize;
-            let pos = if sample.loop_start < sample.loop_end && off >= sample.loop_end {
+            if sample.loop_start < sample.loop_end && off >= sample.loop_end {
                 sample.loop_start + (off - sample.loop_start) % (sample.loop_end - sample.loop_start)
             } else {
                 off.min(sample.data.len().saturating_sub(1))
-            };
-            voice.position = pos as f64;
-        }
+            }
+        } else {
+            self.state.channels[channel].last_sample_offset as usize
+        };
+        voice.position = sample_offset as f64;
 
         // Setup envelopes for XM
         if instrument_idx > 0 && instrument_idx < module.instruments.len() {
@@ -1975,7 +1977,7 @@ impl SequencerEngine {
                 off.min(sample.data.len().saturating_sub(1))
             }
         } else {
-            0
+            self.state.channels[channel].last_sample_offset as usize
         };
 
         let voice_idx = self.allocate_voice(channel);
