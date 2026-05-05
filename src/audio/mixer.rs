@@ -30,15 +30,14 @@ pub fn mix_voices(
             None => continue,
         };
 
-        let vol = voice.final_volume * master_volume;
-        let pan = voice.final_panning;
-
-        let left_gain = vol * (1.0 - pan).sqrt();
-        let right_gain = vol * pan.sqrt();
-
         let loop_type = voice.loop_type;
         let loop_start = voice.loop_start;
         let loop_end = voice.loop_end;
+
+        let vol = voice.final_volume * master_volume;
+        let pan = voice.final_panning;
+        let left_gain = vol * (1.0 - pan);
+        let right_gain = vol * pan;
 
         for i in 0..output_left.len() {
             if voice.position < 0.0 || voice.position as usize >= sample_data.len() {
@@ -97,9 +96,10 @@ pub fn mix_voices(
                 }
                 LoopType::Backward => {
                     if loop_end > loop_start && voice.position < loop_start as f64 {
-                        let underflow = loop_start as f64 - voice.position;
-                        voice.position = (loop_end - 1) as f64 - underflow;
-                        if voice.position < loop_start as f64 {
+                        let loop_len = (loop_end - loop_start) as f64;
+                        let offset = (loop_start as f64 - voice.position) % loop_len;
+                        voice.position = (loop_end as f64) - offset;
+                        if voice.position >= loop_end as f64 {
                             voice.position = (loop_end - 1) as f64;
                         }
                     } else if voice.position < 0.0 || voice.position as usize >= sample_data.len() {
@@ -118,14 +118,67 @@ pub fn mix_voices(
     }
 }
 
+fn peak_stereo(left: &[f32], right: &[f32]) -> f32 {
+    left.iter()
+        .chain(right.iter())
+        .map(|s| s.abs())
+        .fold(0.0f32, f32::max)
+}
+
+pub fn soft_knee_limit(output_left: &mut [f32], output_right: &mut [f32]) {
+    const THRESHOLD: f32 = 0.8;
+    const RANGE: f32 = 1.0 - THRESHOLD;
+
+    let peak = peak_stereo(output_left, output_right);
+    if peak > THRESHOLD {
+        let excess = peak - THRESHOLD;
+        let compressed_peak = THRESHOLD + RANGE * (1.0 - (-excess / RANGE).exp());
+        let gain = compressed_peak / peak;
+        for l in output_left.iter_mut() { *l *= gain; }
+        for r in output_right.iter_mut() { *r *= gain; }
+    }
+}
+
+pub fn soft_knee_limit_smoothed(
+    output_left: &mut [f32],
+    output_right: &mut [f32],
+    limiter_gain: &mut f32,
+) {
+    const THRESHOLD: f32 = 0.8;
+    const RANGE: f32 = 1.0 - THRESHOLD;
+    const RELEASE: f32 = 0.05;
+
+    let peak = peak_stereo(output_left, output_right);
+
+    let target = if peak > THRESHOLD {
+        let excess = peak - THRESHOLD;
+        let compressed_peak = THRESHOLD + RANGE * (1.0 - (-excess / RANGE).exp());
+        compressed_peak / peak
+    } else {
+        1.0
+    };
+
+    // Instant attack, smooth release
+    if target < *limiter_gain {
+        *limiter_gain = target;
+    } else {
+        *limiter_gain += (target - *limiter_gain) * RELEASE;
+    }
+
+    for l in output_left.iter_mut() { *l *= *limiter_gain; }
+    for r in output_right.iter_mut() { *r *= *limiter_gain; }
+}
+
 pub fn brick_wall_limit(output_left: &mut [f32], output_right: &mut [f32]) {
-    for (l, r) in output_left.iter_mut().zip(output_right.iter_mut()) {
-        let peak = l.abs().max(r.abs());
-        if peak > 1.0 {
-            let gain = 1.0 / peak;
-            *l *= gain;
-            *r *= gain;
-        }
+    buffer_wide_limit(output_left, output_right)
+}
+
+pub fn buffer_wide_limit(output_left: &mut [f32], output_right: &mut [f32]) {
+    let peak = peak_stereo(output_left, output_right);
+    if peak > 1.0 {
+        let gain = 1.0 / peak;
+        for l in output_left.iter_mut() { *l *= gain; }
+        for r in output_right.iter_mut() { *r *= gain; }
     }
 }
 
@@ -167,9 +220,11 @@ mod tests {
         voice.global_volume = 1.0;
         voice.fade_out_volume = 1.0;
         voice.final_volume = 0.5;
+        voice.smoothed_volume = 0.5;
         voice.base_panning = 0.5;
         voice.envelope_panning = 0.0;
         voice.final_panning = 0.5;
+        voice.smoothed_panning = 0.5;
         voice
     }
 
@@ -246,15 +301,16 @@ mod tests {
 
         brick_wall_limit(&mut left, &mut right);
 
+        // Buffer-wide: peak=2.0, gain=0.5 applied uniformly
         assert!((left[0] - 1.0).abs() < 0.001);
-        assert!((left[1] + 1.0).abs() < 0.001);
-        assert!((left[2] - 0.5).abs() < 0.001);
+        assert!((left[1] + 0.75).abs() < 0.001);
+        assert!((left[2] - 0.25).abs() < 0.001);
         assert!((right[0] + 1.0).abs() < 0.001);
-        assert!((right[1] - 1.0).abs() < 0.001);
-        assert!((right[2] + 0.5).abs() < 0.001);
+        assert!((right[1] - 0.75).abs() < 0.001);
+        assert!((right[2] + 0.25).abs() < 0.001);
 
         assert!((left[0] / right[0] - left[1] / right[1]).abs() < 0.001,
-            "left and right should scale proportionally (both channels get same gain reduction)");
+            "uniform gain preserves left/right ratio");
     }
 
     #[test]
@@ -292,9 +348,11 @@ mod tests {
         voice.global_volume = 1.0;
         voice.fade_out_volume = 1.0;
         voice.final_volume = 1.0;
+        voice.smoothed_volume = 1.0;
         voice.base_panning = 0.5;
         voice.envelope_panning = 0.0;
         voice.final_panning = 0.5;
+        voice.smoothed_panning = 0.5;
 
         let mut left = vec![0.0f32; 10];
         let mut right = vec![0.0f32; 10];
@@ -327,9 +385,11 @@ mod tests {
         voice.global_volume = 1.0;
         voice.fade_out_volume = 1.0;
         voice.final_volume = 1.0;
+        voice.smoothed_volume = 1.0;
         voice.base_panning = 0.5;
         voice.envelope_panning = 0.0;
         voice.final_panning = 0.5;
+        voice.smoothed_panning = 0.5;
 
         let mut left = vec![0.0f32; 8];
         let mut right = vec![0.0f32; 8];
@@ -365,9 +425,11 @@ mod tests {
         voice.global_volume = 1.0;
         voice.fade_out_volume = 1.0;
         voice.final_volume = 1.0;
+        voice.smoothed_volume = 1.0;
         voice.base_panning = 0.5;
         voice.envelope_panning = 0.0;
         voice.final_panning = 0.5;
+        voice.smoothed_panning = 0.5;
 
         let mut left = vec![0.0f32; 10];
         let mut right = vec![0.0f32; 10];
@@ -397,9 +459,11 @@ mod tests {
         voice.global_volume = 1.0;
         voice.fade_out_volume = 1.0;
         voice.final_volume = 1.0;
+        voice.smoothed_volume = 1.0;
         voice.base_panning = 0.5;
         voice.envelope_panning = 0.0;
         voice.final_panning = 0.5;
+        voice.smoothed_panning = 0.5;
 
         let mut left = vec![0.0f32; 4];
         let mut right = vec![0.0f32; 4];
@@ -435,9 +499,11 @@ mod tests {
             v.global_volume = 1.0;
             v.fade_out_volume = 1.0;
             v.final_volume = 1.0;
+            v.smoothed_volume = 1.0;
             v.base_panning = 0.5;
             v.envelope_panning = 0.0;
             v.final_panning = 0.5;
+            v.smoothed_panning = 0.5;
             v
         };
 
@@ -456,5 +522,38 @@ mod tests {
         for &s in &right {
             assert!(s.abs() <= 1.0 + 0.001, "Soft limiter should keep samples within ±1.0, got {s}");
         }
+    }
+
+    #[test]
+    fn soft_knee_limit_test() {
+        let mut left = vec![0.5f32; 120];
+        let mut right = vec![0.5f32; 120];
+        for i in 10..110 {
+            left[i] = 1.6;
+            right[i] = 1.4;
+        }
+
+        soft_knee_limit(&mut left, &mut right);
+
+        // Buffer-wide: peak=1.6, target gain is uniform across all samples
+        // compress(1.6) = 0.8 + 0.2*(1-exp(-0.8/0.2)) ≈ 0.9963
+        // gain = 0.9963 / 1.6 ≈ 0.6227
+        let expected_gain = {
+            let excess: f32 = 1.6 - 0.8;
+            let compressed = 0.8 + 0.2 * (1.0 - (-excess / 0.2).exp());
+            compressed / 1.6
+        };
+
+        // All samples should be multiplied by the same gain
+        assert!((left[0] - 0.5 * expected_gain).abs() < 0.001,
+            "below-threshold samples also get uniform gain");
+        assert!((left[50] - 1.6 * expected_gain).abs() < 0.001,
+            "above-threshold samples get same uniform gain");
+
+        // Uniform gain means ratio between channels is preserved
+        let ratio = left[50] / right[50];
+        let ratio_expected = 1.6 / 1.4;
+        assert!((ratio - ratio_expected).abs() < 0.001,
+            "uniform gain preserves left/right ratio");
     }
 }

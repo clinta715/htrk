@@ -37,9 +37,13 @@ pub struct Voice {
     pub fade_out_volume: f32,
     pub final_volume: f32,
 
+    pub smoothed_volume: f32,
+
     pub base_panning: f32,
     pub envelope_panning: f32,
     pub final_panning: f32,
+
+    pub smoothed_panning: f32,
 
     pub vol_env: Option<EnvelopeState>,
     pub pan_env: Option<EnvelopeState>,
@@ -131,9 +135,11 @@ impl Voice {
         self.global_volume = 1.0;
         self.fade_out_volume = 1.0;
         self.final_volume = volume;
+        self.smoothed_volume = volume;
         self.base_panning = panning;
         self.envelope_panning = 0.0;
         self.final_panning = panning;
+        self.smoothed_panning = panning;
         self.vol_env = None;
         self.pan_env = None;
         self.pitch_env = None;
@@ -197,9 +203,11 @@ impl Default for Voice {
             global_volume: 1.0,
             fade_out_volume: 1.0,
             final_volume: 0.0,
+            smoothed_volume: 0.0,
             base_panning: 0.5,
             envelope_panning: 0.0,
             final_panning: 0.5,
+            smoothed_panning: 0.5,
             vol_env: None,
             pan_env: None,
             pitch_env: None,

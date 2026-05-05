@@ -42,7 +42,7 @@ pub struct SequencerEngine {
     module: Option<Arc<Module>>,
     output_sample_rate: f64,
     global_volume: f32,
-    pub module_format: ModuleFormat,
+    use_xm_model: bool,
 }
 
 fn quantize_to_semitone(freq: f64) -> f64 {
@@ -69,13 +69,13 @@ impl SequencerEngine {
             module: None,
             output_sample_rate,
             global_volume: 1.0,
-            module_format: ModuleFormat::MOD,
+            use_xm_model: false,
         }
     }
 
     pub fn load_module(&mut self, module: Arc<Module>) {
         self.stop();
-        self.module_format = module.format;
+        self.use_xm_model = module.flags.xm_period_model;
         self.module = Some(module);
     }
 
@@ -115,11 +115,7 @@ impl SequencerEngine {
         self.state.current_tick = 0;
         self.state.sample_counter = 0.0;
 
-        if self.module_format == ModuleFormat::XM {
-            self.process_tick_zero_xm();
-        } else {
-            self.process_tick_zero();
-        }
+        self.process_tick_zero_unified();
 
         self.state.current_tick = 1;
     }
@@ -161,11 +157,7 @@ impl SequencerEngine {
         self.state.paused = false;
         self.state.sample_counter = 0.0;
 
-        if self.module_format == ModuleFormat::XM {
-            self.process_tick_zero_xm();
-        } else {
-            self.process_tick_zero();
-        }
+        self.process_tick_zero_unified();
 
         self.state.current_tick = 1;
     }
@@ -223,22 +215,13 @@ impl SequencerEngine {
         }
     }
 
-    fn process_tick(&mut self) {
+    pub fn process_tick(&mut self) {
         let tick = self.state.current_tick;
-        let is_xm = self.module_format == ModuleFormat::XM;
 
         if tick == 0 {
-            if is_xm {
-                self.process_tick_zero_xm();
-            } else {
-                self.process_tick_zero();
-            }
+            self.process_tick_zero_unified();
         } else {
-            if is_xm {
-                self.process_effects_tick_xm();
-            } else {
-                self.process_effects_tick();
-            }
+            self.process_effects_tick_unified();
         }
 
         // Advance envelopes after tick processing
@@ -253,9 +236,9 @@ impl SequencerEngine {
         }
     }
 
-    // ─── XM tick zero ────────────────────────────────────────────
+    // ─── Unified tick zero ─────────────────────────────────────
 
-    fn process_tick_zero_xm(&mut self) {
+    fn process_tick_zero_unified(&mut self) {
         let pattern_index = self.state.current_pattern as usize;
         let row = self.state.current_row as usize;
 
@@ -288,187 +271,179 @@ impl SequencerEngine {
         };
 
         for (ch, cell) in cells {
-            self.process_cell_xm(ch, &cell);
+            self.process_cell_unified(ch, &cell);
         }
     }
 
-    fn process_cell_xm(&mut self, channel: usize, cell: &Cell) {
-        let module = match self.module.as_ref() {
-            Some(m) => m.clone(),
-            None => return,
-        };
-        if channel >= self.state.channels.len() {
-            return;
-        }
+    fn process_cell_unified(&mut self, channel: usize, cell: &Cell) {
+    let module = match self.module.as_ref() {
+        Some(m) => m.clone(),
+        None => return,
+    };
+    if channel >= self.state.channels.len() {
+        return;
+    }
+    let is_xm = self.use_xm_model;
 
-        let ch_state = &mut self.state.channels[channel];
+    // Common: instrument
+    if cell.instrument.is_some() {
+        self.state.channels[channel].last_instrument = cell.instrument.unwrap();
+    }
 
-        // Store volume column byte for non-zero tick processing
-        let _vol_col = cell.volume;
+    let instrument_idx = self.state.channels[channel].last_instrument as usize;
+    let has_instruments = !module.instruments.is_empty();
 
-        if cell.instrument.is_some() {
-            ch_state.last_instrument = cell.instrument.unwrap();
-        }
-
-        // Reset period from previous arpeggio/vibrato
-        if ch_state.eff_typ_xm == 0 && ch_state.eff_xm != 0 {
-            ch_state.out_period = ch_state.real_period;
-        } else if (ch_state.eff_typ_xm == 4 || ch_state.eff_typ_xm == 6)
-            && (cell.effect != Effect::Vibrato { speed: 0, depth: 0 }
-                || !matches!(cell.effect, Effect::VibratoVolumeSlide { .. }))
-        {
-            // Vibrato ending - restore period
-            ch_state.out_period = ch_state.real_period;
-        }
-
-        // Store effect type
-        match &cell.effect {
-            Effect::TonePortamento { .. } => ch_state.eff_typ_xm = 3,
-            Effect::TonePortamentoVolumeSlide { .. } => ch_state.eff_typ_xm = 5,
-            Effect::PortamentoUp { .. } => ch_state.eff_typ_xm = 1,
-            Effect::PortamentoDown { .. } => ch_state.eff_typ_xm = 2,
-            Effect::Vibrato { .. } => ch_state.eff_typ_xm = 4,
-            Effect::VibratoVolumeSlide { .. } => ch_state.eff_typ_xm = 6,
-            Effect::Tremolo { .. } => ch_state.eff_typ_xm = 7,
-            Effect::VolumeSlide { .. } => ch_state.eff_typ_xm = 0xA,
-            Effect::Arpeggio { .. } => ch_state.eff_typ_xm = 0,
-            Effect::Tremor { .. } => ch_state.eff_typ_xm = 0x1D,
-            Effect::Panbrello { .. } => ch_state.eff_typ_xm = 0x19,
-            _ => ch_state.eff_typ_xm = 0xFF,
-        }
-        if cell.effect != Effect::None {
-            ch_state.eff_xm = match cell.effect.effect_byte() {
-                Some(b) => b,
-                None => 0,
-            };
-        }
-
-        let instrument_idx = ch_state.last_instrument as usize;
-        let has_instruments = !module.instruments.is_empty();
-
-        let (sample_idx, remapped_key) = if has_instruments && instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            let inst = &module.instruments[instrument_idx];
-            match cell.note {
-                Note::On(key) if (key as usize) < 120 => {
-                    let idx = inst.sample_map[key as usize] as usize;
-                    let rk = inst.note_map[key as usize];
-                    (idx, if rk < 120 { rk } else { key })
-                }
-                _ => (ch_state.last_sample as usize, {
-                    match cell.note { Note::On(k) => k, _ => 0 }
-                }),
+    let (sample_idx, remapped_key) = if has_instruments && instrument_idx > 0 && instrument_idx < module.instruments.len() {
+        let inst = &module.instruments[instrument_idx];
+        match cell.note {
+            Note::On(key) if (key as usize) < 120 => {
+                let idx = inst.sample_map[key as usize] as usize;
+                let rk = inst.note_map[key as usize];
+                (idx, if rk < 120 { rk } else { key })
             }
-        } else {
-            (instrument_idx, match cell.note { Note::On(k) => k, _ => 0 })
-        };
-
-        if sample_idx > 0 && sample_idx < module.samples.len() {
-            ch_state.last_sample = sample_idx as u8;
+            _ => (self.state.channels[channel].last_sample as usize, {
+                match cell.note { Note::On(k) => k, _ => 0 }
+            }),
         }
+    } else {
+        (instrument_idx, match cell.note { Note::On(k) => k, _ => 0 })
+    };
 
-        let sample = if sample_idx > 0 && sample_idx < module.samples.len() {
-            Some(&module.samples[sample_idx])
-        } else {
-            None
-        };
+    if sample_idx > 0 && sample_idx < module.samples.len() {
+        self.state.channels[channel].last_sample = sample_idx as u8;
+    }
 
-        let inst = instrument_idx;
+    let sample = if sample_idx > 0 && sample_idx < module.samples.len() {
+        Some(&module.samples[sample_idx])
+    } else {
+        None
+    };
 
+    // XM: set channel defaults from sample (volume + pan)
+    if is_xm {
         if let Some(s) = sample {
-            ch_state.channel_volume = s.default_volume.min(64);
-            ch_state.channel_panning = s.default_panning;
+            self.state.channels[channel].channel_volume = s.default_volume.min(64);
+            self.state.channels[channel].channel_panning = s.default_panning;
         }
+    } else {
+        // IT: volume reset on instrument change only
+        if cell.instrument.is_some() {
+            if let Some(s) = sample {
+                self.state.channels[channel].channel_volume = s.default_volume.min(64);
+            }
+        }
+    }
 
-        // Volume column effects (tick zero)
-        if let Some(vol) = cell.volume {
-            ch_state.vol_kol = vol;
+    // Volume column
+    if let Some(vol) = cell.volume {
+        if is_xm {
+            let ch = &mut self.state.channels[channel];
+            ch.vol_kol = vol;
             if vol <= 64 {
-                ch_state.channel_volume = vol;
-                ch_state.row_volume = vol;
-            } else {
-                // XM volume column tick-zero effects are handled via effect system
-                // (already decoded by XM loader into Vol* effects)
-            }
-        }
-
-        // Apply set volume effect
-        if let Effect::SetVolume { volume } = &cell.effect {
-            ch_state.channel_volume = (*volume).min(64);
-            ch_state.row_volume = (*volume).min(64);
-        }
-        if let Effect::VolSetVolume { vol } = &cell.effect {
-            ch_state.channel_volume = (*vol).min(64);
-            ch_state.row_volume = (*vol).min(64);
-        }
-
-        let is_tone_portamento = matches!(
-            cell.effect,
-            Effect::TonePortamento { .. } | Effect::TonePortamentoVolumeSlide { .. }
-                | Effect::VolPortamento { .. }
-        );
-
-        let is_note_delay = matches!(cell.effect, Effect::NoteDelay { ticks } if ticks > 0);
-
-        if is_note_delay {
-            ch_state.delayed_cell = Some(*cell);
-            if let Effect::NoteDelay { ticks } = cell.effect {
-                ch_state.note_delay_ticks = ticks;
-            }
-            if let Note::On(key) = cell.note {
-                ch_state.last_note = Note::On(key);
+                ch.channel_volume = vol;
+                ch.row_volume = vol;
             }
         } else {
-            match cell.note {
-                Note::On(key) => {
-                    ch_state.last_note = Note::On(key);
+            self.apply_volume_column(channel, vol);
+        }
+    }
 
-                    if is_tone_portamento {
-                        // Store target period but don't retrigger
+    // Set volume effects
+    if let Effect::SetVolume { volume } = &cell.effect {
+        let v = (*volume).min(64);
+        self.state.channels[channel].channel_volume = v;
+        self.state.channels[channel].row_volume = v;
+    }
+    if let Effect::VolSetVolume { vol } = &cell.effect {
+        let v = (*vol).min(64);
+        self.state.channels[channel].channel_volume = v;
+        self.state.channels[channel].row_volume = v;
+    }
+
+    let is_tone_portamento = matches!(
+        cell.effect,
+        Effect::TonePortamento { .. } | Effect::TonePortamentoVolumeSlide { .. }
+            | Effect::VolPortamento { .. }
+    );
+
+    let is_note_delay = matches!(cell.effect, Effect::NoteDelay { ticks } if ticks > 0);
+
+    let has_volume_effect = is_xm && cell.volume_effect.is_some();
+
+    if is_note_delay {
+        self.state.channels[channel].delayed_cell = Some(*cell);
+        if let Effect::NoteDelay { ticks } = cell.effect {
+            self.state.channels[channel].note_delay_ticks = ticks;
+        }
+        if let Note::On(key) = cell.note {
+            self.state.channels[channel].last_note = Note::On(key);
+        }
+    } else {
+        match cell.note {
+            Note::On(key) => {
+                self.state.channels[channel].last_note = Note::On(key);
+
+                if is_tone_portamento {
+                    if is_xm {
+                        let ch = &mut self.state.channels[channel];
                         if let Some(s) = sample {
-                            ch_state.rel_ton = s.relative_note;
+                            ch.rel_ton = s.relative_note;
                         }
-                        let ft = ch_state.fine_tune_offset;
+                        let ft = ch.fine_tune_offset;
                         let want_period = get_note_period(
-                            remapped_key.saturating_add(ch_state.rel_ton as u8),
+                            remapped_key.saturating_add(ch.rel_ton as u8),
                             ft,
                             module.flags.linear_slides,
                         );
-                        ch_state.want_period = want_period;
-                        if want_period == ch_state.real_period {
-                            ch_state.porta_dir = 0;
-                        } else if want_period > ch_state.real_period {
-                            ch_state.porta_dir = 1;
+                        ch.want_period = want_period;
+                        if want_period == ch.real_period {
+                            ch.porta_dir = 0;
+                        } else if want_period > ch.real_period {
+                            ch.porta_dir = 1;
                         } else {
-                            ch_state.porta_dir = 2;
+                            ch.porta_dir = 2;
                         }
                     } else {
-                        self.trigger_channel_note_xm(channel, key, remapped_key, sample, sample_idx, cell, &module, inst);
+                        let target_freq = self.compute_portamento_target(
+                            channel, key, remapped_key, sample, sample_idx, &module,
+                        );
+                        self.state.channels[channel].portamento_target_period = Some(target_freq);
                     }
+                } else if is_xm {
+                    let inst = instrument_idx;
+                    self.trigger_channel_note_period(channel, key, remapped_key, sample, sample_idx, cell, &module, inst);
+                } else {
+                    self.trigger_channel_note(channel, key, remapped_key, sample, sample_idx, cell, &module);
                 }
-                Note::Off => {
-                    self.handle_note_off_xm(channel);
-                }
-                Note::Cut => {
-                    self.cut_channel_voices(channel);
-                }
-                Note::Fade => {
-                    self.fade_channel_voices(channel);
-                }
-                Note::None => {}
             }
-
-            // Apply remaining effects
-            self.apply_effect_xm(channel, &cell.effect, true);
+            Note::Off => {
+                if is_xm {
+                    self.handle_note_off_period(channel);
+                } else {
+                    self.handle_note_off(channel);
+                }
+            }
+            Note::Cut => {
+                self.cut_channel_voices(channel);
+            }
+            Note::Fade => {
+                self.fade_channel_voices(channel);
+            }
+            Note::None => {}
         }
 
-        // Apply volume column effects via the effect system (already decoded)
-        if cell.volume.is_some() && cell.volume.unwrap() > 64 {
-            // Volume column effects that weren't a simple set-volume
-            // These may need special handling for tick-zero XM
-        }
+        self.apply_effect_unified(channel, &cell.effect, true);
     }
 
-    fn trigger_channel_note_xm(
+    // Apply volume_effect on tick 0 (XM only)
+    if has_volume_effect {
+        if let Some(vol_eff) = cell.volume_effect {
+            self.apply_effect_unified(channel, &vol_eff, true);
+        }
+    }
+}
+
+    fn trigger_channel_note_period(
         &mut self,
         channel: usize,
         note_key: u8,
@@ -615,6 +590,7 @@ impl SequencerEngine {
             // Auto-vibrato init
             if inst.vib_depth > 0 {
                 voice.auto_vib_pos = 0;
+                voice.auto_vib_period_base = period;
                 if inst.vib_sweep > 0 {
                     voice.auto_vib_amp = 0;
                     voice.auto_vib_sweep = (inst.vib_depth as i32) * 256 / (inst.vib_sweep as i32).max(1);
@@ -633,7 +609,7 @@ impl SequencerEngine {
         }
     }
 
-    fn handle_note_off_xm(&mut self, channel: usize) {
+    fn handle_note_off_period(&mut self, channel: usize) {
         let module = match self.module.as_ref() {
             Some(m) => m.clone(),
             None => return,
@@ -693,7 +669,8 @@ impl SequencerEngine {
 
     // ─── XM effect application ───────────────────────────────────
 
-    fn apply_effect_xm(&mut self, channel: usize, effect: &Effect, _is_row_start: bool) {
+    fn apply_effect_unified(&mut self, channel: usize, effect: &Effect, is_row_start: bool) {
+        let is_xm = self.use_xm_model;
         let ch = &mut self.state.channels[channel];
 
         match effect {
@@ -709,7 +686,7 @@ impl SequencerEngine {
                     self.state.bpm = *bpm as u16;
                     self.state.samples_per_tick =
                         compute_samples_per_tick(self.state.bpm, self.output_sample_rate);
-                } else if *bpm > 0 {
+                } else if is_xm && *bpm > 0 {
                     self.state.speed = *bpm;
                 }
             }
@@ -717,7 +694,9 @@ impl SequencerEngine {
             Effect::SetVolume { volume } | Effect::VolSetVolume { vol: volume } => {
                 ch.channel_volume = (*volume).min(64);
                 ch.row_volume = (*volume).min(64);
-                ch.real_vol = (*volume).min(64);
+                if is_xm {
+                    ch.real_vol = (*volume).min(64);
+                }
                 let vol = self.compute_channel_volume(channel);
                 for voice in &mut self.voices {
                     if voice.active && voice.channel == Some(channel) {
@@ -731,35 +710,52 @@ impl SequencerEngine {
                 ch.channel_panning = (*pan).min(255);
             }
 
+            Effect::SetPanPosition { pan } => {
+                ch.channel_panning = (*pan).min(255);
+            }
+
+            Effect::SetSampleOffset { offset } => {
+                ch.last_sample_offset = *offset;
+            }
+
             Effect::PositionJump { order } => {
                 self.state.position_jump_order = Some(*order);
             }
 
             Effect::PatternBreak { row } => {
-                self.state.position_jump_flag = true;
+                if is_xm {
+                    self.state.position_jump_flag = true;
+                }
                 self.state.pattern_break_row = Some(*row);
             }
 
             Effect::TonePortamento { speed } => {
-                if *speed > 0 {
-                    ch.porta_speed_period = (*speed as u16) << 2;
-                }
-                if let Note::On(key) = ch.last_note {
-                    let module = self.module.as_ref().unwrap().clone();
-                    let period = get_note_period(
-                        key.saturating_add(ch.rel_ton as u8),
-                        ch.fine_tune_offset,
-                        module.flags.linear_slides,
-                    );
-                    ch.want_period = period;
-                    if period == ch.real_period {
-                        ch.porta_dir = 0;
-                    } else if period > ch.real_period {
-                        ch.porta_dir = 1;
-                    } else {
-                        ch.porta_dir = 2;
+                if is_xm {
+                    if *speed > 0 {
+                        ch.porta_speed_period = (*speed as u16) << 2;
+                    }
+                    if let Note::On(key) = ch.last_note {
+                        let module = self.module.as_ref().unwrap().clone();
+                        let period = get_note_period(
+                            key.saturating_add(ch.rel_ton as u8),
+                            ch.fine_tune_offset,
+                            module.flags.linear_slides,
+                        );
+                        ch.want_period = period;
+                        if period == ch.real_period {
+                            ch.porta_dir = 0;
+                        } else if period > ch.real_period {
+                            ch.porta_dir = 1;
+                        } else {
+                            ch.porta_dir = 2;
+                        }
+                    }
+                } else {
+                    if *speed > 0 {
+                        ch.last_tone_portamento_speed = *speed;
                     }
                 }
+                ch.active_effects.tone_portamento = true;
             }
 
             Effect::PortamentoUp { speed } => {
@@ -767,8 +763,28 @@ impl SequencerEngine {
                     ch.last_portamento_up_speed = *speed;
                 }
                 ch.active_effects.portamento_up = true;
-                // Apply immediately on tick zero
-                self.apply_portamento_up_xm(channel, *speed);
+                if is_row_start {
+                    if is_xm {
+                        if *speed > 0 {
+                            let spd = (*speed as u16) << 2;
+                            ch.real_period = ch.real_period.saturating_sub(spd).max(1);
+                            ch.out_period = ch.real_period;
+                            let out = ch.out_period;
+                            let module = self.module.as_ref().unwrap().clone();
+                            let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                            let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
+                            for voice in &mut self.voices {
+                                if voice.active && voice.channel == Some(channel) {
+                                    voice.current_frequency = freq;
+                                    voice.sample_delta = delta;
+                                }
+                            }
+                        }
+                    } else {
+                        let s = self.state.channels[channel].last_portamento_up_speed;
+                        self.apply_portamento_up(channel, s);
+                    }
+                }
             }
 
             Effect::PortamentoDown { speed } => {
@@ -776,24 +792,126 @@ impl SequencerEngine {
                     ch.last_portamento_down_speed = *speed;
                 }
                 ch.active_effects.portamento_down = true;
-                self.apply_portamento_down_xm(channel, *speed);
+                if is_row_start {
+                    if is_xm {
+                        if *speed > 0 {
+                            let spd = (*speed as u16) << 2;
+                            ch.real_period = ch.real_period.saturating_add(spd).min(31999);
+                            ch.out_period = ch.real_period;
+                            let out = ch.out_period;
+                            let module = self.module.as_ref().unwrap().clone();
+                            let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                            let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
+                            for voice in &mut self.voices {
+                                if voice.active && voice.channel == Some(channel) {
+                                    voice.current_frequency = freq;
+                                    voice.sample_delta = delta;
+                                }
+                            }
+                        }
+                    } else {
+                        let s = self.state.channels[channel].last_portamento_down_speed;
+                        self.apply_portamento_down(channel, s);
+                    }
+                }
+            }
+
+            Effect::FinePortamentoUp { speed } => {
+                if is_row_start {
+                    if is_xm {
+                        if *speed > 0 {
+                            let spd = *speed as u16;
+                            ch.real_period = ch.real_period.saturating_sub(spd).max(1);
+                            ch.out_period = ch.real_period;
+                            let out = ch.out_period;
+                            let module = self.module.as_ref().unwrap().clone();
+                            let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                            let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
+                            for voice in &mut self.voices {
+                                if voice.active && voice.channel == Some(channel) {
+                                    voice.current_frequency = freq;
+                                    voice.sample_delta = delta;
+                                }
+                            }
+                        }
+                    } else if *speed > 0 {
+                        self.apply_portamento_up(channel, *speed);
+                    }
+                }
+            }
+
+            Effect::FinePortamentoDown { speed } => {
+                if is_row_start {
+                    if is_xm {
+                        if *speed > 0 {
+                            let spd = *speed as u16;
+                            ch.real_period = ch.real_period.saturating_add(spd).min(31999);
+                            ch.out_period = ch.real_period;
+                            let out = ch.out_period;
+                            let module = self.module.as_ref().unwrap().clone();
+                            let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                            let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
+                            for voice in &mut self.voices {
+                                if voice.active && voice.channel == Some(channel) {
+                                    voice.current_frequency = freq;
+                                    voice.sample_delta = delta;
+                                }
+                            }
+                        }
+                    } else if *speed > 0 {
+                        self.apply_portamento_down(channel, *speed);
+                    }
+                }
             }
 
             Effect::Vibrato { speed, depth } => {
-                if *speed > 0 { ch.vib_speed = *speed; }
-                if *depth > 0 { ch.vib_depth = *depth; }
+                if is_xm {
+                    if *speed > 0 { ch.vib_speed = *speed; }
+                    if *depth > 0 { ch.vib_depth = *depth; }
+                } else {
+                    if *speed > 0 { ch.last_vibrato_speed = *speed; }
+                    if *depth > 0 { ch.last_vibrato_depth = *depth; }
+                }
                 ch.active_effects.vibrato = true;
             }
 
             Effect::Tremolo { speed, depth } => {
-                if *speed > 0 { ch.trem_speed = *speed; }
-                if *depth > 0 { ch.trem_depth = *depth; }
+                if is_xm {
+                    if *speed > 0 { ch.trem_speed = *speed; }
+                    if *depth > 0 { ch.trem_depth = *depth; }
+                } else {
+                    if *speed > 0 { ch.last_tremolo_speed = *speed; }
+                    if *depth > 0 { ch.last_tremolo_depth = *depth; }
+                }
                 ch.active_effects.tremolo = true;
             }
 
             Effect::VolumeSlide { up, down } => {
                 if *up > 0 { ch.last_volume_slide_up = *up; }
                 if *down > 0 { ch.last_volume_slide_down = *down; }
+                ch.active_effects.volume_slide = true;
+                if !is_xm && is_row_start {
+                    self.apply_volume_slide(channel);
+                }
+            }
+
+            Effect::TonePortamentoVolumeSlide { up } => {
+                let param = *up as u8;
+                let up_val = param >> 4;
+                let down_val = param & 0x0F;
+                if up_val > 0 { ch.last_volume_slide_up = up_val; }
+                if down_val > 0 { ch.last_volume_slide_down = down_val; }
+                ch.active_effects.tone_portamento = true;
+                ch.active_effects.volume_slide = true;
+            }
+
+            Effect::VibratoVolumeSlide { up } => {
+                let param = *up as u8;
+                let up_val = param >> 4;
+                let down_val = param & 0x0F;
+                if up_val > 0 { ch.last_volume_slide_up = up_val; }
+                if down_val > 0 { ch.last_volume_slide_down = down_val; }
+                ch.active_effects.vibrato = true;
                 ch.active_effects.volume_slide = true;
             }
 
@@ -803,13 +921,25 @@ impl SequencerEngine {
             }
 
             Effect::SetGlobalVolume { volume } => {
-                self.state.global_volume = (*volume).min(64);
-                self.global_volume = self.state.global_volume as f32 / 64.0;
+                if is_xm {
+                    self.state.global_volume = (*volume).min(64);
+                    self.global_volume = self.state.global_volume as f32 / 64.0;
+                } else {
+                    self.state.global_volume = (*volume).min(128);
+                    self.global_volume = self.state.global_volume as f32 / 128.0;
+                }
             }
 
             Effect::PatternDelay { ticks } => {
-                if self.state.pattern_delay_ticks2 == 0 {
-                    self.state.pattern_delay_ticks = *ticks + 1;
+                if is_xm {
+                    if self.state.pattern_delay_ticks2 == 0 {
+                        self.state.pattern_delay_ticks = *ticks + 1;
+                    }
+                } else {
+                    if !self.state.row_delay_active {
+                        self.state.pattern_delay_ticks = *ticks;
+                        self.state.row_delay_active = true;
+                    }
                 }
             }
 
@@ -818,48 +948,95 @@ impl SequencerEngine {
             }
 
             Effect::VibratoWaveform { waveform } => {
-                ch.wave_ctrl = (ch.wave_ctrl & 0xF0) | (waveform & 0x0F);
+                if is_xm {
+                    ch.wave_ctrl = (ch.wave_ctrl & 0xF0) | (waveform & 0x0F);
+                } else {
+                    let w = match waveform & 0x03 {
+                        0 => VibratoWaveform::Sine,
+                        1 => VibratoWaveform::Square,
+                        2 => VibratoWaveform::Ramp,
+                        3 => VibratoWaveform::Random,
+                        _ => VibratoWaveform::Sine,
+                    };
+                    for voice in &mut self.voices {
+                        if voice.active && voice.channel == Some(channel) {
+                            voice.vibrato_waveform = w;
+                        }
+                    }
+                }
             }
 
             Effect::TremoloWaveform { waveform } => {
-                ch.wave_ctrl = ((waveform & 0x0F) << 4) | (ch.wave_ctrl & 0x0F);
+                if is_xm {
+                    ch.wave_ctrl = ((waveform & 0x0F) << 4) | (ch.wave_ctrl & 0x0F);
+                } else {
+                    let w = match waveform & 0x03 {
+                        0 => VibratoWaveform::Sine,
+                        1 => VibratoWaveform::Square,
+                        2 => VibratoWaveform::Ramp,
+                        3 => VibratoWaveform::Random,
+                        _ => VibratoWaveform::Sine,
+                    };
+                    for voice in &mut self.voices {
+                        if voice.active && voice.channel == Some(channel) {
+                            voice.tremolo_waveform = w;
+                        }
+                    }
+                }
             }
 
             Effect::SetFineTune { tune } => {
-                ch.fine_tune_offset = (((*tune & 0x0F) << 4) as u8).wrapping_sub(128) as i8;
+                if is_xm {
+                    ch.fine_tune_offset = (((*tune & 0x0F) << 4) as u8).wrapping_sub(128) as i8;
+                } else {
+                    ch.fine_tune_offset = *tune as i8;
+                    for voice in &mut self.voices {
+                        if voice.active && voice.channel == Some(channel) {
+                            let detune = (*tune as f64 - 8.0) / 128.0;
+                            voice.current_frequency = voice.base_frequency * 2.0_f64.powf(detune / 12.0);
+                            voice.sample_delta = voice.current_frequency / self.output_sample_rate;
+                        }
+                    }
+                }
             }
 
             Effect::SetEnvelopePosition { tick } => {
-                let module = self.module.as_ref().unwrap().clone();
-                let inst_idx = ch.last_instrument as usize;
-                if inst_idx > 0 && inst_idx < module.instruments.len() {
-                    let inst = &module.instruments[inst_idx];
-                    let tick_val = *tick as f32;
-                    for voice in &mut self.voices {
-                        if !voice.active || voice.channel != Some(channel) {
-                            continue;
-                        }
-                        if let Some(ref vol_env) = inst.volume_envelope {
-                            if vol_env.flags.enabled {
-                                if let Some(ref mut ve) = voice.vol_env {
-                                    ve.position = tick_val - 1.0;
-                                    ve.current_point = 0;
-                                    for (i, pt) in vol_env.points.iter().enumerate() {
-                                        if (pt.tick as f32) < tick_val {
-                                            ve.current_point = (i + 1).min(vol_env.points.len() - 1);
+                if is_xm {
+                    let module = self.module.as_ref().unwrap().clone();
+                    let inst_idx = ch.last_instrument as usize;
+                    if inst_idx > 0 && inst_idx < module.instruments.len() {
+                        let inst = &module.instruments[inst_idx];
+                        let tick_val = *tick as f32;
+                        for voice in &mut self.voices {
+                            if !voice.active || voice.channel != Some(channel) {
+                                continue;
+                            }
+                            if let Some(ref vol_env) = inst.volume_envelope {
+                                if vol_env.flags.enabled {
+                                    if let Some(ref mut ve) = voice.vol_env {
+                                        ve.position = tick_val - 1.0;
+                                        ve.current_point = 0;
+                                        for (i, pt) in vol_env.points.iter().enumerate() {
+                                            if (pt.tick as f32) < tick_val {
+                                                ve.current_point = (i + 1).min(vol_env.points.len() - 1);
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                } else {
+                    self.set_envelope_position(channel, *tick);
                 }
             }
 
             Effect::Retrigger { interval } => {
                 if *interval > 0 {
                     ch.last_retrigger_interval = *interval;
-                    ch.retrig_speed = *interval;
+                    if is_xm {
+                        ch.retrig_speed = *interval;
+                    }
                 }
             }
 
@@ -875,52 +1052,205 @@ impl SequencerEngine {
                 ch.tremor_ontime = *ontime;
                 ch.tremor_offtime = *offtime;
                 ch.tremor_counter = 0;
+                if !is_xm {
+                    ch.tremor_active = true;
+                }
                 ch.active_effects.tremor = true;
-            }
-
-            Effect::FinePortamentoUp { speed } => {
-                self.apply_portamento_up_xm_fine(channel, *speed);
-            }
-
-            Effect::FinePortamentoDown { speed } => {
-                self.apply_portamento_down_xm_fine(channel, *speed);
             }
 
             Effect::FineVolumeSlideUp { amount } => {
                 ch.channel_volume = (ch.channel_volume + amount).min(64);
-                ch.real_vol = ch.channel_volume;
-                let vol = self.compute_channel_volume(channel);
-                for voice in &mut self.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.base_volume = vol;
+                if is_xm {
+                    ch.real_vol = ch.channel_volume;
+                    let vol = self.compute_channel_volume(channel);
+                    for voice in &mut self.voices {
+                        if voice.active && voice.channel == Some(channel) {
+                            voice.base_volume = vol;
+                        }
+                    }
+                } else {
+                    let v = ch.channel_volume as f32 / 64.0 * self.state.global_volume as f32 / 128.0;
+                    for voice in &mut self.voices {
+                        if voice.active && voice.channel == Some(channel) {
+                            voice.base_volume = v;
+                            voice.channel_volume = 1.0;
+                        }
                     }
                 }
             }
 
             Effect::FineVolumeSlideDown { amount } => {
                 ch.channel_volume = ch.channel_volume.saturating_sub(*amount);
-                ch.real_vol = ch.channel_volume;
-                let vol = self.compute_channel_volume(channel);
-                for voice in &mut self.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.base_volume = vol;
+                if is_xm {
+                    ch.real_vol = ch.channel_volume;
+                    let vol = self.compute_channel_volume(channel);
+                    for voice in &mut self.voices {
+                        if voice.active && voice.channel == Some(channel) {
+                            voice.base_volume = vol;
+                        }
+                    }
+                } else {
+                    let v = ch.channel_volume as f32 / 64.0 * self.state.global_volume as f32 / 128.0;
+                    for voice in &mut self.voices {
+                        if voice.active && voice.channel == Some(channel) {
+                            voice.base_volume = v;
+                            voice.channel_volume = 1.0;
+                        }
                     }
                 }
             }
 
-            Effect::NoteDelay { ticks: _ } => {}
-            _ => {}
+            Effect::NoteDelay { ticks } => {
+                if is_xm {
+                    // XM: handled in process_cell_unified (stores delayed_cell)
+                } else {
+                    if *ticks == 0 {
+                        self.set_channel_delay_tick(channel, 1);
+                    } else {
+                        self.set_channel_delay_tick(channel, *ticks);
+                    }
+                }
+            }
+
+            Effect::ExtendedEffect { param } => {
+                if !is_xm {
+                    let sub = param >> 4;
+                    let val = param & 0x0F;
+                    match sub {
+                        0x1 => {
+                            if is_row_start {
+                                self.apply_portamento_up(channel, val << 4);
+                            }
+                        }
+                        0x2 => {
+                            if is_row_start {
+                                self.apply_portamento_down(channel, val << 4);
+                            }
+                        }
+                        0x8 => {
+                            self.state.channels[channel].channel_panning = (val << 4).min(255);
+                        }
+                        0x9 => {
+                            if val > 0 {
+                                self.state.channels[channel].last_retrigger_interval = val;
+                            }
+                        }
+                        0xA => {
+                            self.state.channels[channel].channel_volume =
+                                (self.state.channels[channel].channel_volume as u16 + val as u16).min(64) as u8;
+                        }
+                        0xB => {
+                            self.state.channels[channel].channel_volume =
+                                self.state.channels[channel].channel_volume.saturating_sub(val);
+                        }
+                        0xC => {
+                            self.set_channel_cutoff_tick(channel, val);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            Effect::PatternLoop { count } => {
+                if !is_xm {
+                    if *count == 0 {
+                        if self.state.pattern_loop_count == 0 {
+                            self.state.pattern_loop_start = Some((self.state.current_order, self.state.current_row));
+                        }
+                    } else if self.state.pattern_loop_count == 0 {
+                        self.state.pattern_loop_count = *count;
+                    }
+                }
+            }
+
+            Effect::Panbrello { speed, depth } => {
+                if *speed > 0 { ch.last_panbrello_speed = *speed; }
+                if *depth > 0 { ch.last_panbrello_depth = *depth; }
+                ch.active_effects.panbrello = true;
+            }
+
+            Effect::GlobalVolumeSlide { up, down } => {
+                if !is_xm {
+                    let new_vol = self.state.global_volume as i16
+                        + *up as i16
+                        - (*down).unsigned_abs() as i16;
+                    self.state.global_volume = new_vol.clamp(0, 128) as u8;
+                    self.global_volume = self.state.global_volume as f32 / 128.0;
+                }
+            }
+
+            Effect::VolFineSlideUp { amount } => {
+                if !is_xm {
+                    self.state.channels[channel].channel_volume =
+                        (self.state.channels[channel].channel_volume as u16 + *amount as u16).min(64) as u8;
+                }
+            }
+            Effect::VolFineSlideDown { amount } => {
+                if !is_xm {
+                    self.state.channels[channel].channel_volume =
+                        self.state.channels[channel].channel_volume.saturating_sub(*amount);
+                }
+            }
+            Effect::VolSlideUp { amount } => {
+                if !is_xm {
+                    self.state.channels[channel].channel_volume =
+                        (self.state.channels[channel].channel_volume as u16 + *amount as u16).min(64) as u8;
+                }
+            }
+            Effect::VolSlideDown { amount } => {
+                if !is_xm {
+                    self.state.channels[channel].channel_volume =
+                        self.state.channels[channel].channel_volume.saturating_sub(*amount);
+                }
+            }
+            Effect::VolPortamento { speed } => {
+                if !is_xm {
+                    if *speed > 0 {
+                        self.state.channels[channel].last_tone_portamento_speed = *speed;
+                    }
+                    self.state.channels[channel].active_effects.tone_portamento = true;
+                    if self.state.channels[channel].portamento_target_period.is_none() {
+                        if let Note::On(key) = self.state.channels[channel].last_note {
+                            let module = match self.module.as_ref() {
+                                Some(m) => m.clone(),
+                                None => return,
+                            };
+                            let inst_idx = self.state.channels[channel].last_instrument as usize;
+                            let has_inst = !module.instruments.is_empty();
+                            if has_inst && inst_idx > 0 && inst_idx < module.instruments.len() && (key as usize) < 120 {
+                                let sample_idx = module.instruments[inst_idx].sample_map[key as usize] as usize;
+                                let rk = module.instruments[inst_idx].note_map[key as usize];
+                                let sample = if sample_idx > 0 && sample_idx < module.samples.len() {
+                                    Some(&module.samples[sample_idx])
+                                } else {
+                                    None
+                                };
+                                let target = self.compute_portamento_target(channel, key, rk, sample, sample_idx, &module);
+                                self.state.channels[channel].portamento_target_period = Some(target);
+                            }
+                        }
+                    }
+                }
+            }
+            Effect::VolVibrato { speed } => {
+                if !is_xm {
+                    if *speed > 0 {
+                        self.state.channels[channel].last_vibrato_speed = *speed;
+                    }
+                    self.state.channels[channel].active_effects.vibrato = true;
+                }
+            }
         }
     }
 
-    fn process_effects_tick_xm(&mut self) {
+    fn process_effects_tick_unified(&mut self) {
         let tick = self.state.current_tick;
         let module = self.module.as_ref().unwrap().clone();
         let linear = module.flags.linear_slides;
+        let is_xm = self.use_xm_model;
 
         for ch in 0..self.state.channels.len() {
-            // Volume column non-zero effects
-            {
+            if is_xm {
                 let ch_state = &mut self.state.channels[ch];
                 let vol_kol = ch_state.vol_kol;
                 if vol_kol > 0 {
@@ -953,120 +1283,178 @@ impl SequencerEngine {
                 }
             }
 
-            // Collect what to do before borrowing self for actions
-            let eff_typ = self.state.channels[ch].eff_typ_xm;
-            let should_vib = eff_typ == 0xB && self.state.channels[ch].vol_kol >> 4 == 0xB;
-            let should_tp_vcol = eff_typ == 0xF && self.state.channels[ch].vol_kol >> 4 == 0xF;
+            let ae = self.state.channels[ch].active_effects;
 
-            let mut do_vibrato = false;
-            let mut do_tone_porta = false;
-            let mut do_arpeggio = false;
-            let mut do_porta_up = false;
-            let mut do_porta_down = false;
-            let mut do_tremolo = false;
-            let mut do_vol_slide = false;
-            let mut do_multi_retrig = false;
-            let mut do_retrig = false;
-            let mut do_note_cut = false;
-            let mut do_note_delay = false;
-            let mut retrig_val: u8 = 0;
-            let mut cut_val: u8 = 0;
-            let mut delay_val: u8 = 0;
-
-            if should_vib {
-                do_vibrato = true;
-            }
-            if should_tp_vcol {
-                do_tone_porta = true;
-            }
-
-            match eff_typ {
-                0 => {
-                    if self.state.channels[ch].active_effects.arpeggio
-                        && (self.state.channels[ch].last_arpeggio.0 > 0 || self.state.channels[ch].last_arpeggio.1 > 0) {
-                        do_arpeggio = true;
-                    }
+            if ae.arpeggio
+                && (self.state.channels[ch].last_arpeggio.0 > 0
+                    || self.state.channels[ch].last_arpeggio.1 > 0)
+            {
+                if is_xm {
+                    self.apply_arpeggio_period(ch, tick, linear);
+                } else {
+                    let (arp1, arp2) = self.state.channels[ch].last_arpeggio;
+                    self.apply_arpeggio(ch, tick, arp1, arp2);
                 }
-                1 => { do_porta_up = true; }
-                2 => { do_porta_down = true; }
-                3 => { do_tone_porta = true; }
-                4 => { do_vibrato = true; }
-                5 => { do_tone_porta = true; do_vol_slide = true; }
-                6 => { do_vibrato = true; do_vol_slide = true; }
-                7 => { do_tremolo = true; }
-                0xA | 0x11 => {
-                    if self.state.channels[ch].active_effects.volume_slide {
-                        do_vol_slide = true;
-                    }
-                }
-                0x14 => {
-                    let key_tick = self.state.channels[ch].eff_xm & 31;
-                    if tick == key_tick {
-                        self.handle_note_off_xm(ch);
-                    }
-                }
-                0x1B => { do_multi_retrig = true; }
-                0x0E => {
-                    let sub = self.state.channels[ch].eff_xm >> 4;
-                    let val = self.state.channels[ch].eff_xm & 0x0F;
-                    match sub {
-                        0x9 => { if val > 0 && tick > 0 && tick % val == 0 { do_retrig = true; retrig_val = val; } }
-                        0xC => { if tick == val { do_note_cut = true; cut_val = val; } }
-                        0xD => { if tick == val { do_note_delay = true; delay_val = val; } }
-                        _ => {}
-                    }
-                }
-                _ => {}
             }
-
-            // Execute actions
-            if do_arpeggio {
-                self.apply_arpeggio_xm(ch, tick, linear);
-            }
-            if do_vibrato {
-                self.apply_vibrato_xm(ch, linear);
-            }
-            if do_tone_porta {
-                self.apply_tone_portamento_xm(ch, linear);
-            }
-            if do_porta_up {
+            if ae.portamento_up {
                 let spd = self.state.channels[ch].last_portamento_up_speed;
-                self.apply_portamento_up_xm(ch, spd);
+                if is_xm {
+                    if spd > 0 {
+                        let spd_period = (spd as u16) << 2;
+                        {
+                            let ch = &mut self.state.channels[ch];
+                            ch.real_period = ch.real_period.saturating_sub(spd_period).max(1);
+                            ch.out_period = ch.real_period;
+                        }
+                        let module = self.module.as_ref().unwrap().clone();
+                        let freq = period_to_frequency(self.state.channels[ch].out_period, module.flags.linear_slides, 8363);
+                        let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
+                        for voice in &mut self.voices {
+                            if voice.active && voice.channel == Some(ch) {
+                                voice.current_frequency = freq;
+                                voice.sample_delta = delta;
+                            }
+                        }
+                    }
+                } else if spd > 0 {
+                    self.apply_portamento_up(ch, spd);
+                }
             }
-            if do_porta_down {
+            if ae.portamento_down {
                 let spd = self.state.channels[ch].last_portamento_down_speed;
-                self.apply_portamento_down_xm(ch, spd);
+                if is_xm {
+                    if spd > 0 {
+                        let spd_period = (spd as u16) << 2;
+                        {
+                            let ch = &mut self.state.channels[ch];
+                            ch.real_period = ch.real_period.saturating_add(spd_period).min(31999);
+                            ch.out_period = ch.real_period;
+                        }
+                        let module = self.module.as_ref().unwrap().clone();
+                        let freq = period_to_frequency(self.state.channels[ch].out_period, module.flags.linear_slides, 8363);
+                        let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
+                        for voice in &mut self.voices {
+                            if voice.active && voice.channel == Some(ch) {
+                                voice.current_frequency = freq;
+                                voice.sample_delta = delta;
+                            }
+                        }
+                    }
+                } else if spd > 0 {
+                    self.apply_portamento_down(ch, spd);
+                }
             }
-            if do_tremolo {
-                self.apply_tremolo_xm(ch);
+            if ae.tone_portamento {
+                if is_xm {
+                    self.apply_tone_portamento_period(ch, linear);
+                } else {
+                    let tp_speed = self.state.channels[ch].last_tone_portamento_speed;
+                    if tp_speed > 0 && self.state.channels[ch].portamento_target_period.is_some() {
+                        self.apply_tone_portamento(ch, tp_speed);
+                    }
+                }
             }
-            if do_vol_slide {
-                self.apply_volume_slide_xm(ch);
+            if ae.vibrato {
+                if is_xm {
+                    self.apply_vibrato_period(ch, linear);
+                } else {
+                    let vib_speed = self.state.channels[ch].last_vibrato_speed;
+                    let vib_depth = self.state.channels[ch].last_vibrato_depth;
+                    if vib_speed > 0 || vib_depth > 0 {
+                        self.apply_vibrato(ch, vib_speed, vib_depth);
+                    }
+                }
             }
-            if do_multi_retrig {
-                self.do_multi_retrig_xm(ch, linear);
+            if ae.tremolo {
+                if is_xm {
+                    self.apply_tremolo_period(ch);
+                } else {
+                    let trem_speed = self.state.channels[ch].last_tremolo_speed;
+                    let trem_depth = self.state.channels[ch].last_tremolo_depth;
+                    if trem_speed > 0 || trem_depth > 0 {
+                        self.apply_tremolo(ch, trem_speed, trem_depth);
+                    }
+                }
             }
-            if do_retrig {
-                self.retrig_channel_note_xm(ch, linear);
+            if ae.volume_slide {
+                if is_xm {
+                    self.apply_volume_slide_period(ch);
+                } else {
+                    let vol_up = self.state.channels[ch].last_volume_slide_up;
+                    let vol_down = self.state.channels[ch].last_volume_slide_down;
+                    if vol_up > 0 || vol_down > 0 {
+                        self.apply_volume_slide(ch);
+                    }
+                }
             }
-            if do_note_cut {
-                self.cut_channel_voices(ch);
+            if ae.tremor {
+                if is_xm {
+                    self.apply_tremor_period(ch);
+                } else {
+                    let ontime = self.state.channels[ch].tremor_ontime;
+                    let offtime = self.state.channels[ch].tremor_offtime;
+                    if ontime > 0 || offtime > 0 {
+                        self.apply_tremor(ch, tick, ontime, offtime);
+                    }
+                }
             }
-            if do_note_delay {
-                self.trigger_delayed_note_xm(ch, linear);
+            if ae.panbrello && !is_xm {
+                let pb_speed = self.state.channels[ch].last_panbrello_speed;
+                let pb_depth = self.state.channels[ch].last_panbrello_depth;
+                if pb_speed > 0 || pb_depth > 0 {
+                    self.apply_panbrello(ch, pb_speed, pb_depth);
+                }
             }
 
-            // Note cut by tick
-            let note_cut = self.state.channels[ch].note_cut_tick;
-            if let Some(cutoff) = note_cut {
-                if tick == cutoff {
-                    self.cut_channel_voices(ch);
-                    self.state.channels[ch].note_cut_tick = None;
+            // Retrig
+            if is_xm {
+                let retrig_speed = self.state.channels[ch].retrig_speed;
+                let retrig_interval = self.state.channels[ch].last_retrigger_interval;
+                if retrig_speed > 0 && tick > 0 && tick % retrig_speed == 0 {
+                    self.do_multi_retrig_period(ch, linear);
+                } else if retrig_interval > 0 && tick > 0 && tick % retrig_interval == 0 {
+                    self.retrig_channel_note_period(ch, linear);
+                }
+            } else {
+                let retrigger_interval = self.state.channels[ch].last_retrigger_interval;
+                if retrigger_interval > 0 && tick > 0 && tick % retrigger_interval == 0 {
+                    self.retrigger_channel_note(ch);
+                }
+            }
+
+            // Note delay
+            if is_xm {
+                let delay_ticks = self.state.channels[ch].note_delay_ticks;
+                if delay_ticks > 0 && tick == delay_ticks {
+                    self.trigger_delayed_note_period(ch, linear);
+                }
+            } else {
+                if let Some(delay) = self.get_channel_delay_tick(ch) {
+                    if tick == delay as u8 {
+                        self.trigger_delayed_note(ch);
+                    }
+                }
+            }
+
+            // Note cut
+            if is_xm {
+                let note_cut = self.state.channels[ch].note_cut_tick;
+                if let Some(cutoff) = note_cut {
+                    if tick == cutoff {
+                        self.cut_channel_voices(ch);
+                        self.state.channels[ch].note_cut_tick = None;
+                    }
+                }
+            } else {
+                if let Some(cutoff) = self.get_channel_cutoff_tick(ch) {
+                    if tick == cutoff as u8 {
+                        self.cut_channel_voices(ch);
+                    }
                 }
             }
 
             // Volume update for voices
-            if !do_tremolo {
+            if !ae.tremolo {
                 let vol = self.compute_channel_volume(ch);
                 for voice in &mut self.voices {
                     if voice.active && voice.channel == Some(ch) {
@@ -1077,53 +1465,7 @@ impl SequencerEngine {
         }
     }
 
-    // ─── XM portamento ───────────────────────────────────────────
-
-    fn apply_portamento_up_xm(&mut self, channel: usize, speed: u8) {
-        if speed == 0 { return; }
-        let ch = &mut self.state.channels[channel];
-        let spd = (speed as u16) << 2;
-        ch.real_period = ch.real_period.saturating_sub(spd).max(1);
-        ch.out_period = ch.real_period;
-
-        let module = self.module.as_ref().unwrap().clone();
-        self.update_voices_period_xm(channel, module.flags.linear_slides);
-    }
-
-    fn apply_portamento_down_xm(&mut self, channel: usize, speed: u8) {
-        if speed == 0 { return; }
-        let ch = &mut self.state.channels[channel];
-        let spd = (speed as u16) << 2;
-        ch.real_period = ch.real_period.saturating_add(spd).min(31999);
-        ch.out_period = ch.real_period;
-
-        let module = self.module.as_ref().unwrap().clone();
-        self.update_voices_period_xm(channel, module.flags.linear_slides);
-    }
-
-    fn apply_portamento_up_xm_fine(&mut self, channel: usize, speed: u8) {
-        let spd = speed as u16;
-        if spd == 0 { return; }
-        let ch = &mut self.state.channels[channel];
-        ch.real_period = ch.real_period.saturating_sub(spd).max(1);
-        ch.out_period = ch.real_period;
-
-        let module = self.module.as_ref().unwrap().clone();
-        self.update_voices_period_xm(channel, module.flags.linear_slides);
-    }
-
-    fn apply_portamento_down_xm_fine(&mut self, channel: usize, speed: u8) {
-        let spd = speed as u16;
-        if spd == 0 { return; }
-        let ch = &mut self.state.channels[channel];
-        ch.real_period = ch.real_period.saturating_add(spd).min(31999);
-        ch.out_period = ch.real_period;
-
-        let module = self.module.as_ref().unwrap().clone();
-        self.update_voices_period_xm(channel, module.flags.linear_slides);
-    }
-
-    fn apply_tone_portamento_xm(&mut self, channel: usize, linear: bool) {
+    fn apply_tone_portamento_period(&mut self, channel: usize, linear: bool) {
         let ch = &self.state.channels[channel];
         if ch.porta_dir == 0 { return; }
         let speed = ch.porta_speed_period;
@@ -1155,12 +1497,12 @@ impl SequencerEngine {
         }
 
         let module = self.module.as_ref().unwrap().clone();
-        self.update_voices_period_xm(channel, module.flags.linear_slides);
+        self.update_voices_from_period(channel, module.flags.linear_slides);
     }
 
     // ─── XM vibrato ──────────────────────────────────────────────
 
-    fn apply_vibrato_xm(&mut self, channel: usize, _linear: bool) {
+    fn apply_vibrato_period(&mut self, channel: usize, _linear: bool) {
         let (vib_pos, vib_speed, vib_depth, wave_ctrl) = {
             let ch = &self.state.channels[channel];
             (ch.vib_pos, ch.vib_speed, ch.vib_depth, ch.wave_ctrl & 0x03)
@@ -1197,12 +1539,12 @@ impl SequencerEngine {
         ch.vib_pos = vib_pos.wrapping_add(vib_speed);
 
         let module = self.module.as_ref().unwrap().clone();
-        self.update_voices_period_xm(channel, module.flags.linear_slides);
+        self.update_voices_from_period(channel, module.flags.linear_slides);
     }
 
     // ─── XM tremolo ──────────────────────────────────────────────
 
-    fn apply_tremolo_xm(&mut self, channel: usize) {
+    fn apply_tremolo_period(&mut self, channel: usize) {
         let (trem_pos, trem_speed, trem_depth, wave_ctrl) = {
             let ch = &self.state.channels[channel];
             (ch.trem_pos, ch.trem_speed, ch.trem_depth, (ch.wave_ctrl >> 4) & 0x03)
@@ -1252,7 +1594,7 @@ impl SequencerEngine {
 
     // ─── XM arpeggio ─────────────────────────────────────────────
 
-    fn apply_arpeggio_xm(&mut self, channel: usize, tick: u8, linear: bool) {
+    fn apply_arpeggio_period(&mut self, channel: usize, tick: u8, linear: bool) {
         let (arp1, arp2) = self.state.channels[channel].last_arpeggio;
         let arp_tab = get_arp_tab();
         let arp_tick = arp_tab[tick as usize % 256];
@@ -1265,12 +1607,12 @@ impl SequencerEngine {
             let fine_tune = self.state.channels[channel].fine_tune_offset;
             self.state.channels[channel].out_period = relocate_ton(real_period, note, fine_tune, linear);
         }
-        self.update_voices_period_xm(channel, linear);
+        self.update_voices_from_period(channel, linear);
     }
 
     // ─── XM volume slide ─────────────────────────────────────────
 
-    fn apply_volume_slide_xm(&mut self, channel: usize) {
+    fn apply_volume_slide_period(&mut self, channel: usize) {
         let ch = &mut self.state.channels[channel];
         let up = ch.last_volume_slide_up;
         let down = ch.last_volume_slide_down;
@@ -1292,7 +1634,7 @@ impl SequencerEngine {
 
     // ─── XM tremor ───────────────────────────────────────────────
 
-    fn apply_tremor_xm(&mut self, channel: usize) {
+    fn apply_tremor_period(&mut self, channel: usize) {
         let ch = &mut self.state.channels[channel];
         let tremor_sign = ch.tremor_pos_byte & 0x80;
         let mut tremor_data = ch.tremor_pos_byte & 0x7F;
@@ -1323,7 +1665,7 @@ impl SequencerEngine {
 
     // ─── XM retrig ───────────────────────────────────────────────
 
-    fn do_multi_retrig_xm(&mut self, channel: usize, linear: bool) {
+    fn do_multi_retrig_period(&mut self, channel: usize, linear: bool) {
         let (cnt, speed, vol_kol, _retrig_vol) = {
             let ch = &mut self.state.channels[channel];
             ch.retrig_cnt += 1;
@@ -1369,10 +1711,10 @@ impl SequencerEngine {
         };
         let _ = (cnt, speed, vol_kol);
 
-        self.retrig_channel_note_xm(channel, linear);
+        self.retrig_channel_note_period(channel, linear);
     }
 
-    fn retrig_channel_note_xm(&mut self, channel: usize, linear: bool) {
+    fn retrig_channel_note_period(&mut self, channel: usize, linear: bool) {
         let module = match self.module.as_ref() {
             Some(m) => m.clone(),
             None => return,
@@ -1414,7 +1756,7 @@ impl SequencerEngine {
         self.voices[voice_idx].channel = Some(channel);
     }
 
-    fn trigger_delayed_note_xm(&mut self, channel: usize, linear: bool) {
+    fn trigger_delayed_note_period(&mut self, channel: usize, linear: bool) {
         let cell = match self.state.channels[channel].delayed_cell.take() {
             Some(c) => c,
             None => return,
@@ -1453,12 +1795,18 @@ impl SequencerEngine {
                 let vol = self.compute_channel_volume(channel);
                 let pan = self.compute_channel_panning(channel);
 
+                let fade_out = if inst_idx > 0 && inst_idx < module.instruments.len() {
+                    module.instruments[inst_idx].fade_out
+                } else {
+                    0
+                };
+
                 let voice_idx = self.allocate_voice(channel);
                 self.voices[voice_idx].trigger(
                     s.data.clone(), s.sample_rate as f64, s.loop_type,
                     s.loop_start, s.loop_end, playback_freq, self.output_sample_rate,
                     vol, pan, 0, Some(inst_idx as u8), Some(sample_idx as u8),
-                    Note::On(key), NewNoteAction::NoteCut, 0,
+                    Note::On(key), NewNoteAction::NoteCut, fade_out,
                 );
                 self.voices[voice_idx].channel = Some(channel);
 
@@ -1473,15 +1821,60 @@ impl SequencerEngine {
                     }
                 }
 
-                self.voices[voice_idx].env_sustain_active = true;
-                self.voices[voice_idx].fade_out_amp = 32768;
+                // Setup envelopes and auto-vibrato for delayed XM notes
+                if inst_idx > 0 && inst_idx < module.instruments.len() {
+                    let inst = &module.instruments[inst_idx];
+                    let voice = &mut self.voices[voice_idx];
+
+                    voice.fade_out_rate = fade_out;
+                    voice.fade_out_amp = 32768i32;
+                    voice.fade_out_speed_i32 = fade_out as i32;
+                    voice.env_sustain_active = true;
+
+                    if let Some(ref vol_env) = inst.volume_envelope {
+                        if vol_env.flags.enabled {
+                            voice.vol_env = Some(EnvelopeState {
+                                envelope: Arc::new(vol_env.clone()),
+                                current_point: 0,
+                                position: -1.0,
+                                released: false,
+                                finished: false,
+                            });
+                        }
+                    }
+                    if let Some(ref pan_env) = inst.panning_envelope {
+                        if pan_env.flags.enabled {
+                            voice.pan_env = Some(EnvelopeState {
+                                envelope: Arc::new(pan_env.clone()),
+                                current_point: 0,
+                                position: -1.0,
+                                released: false,
+                                finished: false,
+                            });
+                        }
+                    }
+
+                    if inst.vib_depth > 0 {
+                        voice.auto_vib_pos = 0;
+                        voice.auto_vib_period_base = period;
+                        if inst.vib_sweep > 0 {
+                            voice.auto_vib_amp = 0;
+                            voice.auto_vib_sweep = (inst.vib_depth as i32) * 256 / (inst.vib_sweep as i32).max(1);
+                        } else {
+                            voice.auto_vib_amp = (inst.vib_depth as i32) * 256;
+                            voice.auto_vib_sweep = 0;
+                        }
+                    }
+
+                    voice.instrument_index = Some(inst_idx as u8);
+                }
             }
         }
     }
 
     // ─── Update voices from period ───────────────────────────────
 
-    fn update_voices_period_xm(&mut self, channel: usize, linear: bool) {
+    fn update_voices_from_period(&mut self, channel: usize, linear: bool) {
         let period = self.state.channels[channel].out_period;
         let freq = period_to_frequency(period, linear, 8363);
         let delta = if self.output_sample_rate > 0.0 {
@@ -1495,147 +1888,6 @@ impl SequencerEngine {
                 voice.sample_delta = delta;
             }
         }
-    }
-
-    // ─── Non-XM tick zero (original, unchanged) ──────────────────
-
-    fn process_tick_zero(&mut self) {
-        let pattern_index = self.state.current_pattern as usize;
-        let row = self.state.current_row as usize;
-
-        let cells: Vec<(usize, Cell)> = {
-            let module = match self.module.as_ref() {
-                Some(m) => m,
-                None => return,
-            };
-            if pattern_index >= module.patterns.len() {
-                self.stop();
-                return;
-            }
-            let pattern = &module.patterns[pattern_index];
-            if row >= pattern.num_rows {
-                self.advance_row();
-                return;
-            }
-            let mut result = Vec::new();
-            for ch in 0..64 {
-                if ch >= pattern.data[row].len() {
-                    break;
-                }
-                let cell = pattern.data[row][ch];
-                if cell.is_empty() {
-                    continue;
-                }
-                result.push((ch, cell));
-            }
-            result
-        };
-
-        for (ch, cell) in cells {
-            self.process_cell(ch, &cell);
-        }
-    }
-
-    fn process_cell(&mut self, channel: usize, cell: &Cell) {
-        let module = match self.module.as_ref() {
-            Some(m) => m.clone(),
-            None => return,
-        };
-        self.process_cell_with_module(channel, cell, &module);
-    }
-
-    fn process_cell_with_module(&mut self, channel: usize, cell: &Cell, module: &Module) {
-        if channel >= self.state.channels.len() {
-            return;
-        }
-
-        if cell.instrument.is_some() {
-            self.state.channels[channel].last_instrument = cell.instrument.unwrap();
-        }
-
-        let instrument_idx = self.state.channels[channel].last_instrument as usize;
-        let has_instruments = !module.instruments.is_empty();
-
-        let (sample_idx, remapped_key) = if has_instruments && instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            let inst = &module.instruments[instrument_idx];
-            match cell.note {
-                Note::On(key) if (key as usize) < 120 => {
-                    let idx = inst.sample_map[key as usize] as usize;
-                    let rk = inst.note_map[key as usize];
-                    (idx, if rk < 120 { rk } else { key })
-                }
-                _ => (self.state.channels[channel].last_sample as usize, {
-                    match cell.note { Note::On(k) => k, _ => 0 }
-                }),
-            }
-        } else {
-            (instrument_idx, match cell.note { Note::On(k) => k, _ => 0 })
-        };
-
-        if sample_idx > 0 && sample_idx < module.samples.len() {
-            self.state.channels[channel].last_sample = sample_idx as u8;
-        }
-
-        let sample = if sample_idx > 0 && sample_idx < module.samples.len() {
-            Some(&module.samples[sample_idx])
-        } else {
-            None
-        };
-
-        if cell.instrument.is_some() {
-            if let Some(s) = sample {
-                self.state.channels[channel].channel_volume = s.default_volume.min(64);
-            }
-        }
-
-        if let Some(vol) = cell.volume {
-            self.apply_volume_column(channel, vol);
-        }
-
-        if let Effect::SetVolume { volume } = &cell.effect {
-            self.state.channels[channel].channel_volume = (*volume).min(64);
-            self.state.channels[channel].row_volume = (*volume).min(64);
-        }
-
-        let is_tone_portamento = matches!(
-            cell.effect,
-            Effect::TonePortamento { .. } | Effect::TonePortamentoVolumeSlide { .. }
-                | Effect::VolPortamento { .. }
-        );
-
-        let is_note_delay = matches!(cell.effect, Effect::NoteDelay { ticks } if ticks > 0);
-
-        match cell.note {
-            Note::On(key) => {
-                self.state.channels[channel].last_note = Note::On(key);
-
-                if is_note_delay {
-                    self.state.channels[channel].delayed_cell = Some(*cell);
-                    if let Effect::NoteDelay { ticks } = cell.effect {
-                        self.state.channels[channel].note_delay_ticks = ticks;
-                    }
-                } else if is_tone_portamento {
-                    let target_freq = self.compute_portamento_target(
-                        channel, key, remapped_key, sample, sample_idx, module,
-                    );
-                    self.state.channels[channel].portamento_target_period = Some(target_freq);
-                } else {
-                    self.trigger_channel_note(channel, key, remapped_key, sample, sample_idx, cell, module);
-                }
-            }
-            Note::Off => {
-                self.handle_note_off(channel);
-            }
-            Note::Cut => {
-                self.cut_channel_voices(channel);
-            }
-            Note::Fade => {
-                self.fade_channel_voices(channel);
-            }
-            Note::None => {}
-        }
-
-        self.apply_effect(channel, &cell.effect, true);
     }
 
     fn trigger_channel_note(
@@ -1973,498 +2225,6 @@ impl SequencerEngine {
         }
     }
 
-    fn apply_effect(&mut self, channel: usize, effect: &Effect, is_row_start: bool) {
-        let mut active = ActiveEffects::default();
-
-        match effect {
-            Effect::None => {}
-
-            Effect::SetSpeed { speed } => {
-                if *speed > 0 {
-                    self.state.speed = *speed;
-                }
-            }
-            Effect::SetTempo { bpm } => {
-                if *bpm >= 32 {
-                    self.state.bpm = *bpm as u16;
-                    self.state.samples_per_tick =
-                        compute_samples_per_tick(self.state.bpm, self.output_sample_rate);
-                }
-            }
-
-            Effect::SetVolume { volume } => {
-                self.state.channels[channel].channel_volume = (*volume).min(64);
-                self.state.channels[channel].row_volume = (*volume).min(64);
-                let vol = self.compute_channel_volume(channel);
-                for voice in &mut self.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.base_volume = vol;
-                        voice.channel_volume = 1.0;
-                    }
-                }
-            }
-
-            Effect::SetPanning { pan } => {
-                self.state.channels[channel].channel_panning = (*pan).min(255);
-            }
-
-            Effect::SetPanPosition { pan } => {
-                self.state.channels[channel].channel_panning = (*pan).min(255);
-            }
-
-            Effect::SetSampleOffset { offset } => {
-                self.state.channels[channel].last_sample_offset = *offset;
-            }
-
-            Effect::PositionJump { order } => {
-                self.state.position_jump_order = Some(*order);
-            }
-
-            Effect::PatternBreak { row } => {
-                self.state.pattern_break_row = Some(*row);
-            }
-
-            Effect::SetGlobalVolume { volume } => {
-                self.state.global_volume = (*volume).min(128);
-                self.global_volume = self.state.global_volume as f32 / 128.0;
-            }
-
-            Effect::PatternDelay { ticks } => {
-                if !self.state.row_delay_active {
-                    self.state.pattern_delay_ticks = *ticks;
-                    self.state.row_delay_active = true;
-                }
-            }
-
-            Effect::PortamentoUp { speed } => {
-                if *speed > 0 {
-                    self.state.channels[channel].last_portamento_up_speed = *speed;
-                }
-                active.portamento_up = true;
-                if is_row_start {
-                    let s = self.state.channels[channel].last_portamento_up_speed;
-                    self.apply_portamento_up(channel, s);
-                }
-            }
-
-            Effect::PortamentoDown { speed } => {
-                if *speed > 0 {
-                    self.state.channels[channel].last_portamento_down_speed = *speed;
-                }
-                active.portamento_down = true;
-                if is_row_start {
-                    let s = self.state.channels[channel].last_portamento_down_speed;
-                    self.apply_portamento_down(channel, s);
-                }
-            }
-
-            Effect::FinePortamentoUp { speed } => {
-                if *speed > 0 && is_row_start {
-                    self.apply_portamento_up(channel, *speed);
-                }
-            }
-
-            Effect::FinePortamentoDown { speed } => {
-                if *speed > 0 && is_row_start {
-                    self.apply_portamento_down(channel, *speed);
-                }
-            }
-
-            Effect::TonePortamento { speed } => {
-                if *speed > 0 {
-                    self.state.channels[channel].last_tone_portamento_speed = *speed;
-                }
-                active.tone_portamento = true;
-            }
-
-            Effect::VolumeSlide { up, down } => {
-                if *up > 0 {
-                    self.state.channels[channel].last_volume_slide_up = *up;
-                }
-                if *down > 0 {
-                    self.state.channels[channel].last_volume_slide_down = *down;
-                }
-                active.volume_slide = true;
-                if is_row_start {
-                    self.apply_volume_slide(channel);
-                }
-            }
-
-            Effect::FineVolumeSlideUp { amount } => {
-                let vol = &mut self.state.channels[channel].channel_volume;
-                *vol = (*vol as u16 + *amount as u16).min(64) as u8;
-                let v = *vol as f32 / 64.0 * self.state.global_volume as f32 / 128.0;
-                for voice in &mut self.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.base_volume = v;
-                        voice.channel_volume = 1.0;
-                    }
-                }
-            }
-
-            Effect::FineVolumeSlideDown { amount } => {
-                let vol = &mut self.state.channels[channel].channel_volume;
-                *vol = vol.saturating_sub(*amount);
-                let v = *vol as f32 / 64.0 * self.state.global_volume as f32 / 128.0;
-                for voice in &mut self.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.base_volume = v;
-                        voice.channel_volume = 1.0;
-                    }
-                }
-            }
-
-            Effect::Vibrato { speed, depth } => {
-                if *speed > 0 {
-                    self.state.channels[channel].last_vibrato_speed = *speed;
-                }
-                if *depth > 0 {
-                    self.state.channels[channel].last_vibrato_depth = *depth;
-                }
-                active.vibrato = true;
-            }
-
-            Effect::Tremolo { speed, depth } => {
-                if *speed > 0 {
-                    self.state.channels[channel].last_tremolo_speed = *speed;
-                }
-                if *depth > 0 {
-                    self.state.channels[channel].last_tremolo_depth = *depth;
-                }
-                active.tremolo = true;
-            }
-
-            Effect::Arpeggio { note1, note2 } => {
-                self.state.channels[channel].last_arpeggio = (*note1, *note2);
-                active.arpeggio = true;
-            }
-
-            Effect::TonePortamentoVolumeSlide { up } => {
-                let _param = *up as u8;
-                let up_val = _param >> 4;
-                let down_val = _param & 0x0F;
-                if up_val > 0 {
-                    self.state.channels[channel].last_volume_slide_up = up_val;
-                }
-                if down_val > 0 {
-                    self.state.channels[channel].last_volume_slide_down = down_val;
-                }
-                active.tone_portamento = true;
-                active.volume_slide = true;
-            }
-
-            Effect::VibratoVolumeSlide { up } => {
-                let _param = *up as u8;
-                let up_val = _param >> 4;
-                let down_val = _param & 0x0F;
-                if up_val > 0 {
-                    self.state.channels[channel].last_volume_slide_up = up_val;
-                }
-                if down_val > 0 {
-                    self.state.channels[channel].last_volume_slide_down = down_val;
-                }
-                active.vibrato = true;
-                active.volume_slide = true;
-            }
-
-            Effect::ExtendedEffect { param } => {
-                let sub = param >> 4;
-                let val = param & 0x0F;
-                match sub {
-                    0x1 => {
-                        if is_row_start {
-                            self.apply_portamento_up(channel, val << 4);
-                        }
-                    }
-                    0x2 => {
-                        if is_row_start {
-                            self.apply_portamento_down(channel, val << 4);
-                        }
-                    }
-                    0x8 => {
-                        self.state.channels[channel].channel_panning = (val << 4).min(255);
-                    }
-                    0x9 => {
-                        if val > 0 {
-                            self.state.channels[channel].last_retrigger_interval = val;
-                        }
-                    }
-                    0xA => {
-                        self.state.channels[channel].channel_volume =
-                            (self.state.channels[channel].channel_volume as u16 + val as u16).min(64) as u8;
-                    }
-                    0xB => {
-                        self.state.channels[channel].channel_volume =
-                            self.state.channels[channel].channel_volume.saturating_sub(val);
-                    }
-                    0xC => {
-                        self.set_channel_cutoff_tick(channel, val);
-                    }
-                    0xD => {}
-                    _ => {}
-                }
-            }
-
-            Effect::GlissandoControl { on } => {
-                self.state.channels[channel].glissando = *on;
-            }
-
-            Effect::VibratoWaveform { waveform } => {
-                let w = match waveform & 0x03 {
-                    0 => VibratoWaveform::Sine,
-                    1 => VibratoWaveform::Square,
-                    2 => VibratoWaveform::Ramp,
-                    3 => VibratoWaveform::Random,
-                    _ => VibratoWaveform::Sine,
-                };
-                for voice in &mut self.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.vibrato_waveform = w;
-                    }
-                }
-            }
-
-            Effect::TremoloWaveform { waveform } => {
-                let w = match waveform & 0x03 {
-                    0 => VibratoWaveform::Sine,
-                    1 => VibratoWaveform::Square,
-                    2 => VibratoWaveform::Ramp,
-                    3 => VibratoWaveform::Random,
-                    _ => VibratoWaveform::Sine,
-                };
-                for voice in &mut self.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.tremolo_waveform = w;
-                    }
-                }
-            }
-
-            Effect::SetFineTune { tune } => {
-                if channel < self.state.channels.len() {
-                    self.state.channels[channel].fine_tune_offset = *tune as i8;
-                }
-                for voice in &mut self.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        let detune = (*tune as f64 - 8.0) / 128.0;
-                        voice.current_frequency = voice.base_frequency * 2.0_f64.powf(detune / 12.0);
-                        voice.sample_delta = voice.current_frequency / self.output_sample_rate;
-                    }
-                }
-            }
-
-            Effect::PatternLoop { count } => {
-                if *count == 0 {
-                    if self.state.pattern_loop_count == 0 {
-                        self.state.pattern_loop_start = Some((self.state.current_order, self.state.current_row));
-                    }
-                } else if self.state.pattern_loop_count == 0 {
-                    self.state.pattern_loop_count = *count;
-                }
-            }
-
-            Effect::Retrigger { interval } => {
-                if *interval > 0 {
-                    self.state.channels[channel].last_retrigger_interval = *interval;
-                }
-            }
-
-            Effect::NoteCutAfter { ticks } => {
-                if *ticks == 0 {
-                    self.cut_channel_voices(channel);
-                } else {
-                    self.set_channel_cutoff_tick(channel, *ticks);
-                }
-            }
-
-            Effect::SetEnvelopePosition { tick } => {
-                self.set_envelope_position(channel, *tick);
-            }
-
-            Effect::Panbrello { speed, depth } => {
-                if *speed > 0 {
-                    self.state.channels[channel].last_panbrello_speed = *speed;
-                }
-                if *depth > 0 {
-                    self.state.channels[channel].last_panbrello_depth = *depth;
-                }
-                active.panbrello = true;
-            }
-
-            Effect::Tremor { ontime, offtime } => {
-                self.state.channels[channel].tremor_ontime = *ontime;
-                self.state.channels[channel].tremor_offtime = *offtime;
-                self.state.channels[channel].tremor_counter = 0;
-                self.state.channels[channel].tremor_active = true;
-                active.tremor = true;
-            }
-
-            Effect::GlobalVolumeSlide { up, down } => {
-                let new_vol = self.state.global_volume as i16
-                    + *up as i16
-                    - (*down).unsigned_abs() as i16;
-                self.state.global_volume = new_vol.clamp(0, 128) as u8;
-                self.global_volume = self.state.global_volume as f32 / 128.0;
-            }
-
-            Effect::SetPanning16 { pan } => {
-                self.state.channels[channel].channel_panning = *pan;
-            }
-
-            Effect::VolSetVolume { vol } => {
-                self.state.channels[channel].channel_volume = (*vol).min(64);
-            }
-            Effect::VolFineSlideUp { amount } => {
-                self.state.channels[channel].channel_volume =
-                    (self.state.channels[channel].channel_volume as u16 + *amount as u16).min(64) as u8;
-            }
-            Effect::VolFineSlideDown { amount } => {
-                self.state.channels[channel].channel_volume =
-                    self.state.channels[channel].channel_volume.saturating_sub(*amount);
-            }
-            Effect::VolSlideUp { amount } => {
-                self.state.channels[channel].channel_volume =
-                    (self.state.channels[channel].channel_volume as u16 + *amount as u16).min(64) as u8;
-            }
-            Effect::VolSlideDown { amount } => {
-                self.state.channels[channel].channel_volume =
-                    self.state.channels[channel].channel_volume.saturating_sub(*amount);
-            }
-            Effect::VolPortamento { speed } => {
-                if *speed > 0 {
-                    self.state.channels[channel].last_tone_portamento_speed = *speed;
-                }
-                active.tone_portamento = true;
-                if self.state.channels[channel].portamento_target_period.is_none() {
-                    if let Note::On(key) = self.state.channels[channel].last_note {
-                        let module = match self.module.as_ref() {
-                            Some(m) => m.clone(),
-                            None => return,
-                        };
-                        let inst_idx = self.state.channels[channel].last_instrument as usize;
-                        let has_inst = !module.instruments.is_empty();
-                        if has_inst && inst_idx > 0 && inst_idx < module.instruments.len() && (key as usize) < 120 {
-                            let sample_idx = module.instruments[inst_idx].sample_map[key as usize] as usize;
-                            let rk = module.instruments[inst_idx].note_map[key as usize];
-                            let sample = if sample_idx > 0 && sample_idx < module.samples.len() {
-                                Some(&module.samples[sample_idx])
-                            } else {
-                                None
-                            };
-                            let target = self.compute_portamento_target(channel, key, rk, sample, sample_idx, &module);
-                            self.state.channels[channel].portamento_target_period = Some(target);
-                        }
-                    }
-                }
-            }
-            Effect::VolVibrato { speed } => {
-                if *speed > 0 {
-                    self.state.channels[channel].last_vibrato_speed = *speed;
-                }
-                active.vibrato = true;
-            }
-            Effect::NoteDelay { ticks } => {
-                if *ticks == 0 {
-                    self.set_channel_delay_tick(channel, 1);
-                } else {
-                    self.set_channel_delay_tick(channel, *ticks);
-                }
-            }
-        }
-
-        if channel < self.state.channels.len() {
-            self.state.channels[channel].active_effects = active;
-        }
-    }
-
-    fn process_effects_tick(&mut self) {
-        let tick = self.state.current_tick;
-
-        for ch in 0..self.state.channels.len() {
-            let (port_up, port_down, tp_speed, tp_has_target,
-                 vol_up, vol_down, vib_speed, vib_depth,
-                 trem_speed, trem_depth, arp1, arp2,
-                 retrigger_interval, panbrello_speed, panbrello_depth,
-                 tremor_ontime, tremor_offtime,
-                 active_vol_slide, active_port_up, active_port_down,
-                 active_tp, active_vib, active_trem, active_arp,
-                 active_panbrello, active_tremor) = {
-                let ch_state = &self.state.channels[ch];
-                (
-                    ch_state.last_portamento_up_speed,
-                    ch_state.last_portamento_down_speed,
-                    ch_state.last_tone_portamento_speed,
-                    ch_state.portamento_target_period.is_some(),
-                    ch_state.last_volume_slide_up,
-                    ch_state.last_volume_slide_down,
-                    ch_state.last_vibrato_speed,
-                    ch_state.last_vibrato_depth,
-                    ch_state.last_tremolo_speed,
-                    ch_state.last_tremolo_depth,
-                    ch_state.last_arpeggio.0,
-                    ch_state.last_arpeggio.1,
-                    ch_state.last_retrigger_interval,
-                    ch_state.last_panbrello_speed,
-                    ch_state.last_panbrello_depth,
-                    ch_state.tremor_ontime,
-                    ch_state.tremor_offtime,
-                    ch_state.active_effects.volume_slide,
-                    ch_state.active_effects.portamento_up,
-                    ch_state.active_effects.portamento_down,
-                    ch_state.active_effects.tone_portamento,
-                    ch_state.active_effects.vibrato,
-                    ch_state.active_effects.tremolo,
-                    ch_state.active_effects.arpeggio,
-                    ch_state.active_effects.panbrello,
-                    ch_state.active_effects.tremor,
-                )
-            };
-
-            if active_port_up && port_up > 0 {
-                self.apply_portamento_up(ch, port_up);
-            }
-            if active_port_down && port_down > 0 {
-                self.apply_portamento_down(ch, port_down);
-            }
-            if active_tp && tp_speed > 0 && tp_has_target {
-                self.apply_tone_portamento(ch, tp_speed);
-            }
-            if active_vol_slide && (vol_up > 0 || vol_down > 0) {
-                self.apply_volume_slide(ch);
-            }
-            if active_vib && (vib_speed > 0 || vib_depth > 0) {
-                self.apply_vibrato(ch, vib_speed, vib_depth);
-            }
-            if active_trem && (trem_speed > 0 || trem_depth > 0) {
-                self.apply_tremolo(ch, trem_speed, trem_depth);
-            }
-            if active_arp && (arp1 > 0 || arp2 > 0) {
-                self.apply_arpeggio(ch, tick, arp1, arp2);
-            }
-            if ch < self.state.channels.len()
-                && retrigger_interval > 0 && tick > 0 && tick % retrigger_interval == 0
-            {
-                self.retrigger_channel_note(ch);
-            }
-            if active_panbrello && (panbrello_speed > 0 || panbrello_depth > 0) {
-                self.apply_panbrello(ch, panbrello_speed, panbrello_depth);
-            }
-            if active_tremor && (tremor_ontime > 0 || tremor_offtime > 0) {
-                self.apply_tremor(ch, tick, tremor_ontime, tremor_offtime);
-            }
-
-            if let Some(cutoff) = self.get_channel_cutoff_tick(ch) {
-                if tick == cutoff as u8 {
-                    self.cut_channel_voices(ch);
-                }
-            }
-            if let Some(delay) = self.get_channel_delay_tick(ch) {
-                if tick == delay as u8 {
-                    self.trigger_delayed_note(ch);
-                }
-            }
-        }
-    }
-
     fn apply_portamento_up(&mut self, channel: usize, speed: u8) {
         let slide = speed as f64;
         let factor = 2.0_f64.powf(slide / (12.0 * 64.0));
@@ -2789,7 +2549,7 @@ impl SequencerEngine {
     }
 
     fn advance_envelopes(&mut self) {
-        let is_xm = self.module_format == ModuleFormat::XM;
+        let is_xm = self.module.as_ref().map_or(false, |m| m.flags.xm_envelope_model);
 
         for voice in &mut self.voices {
             if !voice.active {
@@ -2993,7 +2753,7 @@ impl SequencerEngine {
             if voice.active {
                 voice.cutoff_tick = None;
                 voice.delay_tick = None;
-                if self.module_format == ModuleFormat::XM {
+                if self.use_xm_model {
                     if let Some(ch_idx) = voice.channel {
                         if ch_idx < self.state.channels.len() {
                             voice.auto_vib_period_base = self.state.channels[ch_idx].out_period;
@@ -3009,7 +2769,6 @@ impl SequencerEngine {
             ch.active_effects = ActiveEffects::default();
             ch.last_retrigger_interval = 0;
             ch.note_cut_tick = None;
-            ch.eff_typ_xm = 0xFF;
             ch.vol_kol = 0;
         }
 
@@ -3177,7 +2936,7 @@ impl SequencerEngine {
             return 0.0;
         }
         let ch = &self.state.channels[channel];
-        if self.module_format == ModuleFormat::XM {
+        if self.use_xm_model {
             ch.channel_volume.min(64) as f32 / 64.0
         } else {
             let vol = ch.channel_volume.min(64) as f32 / 64.0;
@@ -3540,14 +3299,12 @@ mod tests {
         let mut engine = SequencerEngine::new(48000.0);
         engine.state.channels[0].active_effects.volume_slide = true;
         engine.state.channels[0].last_retrigger_interval = 2;
-        engine.state.channels[0].eff_typ_xm = 0x0A;
         engine.state.channels[0].vol_kol = 0x50;
 
         engine.advance_row();
 
         assert!(!engine.state.channels[0].active_effects.volume_slide);
         assert_eq!(engine.state.channels[0].last_retrigger_interval, 0);
-        assert_eq!(engine.state.channels[0].eff_typ_xm, 0xFF);
         assert_eq!(engine.state.channels[0].vol_kol, 0);
     }
 
@@ -3560,10 +3317,492 @@ mod tests {
         cell.effect = Effect::NoteDelay { ticks: 3 };
 
         let module = Arc::new(Module::default());
-        engine.process_cell_with_module(0, &cell, &module);
+        engine.load_module(module);
+        engine.process_cell_unified(0, &cell);
 
         assert_eq!(engine.state.channels[0].note_delay_ticks, 3);
         assert!(engine.state.channels[0].delayed_cell.is_some());
         assert_eq!(engine.state.channels[0].delayed_cell.unwrap().note, Note::On(60));
+    }
+
+    #[test]
+    fn auto_vibrato_period_base_set_on_trigger_note() {
+        use crate::sequencer::instrument::Instrument;
+        use crate::sequencer::module::ModuleFlags;
+        use crate::sequencer::pattern::Pattern;
+
+        let mut engine = SequencerEngine::new(48000.0);
+
+        // Create a sample with data
+        let mut sample = Sample::default();
+        sample.default_volume = 48;
+        sample.data = Arc::new(vec![0.0f32; 100]);
+        sample.sample_rate = 8363;
+
+        // Create an instrument with auto-vibrato
+        let vib_depth: u8 = 10;
+        let mut inst = Instrument::default();
+        inst.vib_depth = vib_depth;
+        inst.vib_sweep = 0;
+        inst.vib_rate = 8;
+        inst.vib_type = 0;
+        inst.sample_map[60] = 1;
+
+        // Create pattern with a cell on channel 0 row 0
+        let mut pattern = Pattern::new(64);
+        let mut cell = Cell::default();
+        cell.note = Note::On(60);
+        cell.instrument = Some(1);
+        pattern.data[0][0] = cell;
+
+        let module = Arc::new(Module {
+            name: String::new(),
+            format: ModuleFormat::XM,
+            instruments: vec![Instrument::default(), inst],
+            samples: vec![Sample::default(), sample],
+            order_list: vec![0],
+            patterns: vec![pattern],
+            flags: ModuleFlags {
+                linear_slides: true,
+                use_instruments: true,
+                xm_period_model: true,
+                ..ModuleFlags::default()
+            },
+            ..Module::default()
+        });
+
+        engine.load_module(module.clone());
+
+        // Initialise state so that process_tick_zero_unified reads row 0 of pattern 0
+        engine.state.current_order = 0;
+        engine.state.current_pattern = 0;
+        engine.state.current_row = 0;
+        engine.state.current_tick = 0;
+        engine.state.channels.resize(64, ChannelState::default());
+
+        engine.process_tick_zero_unified();
+
+        // Find the active voice on channel 0
+        let voice = engine.voices.iter()
+            .find(|v| v.active && v.channel == Some(0))
+            .expect("Should have an active voice on channel 0");
+
+        // auto_vib_period_base must be non-zero and match the note's period
+        assert!(
+            voice.auto_vib_period_base > 0,
+            "auto_vib_period_base should be > 0 after trigger, got {}",
+            voice.auto_vib_period_base
+        );
+
+        let expected_period = crate::sequencer::period::get_note_period(60, 0, true);
+        assert_eq!(
+            voice.auto_vib_period_base, expected_period,
+            "auto_vib_period_base {} should match note period {}",
+            voice.auto_vib_period_base, expected_period
+        );
+
+        // Verify auto-vibrato sweep is set up correctly (sweep=0 → full depth)
+        assert_eq!(voice.auto_vib_amp, (vib_depth as i32) * 256);
+        assert_eq!(voice.auto_vib_sweep, 0);
+    }
+
+    #[test]
+    fn delayed_note_xm_sets_up_auto_vibrato_and_envelopes() {
+        use crate::sequencer::instrument::{
+            Instrument, Envelope, EnvelopeFlags, EnvelopePoint,
+        };
+        use crate::sequencer::module::ModuleFlags;
+        use crate::sequencer::pattern::Pattern;
+
+        let mut engine = SequencerEngine::new(48000.0);
+
+        let mut sample = Sample::default();
+        sample.default_volume = 48;
+        sample.data = Arc::new(vec![0.0f32; 100]);
+        sample.sample_rate = 8363;
+
+        let vol_env = Envelope {
+            points: vec![
+                EnvelopePoint { tick: 0, value: 0 },
+                EnvelopePoint { tick: 10, value: 64 },
+            ],
+            sustain_point: Some(1),
+            loop_start: None,
+            loop_end: None,
+            flags: EnvelopeFlags {
+                enabled: true,
+                sustain: true,
+                loop_: false,
+                carry: false,
+            },
+        };
+
+        let vib_depth: u8 = 8;
+        let fade_out: u16 = 128;
+        let mut inst = Instrument::default();
+        inst.vib_depth = vib_depth;
+        inst.vib_sweep = 0;
+        inst.vib_rate = 6;
+        inst.vib_type = 0;
+        inst.fade_out = fade_out;
+        inst.volume_envelope = Some(vol_env);
+        inst.sample_map[60] = 1;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::XM,
+            instruments: vec![Instrument::default(), inst],
+            samples: vec![Sample::default(), sample],
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags {
+                linear_slides: true,
+                use_instruments: true,
+                xm_period_model: true,
+                ..ModuleFlags::default()
+            },
+            ..Module::default()
+        });
+
+        engine.load_module(module.clone());
+        engine.play();
+
+        // Create a delayed-note cell
+        let mut cell = Cell::default();
+        cell.note = Note::On(60);
+        cell.instrument = Some(1);
+        cell.effect = Effect::NoteDelay { ticks: 2 };
+
+        // Set up channel state for the delayed note
+        engine.state.channels[0].delayed_cell = Some(cell);
+        engine.state.channels[0].note_delay_ticks = 2;
+        engine.state.channels[0].last_instrument = 1;
+
+        // Trigger the delayed note (simulating tick 2 processing)
+        engine.state.current_tick = 2;
+        let linear = module.flags.linear_slides;
+        engine.trigger_delayed_note_period(0, linear);
+
+        let voice = engine.voices.iter()
+            .find(|v| v.active && v.channel == Some(0))
+            .expect("Should have active voice after delayed trigger");
+
+        // Verify auto-vibrato was set up
+        assert!(
+            voice.auto_vib_period_base > 0,
+            "Delayed note: auto_vib_period_base should be > 0, got {}",
+            voice.auto_vib_period_base
+        );
+        assert_eq!(voice.auto_vib_amp, (vib_depth as i32) * 256,
+            "Delayed note: auto_vib_amp should be at full depth");
+
+        // Verify envelope was set up
+        assert!(
+            voice.vol_env.is_some(),
+            "Delayed note: volume envelope should be set up"
+        );
+        assert!(
+            voice.env_sustain_active,
+            "Delayed note: env_sustain_active should be true"
+        );
+        assert_eq!(
+            voice.fade_out_rate, fade_out,
+            "Delayed note: fade_out_rate should be {}", fade_out
+        );
+        assert_eq!(
+            voice.fade_out_amp, 32768,
+            "Delayed note: fade_out_amp should be 32768"
+        );
+        assert_eq!(
+            voice.instrument_index,
+            Some(1),
+            "Delayed note: instrument_index should be set"
+        );
+    }
+
+    #[test]
+    fn trigger_channel_note_resets_auto_vib_period_on_reuse() {
+        use crate::sequencer::instrument::Instrument;
+        use crate::sequencer::module::ModuleFlags;
+        use crate::sequencer::pattern::Pattern;
+
+        let mut engine = SequencerEngine::new(48000.0);
+
+        let mut sample = Sample::default();
+        sample.default_volume = 48;
+        sample.data = Arc::new(vec![0.0f32; 100]);
+        sample.sample_rate = 8363;
+
+        let mut inst = Instrument::default();
+        inst.vib_depth = 5;
+        inst.vib_sweep = 20;
+        inst.vib_rate = 4;
+        inst.vib_type = 0;
+        inst.sample_map[60] = 1;
+        inst.sample_map[72] = 1;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::XM,
+            instruments: vec![Instrument::default(), inst],
+            samples: vec![Sample::default(), sample],
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags {
+                linear_slides: true,
+                use_instruments: true,
+                xm_period_model: true,
+                ..ModuleFlags::default()
+            },
+            ..Module::default()
+        });
+
+        engine.load_module(module.clone());
+
+        // First trigger: C-5 (key=60)
+        engine.play();
+        let mut cell = Cell::default();
+        cell.note = Note::On(60);
+        cell.instrument = Some(1);
+
+        engine.state.current_tick = 0;
+        engine.state.current_row = 0;
+        engine.process_cell_unified(0, &cell);
+
+        let period_c5 = crate::sequencer::period::get_note_period(60, 0, true);
+
+        let voice = engine.voices.iter()
+            .find(|v| v.active && v.channel == Some(0))
+            .expect("Should have voice after first trigger");
+        assert_eq!(
+            voice.auto_vib_period_base, period_c5,
+            "First note: auto_vib_period_base should match C-5 period"
+        );
+
+        // Advance to next row and trigger a different note
+        engine.advance_row();
+        let mut cell2 = Cell::default();
+        cell2.note = Note::On(72); // C-6
+        cell2.instrument = Some(1);
+
+        engine.state.current_tick = 0;
+        engine.state.current_row = 1;
+        engine.process_cell_unified(0, &cell2);
+
+        let period_c6 = crate::sequencer::period::get_note_period(72, 0, true);
+
+        let voice2 = engine.voices.iter()
+            .find(|v| v.active && v.channel == Some(0))
+            .expect("Should have voice after second trigger");
+        assert_eq!(
+            voice2.auto_vib_period_base, period_c6,
+            "Second note: auto_vib_period_base should match C-6 period, not C-5"
+        );
+    }
+
+    #[test]
+    fn xm_active_effects_dispatch_volume_slide() {
+        use crate::sequencer::instrument::Instrument;
+        use crate::sequencer::module::ModuleFlags;
+        use crate::sequencer::pattern::Pattern;
+
+        let mut engine = SequencerEngine::new(48000.0);
+
+        let mut sample = Sample::default();
+        sample.default_volume = 64;
+        sample.data = Arc::new(vec![0.0f32; 100]);
+        sample.sample_rate = 8363;
+
+        let mut inst = Instrument::default();
+        inst.sample_map[60] = 1;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::XM,
+            instruments: vec![Instrument::default(), inst],
+            samples: vec![Sample::default(), sample],
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags {
+                linear_slides: true,
+                use_instruments: true,
+                xm_period_model: true,
+                ..ModuleFlags::default()
+            },
+            ..Module::default()
+        });
+
+        engine.load_module(module.clone());
+        engine.play();
+
+        // Trigger a note
+        let mut cell = Cell::default();
+        cell.note = Note::On(60);
+        cell.instrument = Some(1);
+        cell.effect = Effect::VolumeSlide { up: 2, down: 0 };
+
+        engine.state.current_tick = 0;
+        engine.process_cell_unified(0, &cell);
+
+        assert!(
+            engine.state.channels[0].active_effects.volume_slide,
+            "VolumeSlide should set active_effects.volume_slide"
+        );
+        assert_eq!(
+            engine.state.channels[0].last_volume_slide_up, 2,
+            "VolumeSlide should store up value"
+        );
+
+        // Process non-zero tick — ActiveEffects dispatch should apply slide
+        let vol_before = engine.state.channels[0].real_vol;
+        engine.state.current_tick = 1;
+        engine.process_effects_tick_unified();
+        let vol_after = engine.state.channels[0].real_vol;
+        assert!(
+            vol_after > vol_before || vol_after == 64,
+            "VolumeSlide should increase volume on non-zero tick: {} -> {}",
+            vol_before, vol_after
+        );
+    }
+
+    #[test]
+    fn xm_active_effects_dispatch_tpvs() {
+        use crate::sequencer::instrument::Instrument;
+        use crate::sequencer::module::ModuleFlags;
+        use crate::sequencer::pattern::Pattern;
+
+        let mut engine = SequencerEngine::new(48000.0);
+
+        let mut sample = Sample::default();
+        sample.default_volume = 64;
+        sample.data = Arc::new(vec![0.0f32; 100]);
+        sample.sample_rate = 8363;
+
+        let mut inst = Instrument::default();
+        inst.sample_map[60] = 1;
+        inst.sample_map[64] = 1;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::XM,
+            instruments: vec![Instrument::default(), inst],
+            samples: vec![Sample::default(), sample],
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags {
+                linear_slides: true,
+                use_instruments: true,
+                xm_period_model: true,
+                ..ModuleFlags::default()
+            },
+            ..Module::default()
+        });
+
+        engine.load_module(module.clone());
+        engine.play();
+
+        // First trigger a note
+        let mut cell = Cell::default();
+        cell.note = Note::On(60);
+        cell.instrument = Some(1);
+        engine.state.current_tick = 0;
+        engine.process_cell_unified(0, &cell);
+
+        // Now set TPVS: tone portamento to new note + volume slide
+        engine.advance_row();
+        let mut cell2 = Cell::default();
+        cell2.note = Note::On(64);
+        cell2.effect = Effect::TonePortamentoVolumeSlide { up: 0x15 };
+        engine.state.current_tick = 0;
+        engine.process_cell_unified(0, &cell2);
+
+        assert!(
+            engine.state.channels[0].active_effects.tone_portamento,
+            "TPVS should set active_effects.tone_portamento"
+        );
+        assert!(
+            engine.state.channels[0].active_effects.volume_slide,
+            "TPVS should set active_effects.volume_slide"
+        );
+        assert_eq!(
+            engine.state.channels[0].last_volume_slide_up, 1,
+            "TPVS param 0x15: up nibble = 1"
+        );
+        assert_eq!(
+            engine.state.channels[0].last_volume_slide_down, 5,
+            "TPVS param 0x15: down nibble = 5"
+        );
+    }
+
+    #[test]
+    fn xm_note_delay_triggers_on_correct_tick() {
+        use crate::sequencer::instrument::Instrument;
+        use crate::sequencer::module::ModuleFlags;
+        use crate::sequencer::pattern::Pattern;
+
+        let mut engine = SequencerEngine::new(48000.0);
+
+        let mut sample = Sample::default();
+        sample.default_volume = 48;
+        sample.data = Arc::new(vec![0.0f32; 100]);
+        sample.sample_rate = 8363;
+
+        let mut inst = Instrument::default();
+        inst.sample_map[60] = 1;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::XM,
+            instruments: vec![Instrument::default(), inst],
+            samples: vec![Sample::default(), sample],
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags {
+                linear_slides: true,
+                use_instruments: true,
+                xm_period_model: true,
+                ..ModuleFlags::default()
+            },
+            ..Module::default()
+        });
+
+        engine.load_module(module.clone());
+        engine.play();
+
+        // Tick 0: process delayed note cell
+        let mut cell = Cell::default();
+        cell.note = Note::On(60);
+        cell.instrument = Some(1);
+        cell.effect = Effect::NoteDelay { ticks: 3 };
+
+        engine.state.current_tick = 0;
+        engine.process_cell_unified(0, &cell);
+
+        // No voice should be active yet (note is delayed)
+        assert!(
+            engine.voices.iter().all(|v| !v.active || v.channel != Some(0)),
+            "No voice on ch0 after tick 0 with NoteDelay"
+        );
+        assert_eq!(engine.state.channels[0].note_delay_ticks, 3);
+        assert!(engine.state.channels[0].delayed_cell.is_some());
+
+        // Tick 1: still no voice
+        engine.state.current_tick = 1;
+        engine.process_effects_tick_unified();
+        assert!(
+            engine.voices.iter().all(|v| !v.active || v.channel != Some(0)),
+            "No voice on ch0 at tick 1"
+        );
+
+        // Tick 2: still no voice
+        engine.state.current_tick = 2;
+        engine.process_effects_tick_unified();
+        assert!(
+            engine.voices.iter().all(|v| !v.active || v.channel != Some(0)),
+            "No voice on ch0 at tick 2"
+        );
+
+        // Tick 3: delayed note should trigger
+        engine.state.current_tick = 3;
+        engine.process_effects_tick_unified();
+        assert!(
+            engine.voices.iter().any(|v| v.active && v.channel == Some(0)),
+            "Voice should be active on ch0 at tick 3 (delayed note trigger)"
+        );
     }
 }

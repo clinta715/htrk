@@ -48,7 +48,7 @@ pub fn create_engine_and_sender(
         module: None,
         command_rx: rx,
         playback_state,
-        master_volume: 1.0,
+        master_volume: 0.5,
         interpolation: InterpolationType::Linear,
         output_sample_rate: sample_rate as f64,
         output_channels: channels.max(1),
@@ -90,46 +90,43 @@ impl AudioEngine {
         }
 
         if self.sequencer.state.playing {
-            self.sequencer.advance(frame_count);
+            let mut samples_done = 0;
+            while samples_done < frame_count {
+                let samples_remaining = frame_count - samples_done;
+                let samples_per_tick = self.sequencer.state.samples_per_tick;
+                let samples_until_tick = (samples_per_tick - self.sequencer.state.sample_counter).max(0.0).ceil() as usize;
 
-            {
-                static LOG_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                let count = LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if count < 20 {
-                    let num_active = self.sequencer.voices.iter().filter(|v| v.active).count();
-                    eprintln!("[MIX] #{}: active_voices={}", count, num_active);
-                    if num_active > 0 {
-                        if let Some(v) = self.sequencer.voices.iter().find(|v| v.active) {
-                            eprintln!(
-                                "  v0: ch={:?} delta={:.6} pos={:.1} vol={:.3} pan={:.3} sample_len={}",
-                                v.channel, v.sample_delta, v.position,
-                                v.final_volume, v.final_panning,
-                                v.sample.as_ref().map(|s| s.len()).unwrap_or(0)
-                            );
-                        }
-                    }
+                if samples_until_tick == 0 {
+                    self.sequencer.process_tick();
+                    self.sequencer.state.sample_counter = 0.0;
+                    continue;
                 }
+
+                let chunk = samples_until_tick.min(samples_remaining);
+
+                let muted_channels: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.muted).collect();
+                let solo_channels: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.solo).collect();
+                let has_solo = solo_channels.iter().any(|&s| s);
+                let effective_mute: Vec<bool> = if has_solo {
+                    muted_channels.iter().zip(solo_channels.iter())
+                        .map(|(muted, solo)| *muted || !*solo)
+                        .collect()
+                } else {
+                    muted_channels
+                };
+
+                mixer::mix_voices(
+                    &mut self.sequencer.voices,
+                    &mut self.mix_left[samples_done..samples_done + chunk],
+                    &mut self.mix_right[samples_done..samples_done + chunk],
+                    self.master_volume,
+                    self.interpolation,
+                    &effective_mute,
+                );
+
+                self.sequencer.state.sample_counter += chunk as f64;
+                samples_done += chunk;
             }
-
-            let muted_channels: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.muted).collect();
-            let solo_channels: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.solo).collect();
-            let has_solo = solo_channels.iter().any(|&s| s);
-            let effective_mute: Vec<bool> = if has_solo {
-                muted_channels.iter().zip(solo_channels.iter())
-                    .map(|(muted, solo)| *muted || !*solo)
-                    .collect()
-            } else {
-                muted_channels
-            };
-
-            mixer::mix_voices(
-                &mut self.sequencer.voices,
-                &mut self.mix_left[..frame_count],
-                &mut self.mix_right[..frame_count],
-                self.master_volume,
-                self.interpolation,
-                &effective_mute,
-            );
 
             {
                 static PEAK_LOG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -140,10 +137,9 @@ impl AudioEngine {
                     eprintln!("[PEAK] #{}: L={:.6} R={:.6}", n, peak_l, peak_r);
                 }
             }
-
         }
 
-        mixer::brick_wall_limit(
+        mixer::buffer_wide_limit(
             &mut self.mix_left[..frame_count],
             &mut self.mix_right[..frame_count],
         );

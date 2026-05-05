@@ -18,9 +18,17 @@ pub fn resample(
 }
 
 fn wrap_index_forward(idx: usize, loop_start: usize, loop_end: usize) -> usize {
-    if loop_end > loop_start && idx >= loop_end {
-        let loop_len = loop_end - loop_start;
-        loop_start + (idx - loop_start) % loop_len
+    if loop_end > loop_start {
+        if idx < loop_start {
+            let loop_len = loop_end - loop_start;
+            let offset = (loop_start - idx - 1) % loop_len;
+            loop_end - 1 - offset
+        } else if idx >= loop_end {
+            let loop_len = loop_end - loop_start;
+            loop_start + (idx - loop_start) % loop_len
+        } else {
+            idx
+        }
     } else {
         idx
     }
@@ -126,70 +134,29 @@ fn resample_cubic(
     loop_type: LoopType,
     direction: f64,
 ) -> f32 {
-    let index1 = position as usize;
+    let index1 = position.floor() as usize;
     let frac = position - index1 as f64;
     let len = sample_data.len();
 
-    if index1 >= len {
-        let i1 = match loop_type {
-            LoopType::Forward if loop_end > loop_start => wrap_index_forward(index1, loop_start, loop_end),
-            LoopType::PingPong if loop_end > loop_start => wrap_index_pingpong(index1, loop_start, loop_end, direction),
-            _ => return 0.0,
-        };
-        if i1 >= len {
-            return 0.0;
-        }
-        let i0 = if i1 > 0 { i1 - 1 } else { 0 };
-        let i2 = i1 + 1;
-        let i3 = i1 + 2;
-
-        let y0 = get_sample_looped(sample_data, i0, loop_start, loop_end, loop_type, direction) as f64;
-        let y1 = get_sample_looped(sample_data, i1, loop_start, loop_end, loop_type, direction) as f64;
-        let y2 = get_sample_looped(sample_data, i2, loop_start, loop_end, loop_type, direction) as f64;
-        let y3 = get_sample_looped(sample_data, i3, loop_start, loop_end, loop_type, direction) as f64;
-
-        let a = (-y0 + 3.0 * y1 - 3.0 * y2 + y3) / 2.0;
-        let b = y0 - 5.0 * y1 / 2.0 + 2.0 * y2 - y3 / 2.0;
-        let c = (-y0 + y2) / 2.0;
-        let d = y1;
-
-        return (a * frac * frac * frac + b * frac * frac + c * frac + d) as f32;
+    if index1 >= len && !(loop_end > loop_start && matches!(loop_type, LoopType::Forward | LoopType::PingPong)) {
+        return 0.0;
     }
 
-    let index1_wrapped = get_sample_looped_index(index1, loop_start, loop_end, loop_type, direction);
-    let index1_wrapped = if index1_wrapped < len { index1_wrapped } else { index1 };
+    let i0 = index1.saturating_sub(1);
+    let i2 = index1.wrapping_add(1);
+    let i3 = index1.wrapping_add(2);
 
-    let index0 = if index1_wrapped > 0 { index1_wrapped - 1 } else { 0 };
-
-    let index2_raw = index1_wrapped + 1;
-    let index3_raw = index1_wrapped + 2;
-
-    let y0 = get_sample_looped(sample_data, index0, loop_start, loop_end, loop_type, direction) as f64;
-    let y1 = get_sample_looped(sample_data, index1_wrapped, loop_start, loop_end, loop_type, direction) as f64;
-    let y2 = get_sample_looped(sample_data, index2_raw, loop_start, loop_end, loop_type, direction) as f64;
-    let y3 = get_sample_looped(sample_data, index3_raw, loop_start, loop_end, loop_type, direction) as f64;
+    let y0 = get_sample_looped(sample_data, i0, loop_start, loop_end, loop_type, direction) as f64;
+    let y1 = get_sample_looped(sample_data, index1, loop_start, loop_end, loop_type, direction) as f64;
+    let y2 = get_sample_looped(sample_data, i2, loop_start, loop_end, loop_type, direction) as f64;
+    let y3 = get_sample_looped(sample_data, i3, loop_start, loop_end, loop_type, direction) as f64;
 
     let a = (-y0 + 3.0 * y1 - 3.0 * y2 + y3) / 2.0;
     let b = y0 - 5.0 * y1 / 2.0 + 2.0 * y2 - y3 / 2.0;
     let c = (-y0 + y2) / 2.0;
     let d = y1;
 
-    let result = a * frac * frac * frac + b * frac * frac + c * frac + d;
-    result as f32
-}
-
-fn get_sample_looped_index(
-    index: usize,
-    loop_start: usize,
-    loop_end: usize,
-    loop_type: LoopType,
-    direction: f64,
-) -> usize {
-    match loop_type {
-        LoopType::Forward if loop_end > loop_start => wrap_index_forward(index, loop_start, loop_end),
-        LoopType::PingPong if loop_end > loop_start => wrap_index_pingpong(index, loop_start, loop_end, direction),
-        _ => index,
-    }
+    (a * frac * frac * frac + b * frac * frac + c * frac + d) as f32
 }
 
 #[cfg(test)]
