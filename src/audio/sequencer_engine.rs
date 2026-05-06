@@ -544,15 +544,28 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
 
         // Voice sample offset
-        let sample_offset = if let Effect::SetSampleOffset { offset } = &cell.effect {
-            let off = *offset as usize;
-            if sample.loop_start < sample.loop_end && off >= sample.loop_end {
-                sample.loop_start + (off - sample.loop_start) % (sample.loop_end - sample.loop_start)
-            } else {
-                off.min(sample.data.len().saturating_sub(1))
+        let sample_offset = match &cell.effect {
+            Effect::SetSampleOffset { offset } => {
+                let off = *offset as usize;
+                if sample.loop_start < sample.loop_end && off >= sample.loop_end {
+                    sample.loop_start + (off - sample.loop_start) % (sample.loop_end - sample.loop_start)
+                } else {
+                    off.min(sample.data.len().saturating_sub(1))
+                }
             }
-        } else {
-            self.state.channels[channel].last_sample_offset as usize
+            Effect::FormatSpecific(fe) => {
+                if let Some(offset) = fe.sample_offset() {
+                    let off = offset as usize;
+                    if sample.loop_start < sample.loop_end && off >= sample.loop_end {
+                        sample.loop_start + (off - sample.loop_start) % (sample.loop_end - sample.loop_start)
+                    } else {
+                        off.min(sample.data.len().saturating_sub(1))
+                    }
+                } else {
+                    self.state.channels[channel].last_sample_offset as usize
+                }
+            }
+            _ => self.state.channels[channel].last_sample_offset as usize
         };
         voice.position = sample_offset as f64;
 
@@ -608,6 +621,10 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         // Set sample offset on channel state
         if let Effect::SetSampleOffset { offset } = &cell.effect {
             self.state.channels[channel].last_sample_offset = *offset;
+        } else if let Effect::FormatSpecific(fe) = &cell.effect {
+            if let Some(offset) = fe.sample_offset() {
+                self.state.channels[channel].last_sample_offset = offset;
+            }
         }
     }
 
@@ -718,6 +735,12 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
             Effect::SetSampleOffset { offset } => {
                 ch.last_sample_offset = *offset;
+            }
+
+            Effect::FormatSpecific(fe) => {
+                if let Some(offset) = fe.sample_offset() {
+                    ch.last_sample_offset = offset;
+                }
             }
 
             Effect::PositionJump { order } => {
@@ -1989,15 +2012,28 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             }
         }
 
-        let sample_offset = if let Effect::SetSampleOffset { offset } = cell.effect {
-            let off = offset as usize;
-            if sample.loop_start < sample.loop_end && off >= sample.loop_end {
-                sample.loop_start + (off - sample.loop_start) % (sample.loop_end - sample.loop_start)
-            } else {
-                off.min(sample.data.len().saturating_sub(1))
+        let sample_offset = match cell.effect {
+            Effect::SetSampleOffset { offset } => {
+                let off = offset as usize;
+                if sample.loop_start < sample.loop_end && off >= sample.loop_end {
+                    sample.loop_start + (off - sample.loop_start) % (sample.loop_end - sample.loop_start)
+                } else {
+                    off.min(sample.data.len().saturating_sub(1))
+                }
             }
-        } else {
-            self.state.channels[channel].last_sample_offset as usize
+            Effect::FormatSpecific(fe) => {
+                if let Some(offset) = fe.sample_offset() {
+                    let off = offset as usize;
+                    if sample.loop_start < sample.loop_end && off >= sample.loop_end {
+                        sample.loop_start + (off - sample.loop_start) % (sample.loop_end - sample.loop_start)
+                    } else {
+                        off.min(sample.data.len().saturating_sub(1))
+                    }
+                } else {
+                    self.state.channels[channel].last_sample_offset as usize
+                }
+            }
+            _ => self.state.channels[channel].last_sample_offset as usize
         };
 
         let voice_idx = self.allocate_voice(channel);
@@ -2028,6 +2064,10 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
         if let Effect::SetSampleOffset { offset } = cell.effect {
             self.state.channels[channel].last_sample_offset = offset;
+        } else if let Effect::FormatSpecific(fe) = cell.effect {
+            if let Some(offset) = fe.sample_offset() {
+                self.state.channels[channel].last_sample_offset = offset;
+            }
         }
 
         if instrument_idx > 0 && instrument_idx < module.instruments.len() {
