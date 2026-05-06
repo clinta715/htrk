@@ -459,5 +459,6 @@ fn format_effect(effect: &Effect) -> (String, String) {
         Effect::VolSlideDown { amount } => (".".to_string(), format!("D{:X}", amount)),
         Effect::VolPortamento { speed } => (".".to_string(), format!("~{:02X}", speed)),
         Effect::VolVibrato { speed } => (".".to_string(), format!("V{:X}", speed)),
+        Effect::FormatSpecific(_) => ("?".to_string(), "??".to_string()),
     }
 }

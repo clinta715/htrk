@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 pub enum Effect {
     None,
@@ -51,6 +51,121 @@ pub enum Effect {
     VolSlideDown { amount: u8 },
     VolPortamento { speed: u8 },
     VolVibrato { speed: u8 },
+
+    // Format-specific effects - preserves exact per-format behavior
+    FormatSpecific(FormatEffect),
+}
+
+/// Format-specific effects that cannot be fully represented in the universal Effect enum
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FormatEffect {
+    /// XM format-specific effects
+    Xm(XmEffect),
+    /// MOD format-specific effects  
+    Mod(ModEffect),
+    /// S3M format-specific effects
+    S3m(S3mEffect),
+    /// IT format-specific effects
+    It(ItEffect),
+}
+
+/// XM-specific effects that require special handling
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum XmEffect {
+    /// Sample offset (effect 9) - XM stores per-channel with memory
+    /// The offset persists across rows until changed
+    SetSampleOffset(u16),
+    /// Panbrello (effect T) - unique to XM
+    Panbrello(u8),
+    /// Volume column command - XM unique
+    VolumeColumn(u8),
+    /// Fine tone portamento - XM specific handling
+    FineTonePortamento(u8),
+    /// Global volume slide - XM specific
+    GlobalVolumeSlide { fine: bool, up: bool, amount: u8 },
+}
+
+/// MOD-specific effects
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ModEffect {
+    /// Sample offset for MOD (effect 9)
+    SetSampleOffset(u16),
+    /// MOD arpeggio has different semantics (3-note cycle)
+    Arpeggio { note1: u8, note2: u8 },
+    // Note: MOD doesn't have fine effects in the same way as XM
+}
+
+/// S3M-specific effects
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum S3mEffect {
+    /// Sample offset for S3M (effect 9)
+    SetSampleOffset(u16),
+    // TODO: Document and implement S3M-unique effects
+}
+
+/// IT-specific effects
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ItEffect {
+    /// Sample offset for IT (effect 9)
+    SetSampleOffset(u16),
+    // TODO: Document and implement IT-unique effects (NNA, etc.)
+}
+
+/// Supported module formats
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum FormatType {
+    #[default]
+    Unknown,
+    Mod,
+    Xm,
+    S3m,
+    It,
+    Htk,  // Native HTRK format
+}
+
+impl FormatType {
+    /// Check if format supports volume column (XM does)
+    pub fn supports_volume_column(&self) -> bool {
+        matches!(self, FormatType::Xm)
+    }
+    
+    /// Check if format supports sample offset effect (most tracker formats)
+    pub fn supports_sample_offset(&self) -> bool {
+        matches!(self, FormatType::Mod | FormatType::Xm | FormatType::S3m | FormatType::It)
+    }
+    
+    /// Check if format uses linear frequency periods (XM, IT)
+    pub fn uses_linear_periods(&self) -> bool {
+        matches!(self, FormatType::Xm | FormatType::It)
+    }
+    
+    /// Check if format uses Amiga period table (MOD, S3M)
+    pub fn uses_amiga_periods(&self) -> bool {
+        matches!(self, FormatType::Mod | FormatType::S3m)
+    }
+}
+
+impl FormatEffect {
+    /// Get the sample offset from a FormatEffect if it contains one
+    pub fn sample_offset(&self) -> Option<u16> {
+        match self {
+            FormatEffect::Xm(XmEffect::SetSampleOffset(o)) => Some(*o),
+            FormatEffect::Mod(ModEffect::SetSampleOffset(o)) => Some(*o),
+            FormatEffect::S3m(S3mEffect::SetSampleOffset(o)) => Some(*o),
+            FormatEffect::It(ItEffect::SetSampleOffset(o)) => Some(*o),
+            _ => None,
+        }
+    }
+    
+    /// Get the format type for this effect
+    pub fn format(&self) -> FormatType {
+        match self {
+            FormatEffect::Xm(_) => FormatType::Xm,
+            FormatEffect::Mod(_) => FormatType::Mod,
+            FormatEffect::S3m(_) => FormatType::S3m,
+            FormatEffect::It(_) => FormatType::It,
+        }
+    }
 }
 
 impl Default for Effect {
@@ -107,6 +222,17 @@ impl Effect {
             Effect::VolSlideDown { amount } => Some(*amount),
             Effect::VolPortamento { speed } => Some(*speed),
             Effect::VolVibrato { speed } => Some(*speed),
+            Effect::FormatSpecific(fe) => {
+                // Format-specific effects don't have a simple effect byte representation
+                // Return the effect byte from the underlying format effect if possible
+                match fe {
+                    FormatEffect::Xm(XmEffect::SetSampleOffset(o)) => Some((o >> 8) as u8),
+                    FormatEffect::Mod(ModEffect::SetSampleOffset(o)) => Some((o >> 8) as u8),
+                    FormatEffect::S3m(S3mEffect::SetSampleOffset(o)) => Some((o >> 8) as u8),
+                    FormatEffect::It(ItEffect::SetSampleOffset(o)) => Some((o >> 8) as u8),
+                    _ => None,
+                }
+            }
         }
     }
 }#[derive(Clone, Copy, Debug, PartialEq, Eq)]

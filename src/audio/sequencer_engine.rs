@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::audio::voice::{EnvelopeState, Voice};
-use crate::sequencer::effect::Effect;
+use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect};
 use crate::sequencer::instrument::{
     DuplicateCheckAction, DuplicateCheckType, NewNoteAction,
 };
@@ -1240,6 +1240,24 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                         self.state.channels[channel].last_vibrato_speed = *speed;
                     }
                     self.state.channels[channel].active_effects.vibrato = true;
+                }
+            }
+            
+            Effect::FormatSpecific(fe) => {
+                match fe {
+                    FormatEffect::Xm(XmEffect::SetSampleOffset(offset)) => {
+                        ch.last_sample_offset = *offset;
+                    }
+                    FormatEffect::Mod(ModEffect::SetSampleOffset(offset)) => {
+                        ch.last_sample_offset = *offset;
+                    }
+                    FormatEffect::S3m(S3mEffect::SetSampleOffset(offset)) => {
+                        ch.last_sample_offset = *offset;
+                    }
+                    FormatEffect::It(ItEffect::SetSampleOffset(offset)) => {
+                        ch.last_sample_offset = *offset;
+                    }
+                    _ => {}
                 }
             }
         }
