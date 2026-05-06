@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::errors::{FormatError, FormatResult};
 use crate::formats::FormatHandler;
 use crate::sequencer::{
+    effect::{FormatEffect, ModEffect},
     Effect, Instrument, LoopType, Module, ModuleFormat, Note, Pattern, Sample,
     MAX_CHANNELS, PERIOD_TABLE,
 };
@@ -95,9 +96,9 @@ fn convert_effect(effect_code: u8, effect_param: u8) -> Effect {
             depth: effect_param & 0x0F,
         },
         8 => Effect::SetPanning { pan: effect_param },
-        9 => Effect::SetSampleOffset {
-            offset: (effect_param as u16) << 8,
-        },
+        9 => Effect::FormatSpecific(FormatEffect::Mod(ModEffect::SetSampleOffset(
+            (effect_param as u16) << 8,
+        ))),
         0xA => Effect::VolumeSlide {
             up: effect_param >> 4,
             down: effect_param & 0x0F,

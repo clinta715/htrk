@@ -4,9 +4,11 @@ use crate::errors::{FormatError, FormatResult};
 use crate::formats::common::*;
 use crate::formats::FormatHandler;
 use crate::sequencer::{
+    effect::{FormatEffect, XmEffect},
     Cell, DuplicateCheckAction, DuplicateCheckType, Effect, Envelope, EnvelopeFlags,
-    EnvelopePoint, Instrument, LoopType, Module, ModuleFlags, ModuleFormat, NewNoteAction,
-    Note, Pattern, Sample, SampleFlags, VibratoWaveform, MAX_CHANNELS,
+    EnvelopePoint, Instrument, LoopType, Module, ModuleFlags, ModuleFormat,
+    NewNoteAction, Note, Pattern, Sample, SampleFlags, VibratoWaveform,
+    MAX_CHANNELS,
 };
 
 const XM_HEADER_MAGIC: &[u8; 17] = b"Extended Module: ";
@@ -325,6 +327,8 @@ impl FormatHandler for XmHandler {
             midi_enabled: false,
             request_embed: false,
             fast_volume_slides: false,
+            xm_envelope_model: true,
+            xm_period_model: true,
         };
 
         Ok(Module {
@@ -690,12 +694,17 @@ fn decode_xm_cell(data: &[u8], pos: &mut usize, end: usize) -> Cell {
 
     let (decoded_vol, vol_column_effect) = if has_vol {
         if volume >= 0x10 && volume <= 0x50 {
-            (Some(volume - 0x10), Effect::None)
+            (Some(volume - 0x10), None)
+        } else if volume > 0 {
+            let eff = decode_xm_volume_column(volume);
+            // Store raw byte in volume (for vol_kol backward compat in XM path)
+            // and decoded effect in volume_effect (for unified sequencer)
+            (Some(volume), if eff != Effect::None { Some(eff) } else { None })
         } else {
-            (None, decode_xm_volume_column(volume))
+            (None, None)
         }
     } else {
-        (None, Effect::None)
+        (None, None)
     };
 
     let decoded_effect = if has_fx {
@@ -704,17 +713,12 @@ fn decode_xm_cell(data: &[u8], pos: &mut usize, end: usize) -> Cell {
         Effect::None
     };
 
-    let final_effect = if vol_column_effect != Effect::None {
-        vol_column_effect
-    } else {
-        decoded_effect
-    };
-
     Cell {
         note: decoded_note,
         instrument: decoded_inst,
         volume: decoded_vol,
-        effect: final_effect,
+        volume_effect: vol_column_effect,
+        effect: decoded_effect,
     }
 }
 
@@ -757,14 +761,14 @@ fn decode_xm_volume_column(vol: u8) -> Effect {
         let pan_val = ((vol - 0xC0) as u16 * 255 / 15) as u8;
         return Effect::SetPanning { pan: pan_val };
     }
-    if vol >= 0xD0 && vol <= 0xDF {
-        return Effect::TonePortamento { speed: vol - 0xD0 };
-    }
-    if vol >= 0xE0 && vol <= 0xEF {
-        return Effect::PortamentoUp { speed: vol - 0xE0 };
+    if vol >= 0xD0 && vol <= 0xEF {
+        // 0xD0-0xDF = pan slide left, 0xE0-0xEF = pan slide right
+        // No Effect variant exists for continuous pan slides;
+        // handled via vol_kol in the XM sequencer path
+        return Effect::None;
     }
     if vol >= 0xF0 {
-        return Effect::PortamentoDown { speed: vol - 0xF0 };
+        return Effect::TonePortamento { speed: vol - 0xF0 };
     }
 
     Effect::None
@@ -797,9 +801,9 @@ fn decode_xm_effect(fx: u8, param: u8, has_param: bool) -> Effect {
             depth: param & 0x0F,
         },
         8 => Effect::SetPanning { pan: param },
-        9 => Effect::SetSampleOffset {
-            offset: (param as u16) << 8,
-        },
+        9 => Effect::FormatSpecific(FormatEffect::Xm(XmEffect::SetSampleOffset(
+            (param as u16) << 8,
+        ))),
         0xA => Effect::VolumeSlide {
             up: param >> 4,
             down: param & 0x0F,
@@ -1373,7 +1377,10 @@ mod tests {
 
     #[test]
     fn decode_xm_volume_column_portamento() {
-        assert_eq!(decode_xm_volume_column(0xD5), Effect::TonePortamento { speed: 5 });
+        // 0xD0-0xDF = pan slide left (vol_kol handled), returns None
+        assert_eq!(decode_xm_volume_column(0xD5), Effect::None);
+        // 0xF0-0xFF = tone portamento (fixed from old PortamentoDown bug)
+        assert_eq!(decode_xm_volume_column(0xF5), Effect::TonePortamento { speed: 5 });
     }
 
     #[test]

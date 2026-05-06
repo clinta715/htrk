@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::errors::{FormatError, FormatResult};
 use crate::formats::FormatHandler;
 use crate::sequencer::{
+    effect::{FormatEffect, S3mEffect},
     Effect, Instrument, LoopType, Module, ModuleFormat, Note, Pattern, Sample,
     MAX_CHANNELS,
 };
@@ -40,9 +41,9 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
         12 => Effect::TonePortamentoVolumeSlide { up: param as i8 },
         13 => Effect::VolSetVolume { vol: param.min(64) },
         14 => Effect::None,
-        15 => Effect::SetSampleOffset {
-            offset: (param as u16) << 8,
-        },
+        15 => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::SetSampleOffset(
+            (param as u16) << 8,
+        ))),
         16 => Effect::None,
         17 => Effect::Retrigger { interval: param },
         18 => Effect::Tremolo {
@@ -925,7 +926,10 @@ mod tests {
 
     #[test]
     fn convert_effect_sample_offset() {
-        assert_eq!(convert_s3m_effect(15, 0x20), Effect::SetSampleOffset { offset: 0x2000 });
+        assert_eq!(
+            convert_s3m_effect(15, 0x20),
+            Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::SetSampleOffset(0x2000)))
+        );
     }
 
     #[test]
