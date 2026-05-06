@@ -13,6 +13,12 @@ pub struct MenuResponse {
     pub copy: bool,
     pub paste: bool,
     pub select_all: bool,
+    pub cut_track: bool,
+    pub copy_track: bool,
+    pub delete_track: bool,
+    pub cut_column: bool,
+    pub copy_column: bool,
+    pub delete_column: bool,
     pub follow_playback: bool,
     pub theme_changed: Option<ThemePreset>,
     pub refresh_devices: bool,
@@ -34,6 +40,12 @@ impl Default for MenuResponse {
             copy: false,
             paste: false,
             select_all: false,
+            cut_track: false,
+            copy_track: false,
+            delete_track: false,
+            cut_column: false,
+            copy_column: false,
+            delete_column: false,
             follow_playback: false,
             theme_changed: None,
             refresh_devices: false,
@@ -91,23 +103,65 @@ pub fn draw_menu_bar(
             }
             ui.separator();
             if ui
-                .add_enabled(has_selection, egui::Button::new("Cut    Ctrl+X"))
+                .add_enabled(has_selection, egui::Button::new("Cut Block    Ctrl+X"))
                 .clicked()
             {
                 resp.cut = true;
                 ui.close_menu();
             }
             if ui
-                .add_enabled(has_selection, egui::Button::new("Copy   Ctrl+C"))
+                .add_enabled(has_selection, egui::Button::new("Copy Block   Ctrl+C"))
                 .clicked()
             {
                 resp.copy = true;
                 ui.close_menu();
             }
-            if ui.button("Paste  Ctrl+V").clicked() {
+            if ui.button("Paste Block  Ctrl+V").clicked() {
                 resp.paste = true;
                 ui.close_menu();
             }
+            ui.separator();
+
+            ui.menu_button("Track", |ui| {
+                if ui.button("Cut Track      Shift+F3").clicked() {
+                    resp.cut_track = true;
+                    ui.close_menu();
+                }
+                if ui.button("Copy Track     Shift+F4").clicked() {
+                    resp.copy_track = true;
+                    ui.close_menu();
+                }
+                if ui.button("Paste Track    Shift+F5").clicked() {
+                    resp.paste = true; // reusing paste logic
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Clear Track    Shift+Del").clicked() {
+                    resp.delete_track = true;
+                    ui.close_menu();
+                }
+            });
+
+            ui.menu_button("Column", |ui| {
+                if ui.button("Cut Column     Alt+F3").clicked() {
+                    resp.cut_column = true;
+                    ui.close_menu();
+                }
+                if ui.button("Copy Column    Alt+F4").clicked() {
+                    resp.copy_column = true;
+                    ui.close_menu();
+                }
+                if ui.button("Paste Column   Alt+F5").clicked() {
+                    resp.paste = true; // reusing paste logic
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Clear Column").clicked() {
+                    resp.delete_column = true;
+                    ui.close_menu();
+                }
+            });
+
             ui.separator();
             if ui.button("Select All  Ctrl+A").clicked() {
                 resp.select_all = true;

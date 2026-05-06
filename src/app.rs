@@ -15,6 +15,7 @@ use crate::edit::{
 use crate::sequencer::instrument::EnvelopePoint;
 use crate::ui::sample_editor::SampleEditEvent;
 use crate::ui::instrument_editor::InstrumentEditEvent;
+use crate::ui::file_browser::{FileBrowser, BrowserMode};
 use crate::formats;
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::{Module, Note, MAX_CHANNELS};
@@ -74,6 +75,8 @@ pub struct HtrkApp {
     loaded_module_name: String,
     file_path: Option<String>,
 
+    file_browser: FileBrowser,
+
     current_view: AppView,
 
     cursor: CursorPosition,
@@ -121,6 +124,7 @@ impl Default for HtrkApp {
             module: None,
             loaded_module_name: String::new(),
             file_path: None,
+            file_browser: FileBrowser::default(),
             current_view: AppView::Pattern,
             cursor: CursorPosition {
                 row: 0,
@@ -584,6 +588,26 @@ impl HtrkApp {
                             }
                             self.ensure_cursor_visible();
                         }
+                        egui::Key::M if modifiers.alt => {
+                            let ch = self.cursor.channel;
+                            if ch < self.muted_channels.len() {
+                                self.muted_channels[ch] = !self.muted_channels[ch];
+                                self.send_command(AudioCommand::SetChannelMuted {
+                                    channel: ch,
+                                    muted: self.muted_channels[ch],
+                                });
+                            }
+                        }
+                        egui::Key::S if modifiers.alt => {
+                            let ch = self.cursor.channel;
+                            if ch < self.solo_channels.len() {
+                                self.solo_channels[ch] = !self.solo_channels[ch];
+                                self.send_command(AudioCommand::SetChannelSolo {
+                                    channel: ch,
+                                    solo: self.solo_channels[ch],
+                                });
+                            }
+                        }
                         egui::Key::PageUp => {
                             self.selection = None;
                             self.advance_cursor_up(16);
@@ -1007,20 +1031,7 @@ impl HtrkApp {
     }
 
     fn open_file_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Tracker Modules", &["it", "xm", "s3m", "mod"])
-            .add_filter("WAV Samples", &["wav"])
-            .pick_file()
-        {
-            if let Some(path_str) = path.to_str() {
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-                if ext == "wav" {
-                    self.import_wav(path_str);
-                } else {
-                    self.load_file(path_str);
-                }
-            }
-        }
+        self.file_browser.open(BrowserMode::Modules);
     }
 
     fn import_wav(&mut self, path: &str) {
@@ -1053,28 +1064,15 @@ impl HtrkApp {
                 return;
             }
         };
-        let format = {
-            let ext = std::path::Path::new(&path)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("it")
-                .to_lowercase();
-            match ext.as_str() {
-                "xm" => crate::sequencer::ModuleFormat::XM,
-                "s3m" => crate::sequencer::ModuleFormat::S3M,
-                "mod" => crate::sequencer::ModuleFormat::MOD,
-                _ => crate::sequencer::ModuleFormat::IT,
-            }
-        };
-        self.save_file(&path, format);
+        self.save_file(&path);
     }
 
-    fn save_file(&mut self, path: &str, format: crate::sequencer::ModuleFormat) {
+    fn save_file(&mut self, path: &str) {
         let module = match &self.module {
             Some(m) => m,
             None => return,
         };
-        let data = formats::save_module(module, format);
+        let data = formats::save_module(module);
         match std::fs::write(path, &data) {
             Ok(()) => {
                 self.file_path = Some(path.to_string());
@@ -1086,24 +1084,7 @@ impl HtrkApp {
     }
 
     fn save_as_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("IT Module", &["it"])
-            .add_filter("XM Module", &["xm"])
-            .add_filter("S3M Module", &["s3m"])
-            .save_file()
-        {
-            if let Some(path_str) = path.to_str() {
-                let format = {
-                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("it").to_lowercase();
-                    match ext.as_str() {
-                        "xm" => crate::sequencer::ModuleFormat::XM,
-                        "s3m" => crate::sequencer::ModuleFormat::S3M,
-                        _ => crate::sequencer::ModuleFormat::IT,
-                    }
-                };
-                self.save_file(path_str, format);
-            }
-        }
+        self.file_browser.open(BrowserMode::Projects);
     }
 
     fn handle_sample_edit(&mut self, event: SampleEditEvent) {
@@ -1727,6 +1708,7 @@ impl eframe::App for HtrkApp {
             .show(ctx, |ui| {
                 let cpu = self.playback_state.cpu_usage_pct.load(std::sync::atomic::Ordering::Relaxed);
                 let total_rows = self.current_pattern().map_or(64, |p| p.num_rows);
+                let hint = format!("Ins: {} | Smp: {}", self.selected_instrument, self.selected_sample);
                 crate::ui::status_bar::draw_status_bar(
                     ui,
                     self.module.as_ref().map(|m| m.as_ref()),
@@ -1735,6 +1717,10 @@ impl eframe::App for HtrkApp {
                     total_rows,
                     self.num_channels(),
                     cpu,
+                    self.current_octave,
+                    self.selected_instrument,
+                    self.selected_sample,
+                    &hint,
                     &self.theme,
                 );
             });
@@ -1931,7 +1917,7 @@ impl eframe::App for HtrkApp {
                 .default_width(350.0)
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
-                        ui.heading("htrk v0.1");
+                        ui.heading("htrk v0.3.0");
                         ui.add_space(8.0);
                         ui.label("A modern tracker / music sequencer");
                         ui.add_space(4.0);
@@ -1941,10 +1927,53 @@ impl eframe::App for HtrkApp {
                                 .color(egui::Color32::GRAY),
                         );
                         ui.add_space(12.0);
-                        ui.label("Supports .it, .xm, .s3m, .mod formats");
+                        ui.label("Supports .htk, .it, .xm, .s3m, .mod formats");
+                        ui.add_space(12.0);
+                        ui.label(
+                            egui::RichText::new("Development guided by Clint Anderson")
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(180, 180, 200)),
+                        );
+                        ui.label(
+                            egui::RichText::new("clinta@gmail.com")
+                                .size(10.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new("AI-assisted code from GLM, DeepSeek, and MiniMax")
+                                .size(10.0)
+                                .color(egui::Color32::GRAY),
+                        );
                         ui.add_space(8.0);
                     });
                 });
+        }
+
+        if self.file_browser.show {
+            let mut file_browser_open = true;
+            egui::Window::new("File Browser")
+                .open(&mut file_browser_open)
+                .default_size([600.0, 400.0])
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .resizable(true)
+                .show(ctx, |ui| {
+                    if let Some(path) = self.file_browser.render(ui) {
+                        let path_str = path.to_string_lossy().to_string();
+                        let ext = path.extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("")
+                            .to_lowercase();
+                        if ext == "wav" {
+                            self.import_wav(&path_str);
+                        } else {
+                            self.load_file(&path_str);
+                        }
+                    }
+                });
+            if !file_browser_open {
+                self.file_browser.close();
+            }
         }
 
         ctx.request_repaint();

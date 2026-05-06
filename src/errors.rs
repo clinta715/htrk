@@ -16,6 +16,7 @@ pub enum FormatError {
     InvalidSampleIndex { index: usize, max: usize },
     DecompressionFailed(String),
     Utf8Error(str::Utf8Error),
+    Bincode(String),
 }
 
 impl fmt::Display for FormatError {
@@ -41,6 +42,7 @@ impl fmt::Display for FormatError {
                 write!(f, "Decompression failed: {}", msg)
             }
             FormatError::Utf8Error(e) => write!(f, "UTF-8 error: {}", e),
+            FormatError::Bincode(msg) => write!(f, "Bincode error: {}", msg),
         }
     }
 }
@@ -64,6 +66,12 @@ impl From<io::Error> for FormatError {
 impl From<str::Utf8Error> for FormatError {
     fn from(e: str::Utf8Error) -> Self {
         FormatError::Utf8Error(e)
+    }
+}
+
+impl From<bincode::Error> for FormatError {
+    fn from(e: bincode::Error) -> Self {
+        FormatError::Bincode(e.to_string())
     }
 }
 

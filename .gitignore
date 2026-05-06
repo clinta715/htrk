@@ -3,5 +3,9 @@
 *.mod
 *.it
 *.s3m
+*.xm
 crash_log.txt
 run_log.txt
+analysis*.txt
+ft2play-main/
+protracker/

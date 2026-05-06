@@ -1,4 +1,5 @@
 pub mod common;
+pub mod htk;
 pub mod it;
 pub mod s3m;
 pub mod wav;
@@ -25,6 +26,10 @@ pub fn detect_format(data: &[u8]) -> Option<ModuleFormat> {
 
     if magic == b"IMPM" {
         return Some(ModuleFormat::IT);
+    }
+
+    if data.len() > 4 && magic == b"HTRA" {
+        return Some(ModuleFormat::HTK);
     }
 
     if data.len() > 37 && &data[0..17] == b"Extended Module: " {
@@ -82,16 +87,14 @@ pub fn load_module(data: &[u8]) -> FormatResult<Module> {
             let handler = s3m::S3mHandler;
             handler.load(data)
         }
+        ModuleFormat::HTK => {
+            htk::load_module(data)
+        }
     }
 }
 
-pub fn save_module(module: &Module, format: ModuleFormat) -> Vec<u8> {
-    match format {
-        ModuleFormat::IT => it::save_module(module),
-        ModuleFormat::XM => xm::save_module(module),
-        ModuleFormat::S3M => s3m::save_module(module),
-        ModuleFormat::MOD => modfile::save_module(module),
-    }
+pub fn save_module(module: &Module) -> Vec<u8> {
+    htk::save_module(module)
 }
 
 #[cfg(test)]

@@ -57,6 +57,7 @@ pub struct ChannelState {
     pub note_delay_ticks: u8,
     pub active_effects: ActiveEffects,
 
+    // XM-specific fields — will be removed in Phase 4 (unified sequencer)
     pub real_period: u16,
     pub want_period: u16,
     pub out_period: u16,
@@ -73,8 +74,6 @@ pub struct ChannelState {
     pub retrig_speed: u8,
     pub retrig_vol: u8,
 
-    pub eff_typ_xm: u8,
-    pub eff_xm: u8,
     pub vol_kol: u8,
     pub rel_ton: i8,
     pub real_vol: u8,
@@ -135,8 +134,6 @@ impl Default for ChannelState {
             retrig_cnt: 0,
             retrig_speed: 0,
             retrig_vol: 0,
-            eff_typ_xm: 0xFF,
-            eff_xm: 0,
             vol_kol: 0,
             rel_ton: 0,
             real_vol: 64,

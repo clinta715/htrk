@@ -12,6 +12,10 @@ pub fn draw_status_bar(
     total_rows: usize,
     num_channels: usize,
     cpu_pct: u8,
+    current_octave: u8,
+    selected_instrument: usize,
+    selected_sample: usize,
+    hint: &str,
     theme: &TrackerTheme,
 ) {
     ui.horizontal(|ui| {
@@ -20,7 +24,7 @@ pub fn draw_status_bar(
         let fg = theme.status_fg;
         let font = egui::FontId::monospace(11.0);
 
-        ui.label(egui::RichText::new("htrk v0.1").font(font.clone()).color(fg));
+        ui.label(egui::RichText::new("htrk v0.3.0").font(font.clone()).color(fg));
         ui.separator();
 
         let format_str = match module {
@@ -29,6 +33,7 @@ pub fn draw_status_bar(
                 ModuleFormat::XM => "XM",
                 ModuleFormat::S3M => "S3M",
                 ModuleFormat::MOD => "MOD",
+                ModuleFormat::HTK => "HTK",
             },
             None => "---",
         };
@@ -44,10 +49,25 @@ pub fn draw_status_bar(
 
         ui.separator();
 
+        ui.label(egui::RichText::new(format!("Oct:{}", current_octave)).font(font.clone()).color(theme.fg_note));
+        ui.label(egui::RichText::new(format!(" Ins:{:02X}", selected_instrument)).font(font.clone()).color(theme.fg_instrument));
+        ui.label(egui::RichText::new(format!(" Smp:{:02X}", selected_sample)).font(font.clone()).color(theme.fg_volume));
+
+        ui.separator();
+
         ui.label(egui::RichText::new(format!("{}ch", num_channels)).font(font.clone()).color(fg));
 
         ui.separator();
 
-        ui.label(egui::RichText::new(format!("CPU:{}%", cpu_pct)).font(font).color(fg));
+        ui.label(egui::RichText::new(format!("CPU:{}%", cpu_pct)).font(font.clone()).color(fg));
+
+        ui.separator();
+
+        // Use more space for the hint
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(egui::RichText::new("F3: HELP ").font(font.clone()).color(theme.fg_instrument));
+            ui.separator();
+            ui.label(egui::RichText::new(hint).font(font).color(theme.fg_note));
+        });
     });
 }

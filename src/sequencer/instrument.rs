@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NewNoteAction {
     NoteCut,
     Continue,
@@ -12,7 +12,7 @@ impl Default for NewNoteAction {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DuplicateCheckType {
     Disabled,
     Note,
@@ -26,7 +26,7 @@ impl Default for DuplicateCheckType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DuplicateCheckAction {
     NoteCut,
     NoteOff,
@@ -39,7 +39,7 @@ impl Default for DuplicateCheckAction {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EnvelopeFlags {
     pub enabled: bool,
     pub sustain: bool,
@@ -47,7 +47,36 @@ pub struct EnvelopeFlags {
     pub carry: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+mod array_u8_120_serde {
+    use serde::de::{self, Deserializer};
+    use serde::ser::Serializer;
+    use serde::{Deserialize, Serialize};
+
+    pub fn serialize<S>(value: &[u8; 120], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.as_slice().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 120], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let v: Vec<u8> = Vec::deserialize(deserializer)?;
+        if v.len() != 120 {
+            return Err(de::Error::custom(format!(
+                "expected 120 elements, got {}",
+                v.len()
+            )));
+        }
+        let mut arr = [0u8; 120];
+        arr.copy_from_slice(&v);
+        Ok(arr)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EnvelopePoint {
     pub tick: u16,
     pub value: u8,
@@ -59,7 +88,7 @@ impl Default for EnvelopePoint {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Envelope {
     pub points: Vec<EnvelopePoint>,
     pub sustain_point: Option<usize>,
@@ -80,11 +109,13 @@ impl Default for Envelope {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Instrument {
     pub name: String,
 
+    #[serde(with = "array_u8_120_serde")]
     pub sample_map: [u8; 120],
+    #[serde(with = "array_u8_120_serde")]
     pub note_map: [u8; 120],
 
     pub volume_envelope: Option<Envelope>,

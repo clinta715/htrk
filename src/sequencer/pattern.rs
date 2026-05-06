@@ -1,15 +1,19 @@
 use crate::sequencer::effect::Effect;
 use crate::sequencer::note::Note;
+use serde::de::Deserializer;
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize};
 
 pub const MAX_CHANNELS: usize = 64;
 #[allow(dead_code)]
 pub const DEFAULT_ROWS: usize = 64;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Cell {
     pub note: Note,
     pub instrument: Option<u8>,
     pub volume: Option<u8>,
+    pub volume_effect: Option<Effect>,
     pub effect: Effect,
 }
 
@@ -18,6 +22,7 @@ impl Cell {
         self.note == Note::None
             && self.instrument.is_none()
             && self.volume.is_none()
+            && self.volume_effect.is_none()
             && self.effect == Effect::None
     }
 }
@@ -26,6 +31,41 @@ impl Cell {
 pub struct Pattern {
     pub num_rows: usize,
     pub data: Vec<[Cell; MAX_CHANNELS]>,
+}
+
+impl Serialize for Pattern {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut s = serializer.serialize_struct("Pattern", 2)?;
+        s.serialize_field("num_rows", &self.num_rows)?;
+        let rows: Vec<Vec<Cell>> = self.data.iter().map(|row| row.to_vec()).collect();
+        s.serialize_field("data", &rows)?;
+        s.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Pattern {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct PatternData {
+            num_rows: usize,
+            data: Vec<Vec<Cell>>,
+        }
+        let pd = PatternData::deserialize(deserializer)?;
+        let data = pd.data.into_iter().map(|row| {
+            let mut arr = [Cell::default(); MAX_CHANNELS];
+            for (i, cell) in row.into_iter().enumerate().take(MAX_CHANNELS) {
+                arr[i] = cell;
+            }
+            arr
+        }).collect();
+        Ok(Pattern { num_rows: pd.num_rows, data })
+    }
 }
 
 impl Pattern {

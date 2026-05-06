@@ -95,6 +95,8 @@ impl FormatHandler for ItHandler {
             midi_enabled: (flags & 0x0040) != 0,
             request_embed: (flags & 0x0080) != 0,
             fast_volume_slides: false,
+            xm_envelope_model: false,
+            xm_period_model: false,
         };
 
         let message = if (special & 0x0001) != 0 && message_length > 0 && message_offset > 0 {
@@ -662,7 +664,7 @@ fn parse_it_pattern(data: &[u8], offset: usize) -> FormatResult<Pattern> {
         let inst = if (m & 0x02) != 0 && last_inst[ch] > 0 { Some(last_inst[ch]) } else { None };
         let vol = if (m & 0x04) != 0 { Some(last_vol[ch]) } else { None };
         let fx = if (m & 0x08) != 0 { decode_it_effect(last_fx[ch], last_fxp[ch]) } else { Effect::None };
-        pattern.data[row][ch] = Cell { note, instrument: inst, volume: vol, effect: fx };
+        pattern.data[row][ch] = Cell { note, instrument: inst, volume: vol, volume_effect: None, effect: fx };
     }
     Ok(pattern)
 }

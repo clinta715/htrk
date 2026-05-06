@@ -1,5 +1,6 @@
 pub mod channel_headers;
 pub mod envelope_editor;
+pub mod file_browser;
 pub mod help_screen;
 pub mod instrument_editor;
 pub mod menu_bar;

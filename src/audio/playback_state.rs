@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU8};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-static MASTER_VOLUME_DEFAULT: f32 = 1.0;
+static MASTER_VOLUME_DEFAULT: f32 = 0.25;
 
 pub const SCOPE_SIZE: usize = 2048;
 pub const MAX_CHANNELS: usize = 64;

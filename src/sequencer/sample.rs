@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 pub enum LoopType {
     None,
@@ -9,7 +9,7 @@ pub enum LoopType {
     Backward,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct SampleFlags {
     pub is_stereo: bool,
     pub is_16bit: bool,
@@ -17,7 +17,7 @@ pub struct SampleFlags {
     pub has_trailing_byte: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum VibratoWaveform {
     Sine,
     Square,
@@ -31,10 +31,32 @@ impl Default for VibratoWaveform {
     }
 }
 
-#[derive(Clone, Debug)]
+mod arc_vec_f32_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::Arc;
+
+    pub fn serialize<S>(value: &Arc<Vec<f32>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let v: &Vec<f32> = value.as_ref();
+        v.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<Vec<f32>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let v: Vec<f32> = Vec::deserialize(deserializer)?;
+        Ok(Arc::new(v))
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Sample {
     pub name: String,
 
+    #[serde(with = "arc_vec_f32_serde")]
     pub data: Arc<Vec<f32>>,
     pub sample_rate: u32,
     pub bits_per_sample: u8,

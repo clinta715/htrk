@@ -34,15 +34,16 @@ pub const BASE_NOTE_RATE: f64 = 261.6255653005961;
 #[allow(dead_code)]
 pub const MIDDLE_C: u8 = 60;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ModuleFormat {
     IT,
     XM,
     S3M,
     MOD,
+    HTK,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ModuleFlags {
     pub stereo: bool,
     pub use_instruments: bool,
@@ -52,9 +53,12 @@ pub struct ModuleFlags {
     pub midi_enabled: bool,
     pub request_embed: bool,
     pub fast_volume_slides: bool,
+    #[allow(dead_code)]
+    pub xm_envelope_model: bool,
+    pub xm_period_model: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Module {
     pub name: String,
     pub message: Option<String>,
