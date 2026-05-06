@@ -1767,10 +1767,11 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         let pan = self.compute_channel_panning(channel);
 
         let voice_idx = self.allocate_voice(channel);
+        let sample_offset = self.state.channels[channel].last_sample_offset as usize;
         self.voices[voice_idx].trigger(
             sample.data.clone(), sample.sample_rate as f64, sample.loop_type,
             sample.loop_start, sample.loop_end, playback_freq, self.output_sample_rate,
-            vol, pan, 0, Some(self.state.channels[channel].last_instrument), Some(sample_idx),
+            vol, pan, sample_offset, Some(self.state.channels[channel].last_instrument), Some(sample_idx),
             note, NewNoteAction::NoteCut, 0,
         );
         self.voices[voice_idx].channel = Some(channel);
@@ -1822,10 +1823,11 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 };
 
                 let voice_idx = self.allocate_voice(channel);
+                let sample_offset = self.state.channels[channel].last_sample_offset as usize;
                 self.voices[voice_idx].trigger(
                     s.data.clone(), s.sample_rate as f64, s.loop_type,
                     s.loop_start, s.loop_end, playback_freq, self.output_sample_rate,
-                    vol, pan, 0, Some(inst_idx as u8), Some(sample_idx as u8),
+                    vol, pan, sample_offset, Some(inst_idx as u8), Some(sample_idx as u8),
                     Note::On(key), NewNoteAction::NoteCut, fade_out,
                 );
                 self.voices[voice_idx].channel = Some(channel);
@@ -2457,10 +2459,11 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             instrument_idx as usize, sample_idx as usize);
 
         let voice_idx = self.allocate_voice(channel);
+        let sample_offset = self.state.channels[channel].last_sample_offset as usize;
         self.voices[voice_idx].trigger(
             sample.data.clone(), sample.sample_rate as f64, sample.loop_type,
             sample.loop_start, sample.loop_end, playback_freq, self.output_sample_rate,
-            vol, pan, 0, Some(instrument_idx), Some(sample_idx),
+            vol, pan, sample_offset, Some(instrument_idx), Some(sample_idx),
             note, NewNoteAction::NoteCut, 0,
         );
         self.voices[voice_idx].channel = Some(channel);
