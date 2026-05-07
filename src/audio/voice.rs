@@ -1,6 +1,8 @@
 use crate::sequencer::note::Note;
 use crate::sequencer::sample::{LoopType, VibratoWaveform};
 use crate::sequencer::instrument::{Envelope, NewNoteAction};
+use crate::audio::filter::StateVariableFilter;
+use crate::sequencer::effect::FilterType;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -48,6 +50,13 @@ pub struct Voice {
     pub vol_env: Option<EnvelopeState>,
     pub pan_env: Option<EnvelopeState>,
     pub pitch_env: Option<EnvelopeState>,
+    pub filter_env: Option<EnvelopeState>,
+
+    pub filter_type: FilterType,
+    pub filter_cutoff: f32,
+    pub filter_resonance: f32,
+    pub envelope_filter_cutoff: f32,
+    pub svf: StateVariableFilter,
 
     pub vibrato_phase: f32,
     pub vibrato_speed: u8,
@@ -143,6 +152,12 @@ impl Voice {
         self.vol_env = None;
         self.pan_env = None;
         self.pitch_env = None;
+        self.filter_env = None;
+self.filter_type = FilterType::LowPass;
+        self.filter_cutoff = 0xFFFF as f32;
+        self.filter_resonance = 0.0;
+        self.envelope_filter_cutoff = 1.0;
+        self.svf = StateVariableFilter::default();
         self.vibrato_phase = 0.0;
         self.vibrato_speed = 0;
         self.vibrato_depth = 0;
@@ -211,6 +226,12 @@ impl Default for Voice {
             vol_env: None,
             pan_env: None,
             pitch_env: None,
+            filter_env: None,
+            filter_type: FilterType::LowPass,
+            filter_cutoff: 0xFFFF as f32,
+            filter_resonance: 0.0,
+            envelope_filter_cutoff: 1.0,
+            svf: StateVariableFilter::default(),
             vibrato_phase: 0.0,
             vibrato_speed: 0,
             vibrato_depth: 0,

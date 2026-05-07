@@ -122,6 +122,7 @@ impl AudioEngine {
                     self.master_volume,
                     self.interpolation,
                     &effective_mute,
+                    OUTPUT_SAMPLE_RATE as f32,
                 );
 
                 self.sequencer.state.sample_counter += chunk as f64;

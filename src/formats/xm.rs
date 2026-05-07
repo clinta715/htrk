@@ -274,6 +274,7 @@ impl FormatHandler for XmHandler {
                     volume_envelope: vol_env,
                     panning_envelope: pan_env,
                     pitch_envelope: None,
+                    filter_envelope: None,
                     fade_out,
                     nna,
                     duplicate_check_type: dct,
@@ -281,11 +282,12 @@ impl FormatHandler for XmHandler {
                     pitch_pan_separation: 0,
                     pitch_pan_center: 60,
                     global_volume: 128,
-                    _cutoff: 0,
-                    _resonance: 0,
+                    filter_cutoff: 0xFFFF,
+                    filter_resonance: 0,
+                    filter_type: crate::sequencer::effect::FilterType::LowPass,
                     random_volume: 0,
                     random_panning: 0,
-                    _random_cutoff: 0,
+                    filter_random_cutoff: 0,
                     vib_type: vibrato_type,
                     vib_sweep: vibrato_sweep,
                     vib_depth: vibrato_depth,
@@ -830,10 +832,16 @@ fn decode_xm_effect(fx: u8, param: u8, has_param: bool) -> Effect {
         },
         0x14 => Effect::NoteCutAfter { ticks: param },
         0x15 => Effect::NoteDelay { ticks: param },
+        0x12 => Effect::FormatSpecific(FormatEffect::Xm(XmEffect::KeyOff { fade_rate: param })),
         0x19 => Effect::Panbrello {
             speed: param >> 4,
             depth: param & 0x0F,
         },
+        0x1D => Effect::Tremor {
+            ontime: param >> 4,
+            offtime: param & 0x0F,
+        },
+        _ if fx > 0 => Effect::FormatSpecific(FormatEffect::Xm(XmEffect::Raw { effect: fx, param })),
         _ => Effect::None,
     }
 }
@@ -856,6 +864,8 @@ fn decode_xm_extended_effect(param: u8) -> Effect {
         0xC => Effect::NoteCutAfter { ticks: val },
         0xD => Effect::NoteDelay { ticks: val },
         0xE => Effect::PatternDelay { ticks: val },
+        0xF => Effect::ExtendedEffect { param },
+        _ if sub > 0 => Effect::FormatSpecific(FormatEffect::Xm(XmEffect::Raw { effect: 0xE0 | sub, param: val })),
         _ => Effect::None,
     }
 }
@@ -1130,7 +1140,17 @@ fn encode_xm_effect(effect: &Effect) -> (u8, u8) {
         Effect::VolFineSlideDown { amount: _ } => (0, 0),
         Effect::VolPortamento { speed: _ } => (0, 0),
         Effect::VolVibrato { speed: _ } => (0, 0),
-        Effect::Tremor { ontime: _, offtime: _ } => (0, 0),
+        Effect::Tremor { ontime, offtime } => (0x1D, (ontime << 4) | (offtime & 0x0F)),
+        Effect::FormatSpecific(FormatEffect::Xm(XmEffect::Raw { effect, param })) => {
+            if *effect >= 0xE0 {
+                (0x0E, (*effect << 4) as u8 | (param & 0x0F))
+            } else {
+                (*effect, *param)
+            }
+        }
+        Effect::FormatSpecific(FormatEffect::Xm(XmEffect::KeyOff { fade_rate })) => (0x12, *fade_rate),
+        Effect::FormatSpecific(FormatEffect::Xm(XmEffect::SetSampleOffset(offset))) => (9, (offset >> 8) as u8),
+        Effect::FormatSpecific(_) => (0, 0),
         _ => (0, 0),
     }
 }

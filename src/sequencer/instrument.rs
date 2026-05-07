@@ -121,6 +121,8 @@ pub struct Instrument {
     pub volume_envelope: Option<Envelope>,
     pub panning_envelope: Option<Envelope>,
     pub pitch_envelope: Option<Envelope>,
+    #[serde(default)]
+    pub filter_envelope: Option<Envelope>,
 
     pub fade_out: u16,
 
@@ -133,12 +135,17 @@ pub struct Instrument {
 
     pub global_volume: u8,
 
-    pub _cutoff: u16,
-    pub _resonance: u8,
+    #[serde(default)]
+    pub filter_cutoff: u16,
+    #[serde(default)]
+    pub filter_resonance: u8,
+    #[serde(default)]
+    pub filter_type: super::effect::FilterType,
 
     pub random_volume: u8,
     pub random_panning: u8,
-    pub _random_cutoff: u8,
+    #[serde(default)]
+    pub filter_random_cutoff: u8,
 
     pub vib_type: u8,
     pub vib_sweep: u8,
@@ -159,6 +166,7 @@ impl Default for Instrument {
             volume_envelope: None,
             panning_envelope: None,
             pitch_envelope: None,
+            filter_envelope: None,
             fade_out: 0,
             nna: NewNoteAction::default(),
             duplicate_check_type: DuplicateCheckType::default(),
@@ -166,11 +174,12 @@ impl Default for Instrument {
             pitch_pan_separation: 0,
             pitch_pan_center: 60,
             global_volume: 128,
-            _cutoff: 0,
-            _resonance: 0,
+            filter_cutoff: 0xFFFF,
+            filter_resonance: 0,
+            filter_type: super::effect::FilterType::default(),
             random_volume: 0,
             random_panning: 0,
-            _random_cutoff: 0,
+            filter_random_cutoff: 0,
             vib_type: 0,
             vib_sweep: 0,
             vib_depth: 0,

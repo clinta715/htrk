@@ -390,6 +390,9 @@ pub enum InstrumentProperty {
     PitchPanCenter(u8),
     RandomVolume(u8),
     RandomPanning(u8),
+    FilterCutoff(u16),
+    FilterResonance(u8),
+    FilterType(crate::sequencer::effect::FilterType),
 }
 
 pub struct SetInstrumentPropertyCommand {
@@ -415,6 +418,9 @@ impl EditCommand for SetInstrumentPropertyCommand {
             InstrumentProperty::PitchPanCenter(c) => inst.pitch_pan_center = *c,
             InstrumentProperty::RandomVolume(v) => inst.random_volume = *v,
             InstrumentProperty::RandomPanning(p) => inst.random_panning = *p,
+            InstrumentProperty::FilterCutoff(c) => inst.filter_cutoff = *c,
+            InstrumentProperty::FilterResonance(r) => inst.filter_resonance = *r,
+            InstrumentProperty::FilterType(t) => inst.filter_type = *t,
         }
         Ok(())
     }
@@ -435,6 +441,9 @@ impl EditCommand for SetInstrumentPropertyCommand {
             InstrumentProperty::PitchPanCenter(c) => inst.pitch_pan_center = *c,
             InstrumentProperty::RandomVolume(v) => inst.random_volume = *v,
             InstrumentProperty::RandomPanning(p) => inst.random_panning = *p,
+            InstrumentProperty::FilterCutoff(c) => inst.filter_cutoff = *c,
+            InstrumentProperty::FilterResonance(r) => inst.filter_resonance = *r,
+            InstrumentProperty::FilterType(t) => inst.filter_type = *t,
         }
         Ok(())
     }
@@ -447,10 +456,9 @@ impl EditCommand for SetInstrumentPropertyCommand {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EnvelopeType {
     Volume,
-    #[allow(dead_code)]
     Panning,
-    #[allow(dead_code)]
     Pitch,
+    Filter,
 }
 
 pub struct SetSampleDataCommand {
@@ -496,6 +504,7 @@ impl EditCommand for AddEnvelopePointCommand {
             EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
             EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
         if let Some(env) = envelope {
             env.points.push(self.point);
@@ -512,6 +521,7 @@ impl EditCommand for AddEnvelopePointCommand {
             EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
             EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
         if let Some(env) = envelope {
             if let Some(pos) = env.points.iter().position(|p| p.tick == self.point.tick && p.value == self.point.value) {
@@ -542,6 +552,7 @@ impl EditCommand for RemoveEnvelopePointCommand {
             EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
             EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
         if let Some(env) = envelope {
             if self.point_index < env.points.len() {
@@ -559,6 +570,7 @@ impl EditCommand for RemoveEnvelopePointCommand {
             EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
             EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
         if let Some(env) = envelope {
             env.points.insert(self.point_index, self.old_point);
@@ -588,6 +600,7 @@ impl EditCommand for SetEnvelopePointCommand {
             EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
             EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
         if let Some(env) = envelope {
             if self.point_index < env.points.len() {
@@ -605,6 +618,7 @@ impl EditCommand for SetEnvelopePointCommand {
             EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
             EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
         if let Some(env) = envelope {
             if self.point_index < env.points.len() {
@@ -635,6 +649,7 @@ impl EditCommand for SetEnvelopeSustainCommand {
             EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
             EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
         if let Some(env) = envelope {
             env.sustain_point = self.new_sustain;
@@ -650,6 +665,7 @@ impl EditCommand for SetEnvelopeSustainCommand {
             EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
             EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
         if let Some(env) = envelope {
             env.sustain_point = self.old_sustain;
@@ -682,6 +698,7 @@ impl EditCommand for SetEnvelopeLoopCommand {
             EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
             EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
         if let Some(env) = envelope {
             env.flags.loop_ = self.new_loop_enabled;
@@ -699,6 +716,7 @@ impl EditCommand for SetEnvelopeLoopCommand {
             EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
             EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
         if let Some(env) = envelope {
             env.flags.loop_ = self.old_loop_enabled;
@@ -729,6 +747,7 @@ impl EditCommand for SetEnvelopeFlagsCommand {
             EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
             EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
         if let Some(env) = envelope {
             env.flags = self.new_flags;
@@ -744,6 +763,7 @@ impl EditCommand for SetEnvelopeFlagsCommand {
             EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
             EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
         if let Some(env) = envelope {
             env.flags = self.old_flags;

@@ -5,6 +5,8 @@ use super::theme::{ThemePreset, TrackerTheme};
 pub struct MenuResponse {
     pub new_song: bool,
     pub open_file: bool,
+    pub import_sample: bool,
+    pub import_instrument: bool,
     pub save_file: bool,
     pub save_as: bool,
     pub undo: bool,
@@ -32,6 +34,8 @@ impl Default for MenuResponse {
         MenuResponse {
             new_song: false,
             open_file: false,
+            import_sample: false,
+            import_instrument: false,
             save_file: false,
             save_as: false,
             undo: false,
@@ -79,6 +83,14 @@ pub fn draw_menu_bar(
             }
             if ui.button("Open...     Ctrl+O").clicked() {
                 resp.open_file = true;
+                ui.close_menu();
+            }
+            if ui.button("Import Sample...    Ctrl+I").clicked() {
+                resp.import_sample = true;
+                ui.close_menu();
+            }
+            if ui.button("Import Instrument...  Ctrl+Shift+I").clicked() {
+                resp.import_instrument = true;
                 ui.close_menu();
             }
             ui.separator();

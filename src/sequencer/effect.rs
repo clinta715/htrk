@@ -52,7 +52,11 @@ pub enum Effect {
     VolPortamento { speed: u8 },
     VolVibrato { speed: u8 },
 
-    // Format-specific effects - preserves exact per-format behavior
+    SetFilterCutoff { cutoff: u16 },
+    SetFilterResonance { resonance: u8 },
+    SetFilterType { filter_type: u8 },
+    FilterCutoffSlide { amount: i16 },
+
     FormatSpecific(FormatEffect),
 }
 
@@ -72,43 +76,35 @@ pub enum FormatEffect {
 /// XM-specific effects that require special handling
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum XmEffect {
-    /// Sample offset (effect 9) - XM stores per-channel with memory
-    /// The offset persists across rows until changed
     SetSampleOffset(u16),
-    /// Panbrello (effect T) - unique to XM
     Panbrello(u8),
-    /// Volume column command - XM unique
     VolumeColumn(u8),
-    /// Fine tone portamento - XM specific handling
     FineTonePortamento(u8),
-    /// Global volume slide - XM specific
     GlobalVolumeSlide { fine: bool, up: bool, amount: u8 },
+    KeyOff { fade_rate: u8 },
+    Raw { effect: u8, param: u8 },
 }
 
 /// MOD-specific effects
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ModEffect {
-    /// Sample offset for MOD (effect 9)
     SetSampleOffset(u16),
-    /// MOD arpeggio has different semantics (3-note cycle)
     Arpeggio { note1: u8, note2: u8 },
-    // Note: MOD doesn't have fine effects in the same way as XM
+    Raw { effect: u8, param: u8 },
 }
 
 /// S3M-specific effects
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum S3mEffect {
-    /// Sample offset for S3M (effect 9)
     SetSampleOffset(u16),
-    // TODO: Document and implement S3M-unique effects
+    Raw { effect: u16, param: u8 },
 }
 
 /// IT-specific effects
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ItEffect {
-    /// Sample offset for IT (effect 9)
     SetSampleOffset(u16),
-    // TODO: Document and implement IT-unique effects (NNA, etc.)
+    Raw { effect: u8, param: u8 },
 }
 
 /// Supported module formats
@@ -123,8 +119,36 @@ pub enum FormatType {
     Htk,  // Native HTRK format
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FilterType {
+    #[default]
+    LowPass,
+    HighPass,
+    BandPass,
+    Notch,
+}
+
+impl FilterType {
+    pub fn from_u8(val: u8) -> Self {
+        match val {
+            1 => FilterType::HighPass,
+            2 => FilterType::BandPass,
+            3 => FilterType::Notch,
+            _ => FilterType::LowPass,
+        }
+    }
+
+    pub fn to_u8(self) -> u8 {
+        match self {
+            FilterType::LowPass => 0,
+            FilterType::HighPass => 1,
+            FilterType::BandPass => 2,
+            FilterType::Notch => 3,
+        }
+    }
+}
+
 impl FormatType {
-    /// Check if format supports volume column (XM does)
     pub fn supports_volume_column(&self) -> bool {
         matches!(self, FormatType::Xm)
     }
@@ -222,6 +246,10 @@ impl Effect {
             Effect::VolSlideDown { amount } => Some(*amount),
             Effect::VolPortamento { speed } => Some(*speed),
             Effect::VolVibrato { speed } => Some(*speed),
+            Effect::SetFilterCutoff { cutoff } => Some((cutoff >> 8) as u8),
+            Effect::SetFilterResonance { resonance } => Some(*resonance),
+            Effect::SetFilterType { filter_type } => Some(*filter_type),
+            Effect::FilterCutoffSlide { amount } => Some((*amount as i16).clamp(0, 255) as u8),
             Effect::FormatSpecific(fe) => {
                 // Format-specific effects don't have a simple effect byte representation
                 // Return the effect byte from the underlying format effect if possible

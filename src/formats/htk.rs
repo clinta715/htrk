@@ -2,7 +2,7 @@ use crate::errors::FormatResult;
 use crate::sequencer::module::ModuleFormat;
 use crate::sequencer::Module;
 
-const HTK_VERSION: u32 = 2;
+const HTK_VERSION: u32 = 3;
 const HTK_MAGIC: &[u8; 4] = b"HTRA";
 
 pub fn save_module(module: &Module) -> Vec<u8> {
@@ -33,7 +33,7 @@ pub fn load_module(data: &[u8]) -> FormatResult<Module> {
     
     if version > HTK_VERSION {
         return Err(crate::errors::FormatError::InvalidHeader {
-            expected: "HTK version <= 2",
+            expected: "HTK version <= 3",
             found: version.to_le_bytes(),
         });
     }

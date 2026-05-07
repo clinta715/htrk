@@ -12,6 +12,7 @@ use crate::edit::{
     MapNoteToSampleCommand, SetEnvelopeSustainCommand, SetEnvelopeLoopCommand,
     SetEnvelopeFlagsCommand, MapNoteToNoteCommand,
 };
+use crate::app_config::AppConfig;
 use crate::sequencer::instrument::EnvelopePoint;
 use crate::ui::sample_editor::SampleEditEvent;
 use crate::ui::instrument_editor::InstrumentEditEvent;
@@ -108,10 +109,14 @@ pub struct HtrkApp {
     sample_selection: Option<(usize, usize)>,
     sample_clipboard: Option<Arc<Vec<f32>>>,
     amplify_factor: f32,
+    config: AppConfig,
 }
 
 impl Default for HtrkApp {
     fn default() -> Self {
+        let config = AppConfig::load();
+        let mut file_browser = FileBrowser::default();
+        file_browser.restore_last_dirs(&config);
         HtrkApp {
             command_sender: None,
             playback_state: Arc::new(AtomicPlaybackState::default()),
@@ -124,7 +129,7 @@ impl Default for HtrkApp {
             module: None,
             loaded_module_name: String::new(),
             file_path: None,
-            file_browser: FileBrowser::default(),
+            file_browser,
             current_view: AppView::Pattern,
             cursor: CursorPosition {
                 row: 0,
@@ -154,6 +159,7 @@ impl Default for HtrkApp {
             sample_selection: None,
             sample_clipboard: None,
             amplify_factor: 2.0,
+            config: AppConfig::load(),
         }
     }
 }
@@ -306,6 +312,21 @@ impl HtrkApp {
         }
     }
 
+    fn ensure_module_ownership(&mut self) {
+        let needs_clone = match &self.module {
+            Some(arc) => Arc::strong_count(arc) > 1,
+            None => false,
+        };
+        if needs_clone {
+            if let Some(arc) = self.module.take() {
+                let cloned = (*arc).clone();
+                let new_arc = Arc::new(cloned);
+                self.send_command(AudioCommand::LoadModule(new_arc.clone()));
+                self.module = Some(new_arc);
+            }
+        }
+    }
+
     fn load_file(&mut self, path: &str) {
         let data = match std::fs::read(path) {
             Ok(d) => d,
@@ -371,6 +392,7 @@ impl HtrkApp {
 
     #[allow(dead_code)]
     fn current_pattern_mut(&mut self) -> Option<&mut crate::sequencer::Pattern> {
+        self.ensure_module_ownership();
         let module = Arc::get_mut(self.module.as_mut()?)?;
         let order = *module.order_list.get(self.selected_order)?;
         module.patterns.get_mut(order as usize)
@@ -428,6 +450,7 @@ impl HtrkApp {
             new_cell,
         });
 
+        self.ensure_module_ownership();
         if let Some(ref mut module) = self.module {
             if let Some(arc_module) = Arc::get_mut(module) {
                 let _ = self.undo_manager.execute(cmd, arc_module);
@@ -471,6 +494,7 @@ impl HtrkApp {
                     if let egui::Event::Key { key, pressed: true, .. } = event {
                         match key {
                             egui::Key::Z => {
+                                self.ensure_module_ownership();
                                 if let Some(ref mut module) = self.module {
                                     if let Some(arc_module) = Arc::get_mut(module) {
                                         let _ = self.undo_manager.undo(arc_module);
@@ -479,6 +503,7 @@ impl HtrkApp {
                                 handled = true;
                             }
                             egui::Key::Y => {
+                                self.ensure_module_ownership();
                                 if let Some(ref mut module) = self.module {
                                     if let Some(arc_module) = Arc::get_mut(module) {
                                         let _ = self.undo_manager.redo(arc_module);
@@ -511,6 +536,10 @@ impl HtrkApp {
                                 self.open_file_dialog();
                                 handled = true;
                             }
+                            egui::Key::I => {
+                                self.file_browser.open(BrowserMode::Samples);
+                                handled = true;
+                            }
                             _ => {}
                         }
                     }
@@ -527,6 +556,8 @@ impl HtrkApp {
                     if let egui::Event::Key { key, pressed: true, .. } = event {
                         if *key == egui::Key::S {
                             self.save_as_dialog();
+                        } else if *key == egui::Key::I {
+                            self.file_browser.open(BrowserMode::Instruments);
                         }
                     }
                 }
@@ -636,6 +667,7 @@ impl HtrkApp {
                             self.advance_cursor_down(1);
                         }
                         egui::Key::Insert => {
+                            self.ensure_module_ownership();
                             if let Some(ref mut module) = self.module {
                                 if let Some(arc_module) = Arc::get_mut(module) {
                                     let pat_idx = *arc_module.order_list.get(self.selected_order).unwrap_or(&0) as usize;
@@ -651,6 +683,7 @@ impl HtrkApp {
                             }
                         }
                         egui::Key::Delete if modifiers.alt => {
+                            self.ensure_module_ownership();
                             if let Some(ref mut module) = self.module {
                                 if let Some(arc_module) = Arc::get_mut(module) {
                                     let pat_idx = *arc_module.order_list.get(self.selected_order).unwrap_or(&0) as usize;
@@ -916,13 +949,15 @@ impl HtrkApp {
             }
         };
         let (min, max) = sel.normalized();
+        let selected_order = self.selected_order;
 
+        self.ensure_module_ownership();
         if let Some(ref mut module) = self.module {
             if let Some(arc_module) = Arc::get_mut(module) {
                 for row in min.row..=max.row {
                     for ch in min.channel..=max.channel {
                         let cell = arc_module.patterns.get_mut(
-                            *arc_module.order_list.get(self.selected_order).unwrap_or(&0) as usize
+                            *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize
                         );
                         if let Some(pattern) = cell {
                             if let Note::On(key) = pattern.data[row][ch].note {
@@ -1044,6 +1079,7 @@ impl HtrkApp {
         };
         match crate::formats::wav::import_wav(&data) {
             Ok(sample) => {
+                self.ensure_module_ownership();
                 if let Some(ref mut module_arc) = self.module {
                     if let Some(m) = Arc::get_mut(module_arc) {
                         m.samples.push(sample);
@@ -1085,6 +1121,23 @@ impl HtrkApp {
 
     fn save_as_dialog(&mut self) {
         self.file_browser.open(BrowserMode::Projects);
+    }
+
+    fn save_config(&mut self) {
+        self.config.last_dirs.clear();
+        for (mode, path) in &self.file_browser.last_dirs {
+            let key = match mode {
+                BrowserMode::Modules => "modules",
+                BrowserMode::Samples => "samples",
+                BrowserMode::Instruments => "instruments",
+                BrowserMode::Projects => "projects",
+            };
+            self.config.last_dirs.insert(key.to_string(), path.to_string_lossy().into_owned());
+        }
+        if let Some(ref path) = self.file_path {
+            self.config.last_file_path = Some(path.clone());
+        }
+        self.config.save();
     }
 
     fn handle_sample_edit(&mut self, event: SampleEditEvent) {
@@ -1266,36 +1319,22 @@ impl HtrkApp {
                     property: SampleProperty::LoopType(crate::sequencer::sample::LoopType::Forward),
                     old_property: SampleProperty::LoopType(sample.loop_type),
                 });
+                self.ensure_module_ownership();
                 if let Some(ref mut module_arc) = self.module {
                     if let Some(m) = Arc::get_mut(module_arc) {
                         let _ = self.undo_manager.execute(start_cmd, m);
                         let _ = self.undo_manager.execute(end_cmd, m);
                         let _ = self.undo_manager.execute(type_cmd, m);
-                    } else {
-                        let mut new_module = (**module_arc).clone();
-                        let _ = start_cmd.execute(&mut new_module);
-                        let _ = end_cmd.execute(&mut new_module);
-                        let _ = type_cmd.execute(&mut new_module);
-                        let new_arc = Arc::new(new_module);
-                        self.module = Some(new_arc.clone());
-                        self.send_command(AudioCommand::LoadModule(new_arc));
                     }
                 }
                 return;
             }
         };
 
+        self.ensure_module_ownership();
         if let Some(ref mut module_arc) = self.module {
             if let Some(m) = Arc::get_mut(module_arc) {
                 let _ = self.undo_manager.execute(cmd, m);
-            } else {
-                // If we can't get mut (playing), we clone.
-                let mut new_module = (**module_arc).clone();
-                if let Ok(_) = cmd.execute(&mut new_module) {
-                    let new_arc = Arc::new(new_module);
-                    self.module = Some(new_arc.clone());
-                    self.send_command(AudioCommand::LoadModule(new_arc));
-                }
             }
         }
     }
@@ -1362,11 +1401,27 @@ impl HtrkApp {
                 property: InstrumentProperty::RandomPanning(p),
                 old_property: InstrumentProperty::RandomPanning(inst.random_panning),
             }),
+            InstrumentEditEvent::FilterCutoffChanged(c) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::FilterCutoff(c),
+                old_property: InstrumentProperty::FilterCutoff(inst.filter_cutoff),
+            }),
+            InstrumentEditEvent::FilterResonanceChanged(r) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::FilterResonance(r),
+                old_property: InstrumentProperty::FilterResonance(inst.filter_resonance),
+            }),
+            InstrumentEditEvent::FilterTypeChanged(t) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::FilterType(t),
+                old_property: InstrumentProperty::FilterType(inst.filter_type),
+            }),
             InstrumentEditEvent::EnvelopePointMoved(env_type, idx, t, v) => {
                 let env = match env_type {
                     EnvelopeType::Volume => &inst.volume_envelope,
                     EnvelopeType::Panning => &inst.panning_envelope,
                     EnvelopeType::Pitch => &inst.pitch_envelope,
+                    EnvelopeType::Filter => &inst.filter_envelope,
                 };
                 let old_pt = env.as_ref().map(|e| e.points[idx]).unwrap_or_default();
                 Box::new(SetEnvelopePointCommand {
@@ -1387,6 +1442,7 @@ impl HtrkApp {
                     EnvelopeType::Volume => &inst.volume_envelope,
                     EnvelopeType::Panning => &inst.panning_envelope,
                     EnvelopeType::Pitch => &inst.pitch_envelope,
+                    EnvelopeType::Filter => &inst.filter_envelope,
                 };
                 let old_pt = env.as_ref().map(|e| e.points[idx]).unwrap_or_default();
                 Box::new(RemoveEnvelopePointCommand {
@@ -1401,6 +1457,7 @@ impl HtrkApp {
                     EnvelopeType::Volume => &inst.volume_envelope,
                     EnvelopeType::Panning => &inst.panning_envelope,
                     EnvelopeType::Pitch => &inst.pitch_envelope,
+                    EnvelopeType::Filter => &inst.filter_envelope,
                 };
                 Box::new(SetEnvelopeSustainCommand {
                     instrument_index: inst_idx,
@@ -1414,6 +1471,7 @@ impl HtrkApp {
                     EnvelopeType::Volume => &inst.volume_envelope,
                     EnvelopeType::Panning => &inst.panning_envelope,
                     EnvelopeType::Pitch => &inst.pitch_envelope,
+                    EnvelopeType::Filter => &inst.filter_envelope,
                 };
                 Box::new(SetEnvelopeLoopCommand {
                     instrument_index: inst_idx,
@@ -1431,6 +1489,7 @@ impl HtrkApp {
                     EnvelopeType::Volume => &inst.volume_envelope,
                     EnvelopeType::Panning => &inst.panning_envelope,
                     EnvelopeType::Pitch => &inst.pitch_envelope,
+                    EnvelopeType::Filter => &inst.filter_envelope,
                 };
                 Box::new(SetEnvelopeFlagsCommand {
                     instrument_index: inst_idx,
@@ -1453,16 +1512,10 @@ impl HtrkApp {
             }),
         };
 
+        self.ensure_module_ownership();
         if let Some(ref mut module_arc) = self.module {
             if let Some(m) = Arc::get_mut(module_arc) {
                 let _ = self.undo_manager.execute(cmd, m);
-            } else {
-                let mut new_module = (**module_arc).clone();
-                if let Ok(_) = cmd.execute(&mut new_module) {
-                    let new_arc = Arc::new(new_module);
-                    self.module = Some(new_arc.clone());
-                    self.send_command(AudioCommand::LoadModule(new_arc));
-                }
             }
         }
     }
@@ -1624,6 +1677,12 @@ impl eframe::App for HtrkApp {
             if menu_resp.open_file {
                 self.open_file_dialog();
             }
+            if menu_resp.import_sample {
+                self.file_browser.open(BrowserMode::Samples);
+            }
+            if menu_resp.import_instrument {
+                self.file_browser.open(BrowserMode::Instruments);
+            }
             if menu_resp.save_file {
                 self.save_current_file();
             }
@@ -1631,6 +1690,7 @@ impl eframe::App for HtrkApp {
                 self.save_as_dialog();
             }
             if menu_resp.undo {
+                self.ensure_module_ownership();
                 if let Some(ref mut module) = self.module {
                     if let Some(arc_module) = Arc::get_mut(module) {
                         let _ = self.undo_manager.undo(arc_module);
@@ -1638,6 +1698,7 @@ impl eframe::App for HtrkApp {
                 }
             }
             if menu_resp.redo {
+                self.ensure_module_ownership();
                 if let Some(ref mut module) = self.module {
                     if let Some(arc_module) = Arc::get_mut(module) {
                         let _ = self.undo_manager.redo(arc_module);
@@ -1745,18 +1806,15 @@ impl eframe::App for HtrkApp {
                         self.cursor.row = 0;
                         self.scroll_row = 0;
                     }
-                    if let Some((order_idx, new_pat)) = pattern_changed {
-                        if let Some(ref mut m) = self.module {
-                            if let Some(arc_module) = Arc::get_mut(m) {
+                    self.ensure_module_ownership();
+                    if let Some(ref mut m) = self.module {
+                        if let Some(arc_module) = Arc::get_mut(m) {
+                            if let Some((order_idx, new_pat)) = pattern_changed {
                                 if order_idx < arc_module.order_list.len() {
                                     arc_module.order_list[order_idx] = new_pat;
                                 }
                             }
-                        }
-                    }
-                    if should_insert || should_delete {
-                        if let Some(ref mut m) = self.module {
-                            if let Some(arc_module) = Arc::get_mut(m) {
+                            if should_insert || should_delete {
                                 if should_insert {
                                     let new_pat = arc_module.patterns.len() as u8;
                                     arc_module.patterns.push(crate::sequencer::Pattern::new(64));
@@ -1977,5 +2035,9 @@ impl eframe::App for HtrkApp {
         }
 
         ctx.request_repaint();
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.save_config();
     }
 }

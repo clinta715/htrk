@@ -8,6 +8,7 @@ use crate::sequencer::{
     Instrument, LoopType, Module, ModuleFlags, ModuleFormat, NewNoteAction, Note, Pattern, Sample,
     SampleFlags, VibratoWaveform, MAX_CHANNELS, MAX_ENVELOPE_POINTS,
 };
+use crate::sequencer::effect::{FormatEffect, ItEffect};
 
 pub struct ItHandler;
 
@@ -187,6 +188,8 @@ fn parse_it_instrument(data: &[u8], offset: usize) -> FormatResult<Instrument> {
     let name = read_string(data, &mut pos, 26)?;
     let _ifc = read_u8(data, &mut pos)?;
     let _ifr = read_u8(data, &mut pos)?;
+    let filter_cutoff_byte = _ifc;
+    let filter_resonance_byte = _ifr;
     let _m_bank = read_u8(data, &mut pos)?;
     let _m_ch = read_u8(data, &mut pos)?;
     let _m_pr = read_u8(data, &mut pos)?;
@@ -210,6 +213,9 @@ fn parse_it_instrument(data: &[u8], offset: usize) -> FormatResult<Instrument> {
     let vol_env = parse_envelope(data, &mut pos)?;
     let pan_env = parse_envelope(data, &mut pos)?;
     let pitch_env = parse_envelope(data, &mut pos)?;
+    let filter_env = parse_envelope(data, &mut pos)?;
+
+    let filter_cutoff_val = if filter_cutoff_byte == 0 { 0xFFFF } else { (filter_cutoff_byte as u16) << 8 };
 
     Ok(Instrument {
         name,
@@ -218,6 +224,7 @@ fn parse_it_instrument(data: &[u8], offset: usize) -> FormatResult<Instrument> {
         volume_envelope: vol_env,
         panning_envelope: pan_env,
         pitch_envelope: pitch_env,
+        filter_envelope: filter_env,
         fade_out,
         nna: match nna_byte {
             1 => NewNoteAction::Continue,
@@ -239,11 +246,12 @@ fn parse_it_instrument(data: &[u8], offset: usize) -> FormatResult<Instrument> {
         pitch_pan_separation,
         pitch_pan_center,
         global_volume,
-        _cutoff: 0,
-        _resonance: 0,
+        filter_cutoff: filter_cutoff_val,
+        filter_resonance: filter_resonance_byte,
+        filter_type: crate::sequencer::effect::FilterType::LowPass,
         random_volume,
         random_panning,
-        _random_cutoff: 0,
+        filter_random_cutoff: 0,
         vib_type: 0,
         vib_sweep: 0,
         vib_depth: 0,
@@ -713,6 +721,7 @@ fn decode_it_effect(fx: u8, p: u8) -> Effect {
                 0xC => Effect::NoteCutAfter { ticks: val },
                 0xD => Effect::NoteDelay { ticks: val },
                 0xE => Effect::PatternDelay { ticks: val },
+                _ if sub > 0 => Effect::FormatSpecific(FormatEffect::It(ItEffect::Raw { effect: 0xE0 | sub, param: val })),
                 _ => Effect::None,
             }
         }
@@ -721,6 +730,32 @@ fn decode_it_effect(fx: u8, p: u8) -> Effect {
         17 => Effect::GlobalVolumeSlide { up: (p >> 4) as i8, down: -((p & 0x0F) as i8) },
         18 => Effect::SetEnvelopePosition { tick: p as u16 },
         19 => Effect::Panbrello { speed: p >> 4, depth: p & 0x0F },
+        20 => {
+            let hi = p >> 4;
+            let lo = p & 0x0F;
+            match hi {
+                0 => Effect::FineVolumeSlideUp { amount: lo },
+                1 => Effect::FineVolumeSlideDown { amount: lo },
+                2 => Effect::FinePortamentoUp { speed: lo << 4 },
+                3 => Effect::FinePortamentoDown { speed: lo << 4 },
+                4 => Effect::FinePortamentoUp { speed: lo },
+                5 => Effect::FinePortamentoDown { speed: lo },
+                6 => Effect::PortamentoUp { speed: lo },
+                7 => Effect::PortamentoDown { speed: lo },
+                _ => Effect::FormatSpecific(FormatEffect::It(ItEffect::Raw { effect: fx, param: p })),
+            }
+        }
+        21 => Effect::Vibrato { speed: p, depth: 0 },
+        22 => Effect::Vibrato { speed: 0, depth: p },
+        23 => {
+            let hi = p >> 4;
+            let lo = p & 0x0F;
+            match hi {
+                1 => Effect::SetSampleOffset { offset: (p as u16) << 8 },
+                _ => Effect::SetPanning { pan: p },
+            }
+        }
+        _ if fx > 0 => Effect::FormatSpecific(FormatEffect::It(ItEffect::Raw { effect: fx, param: p })),
         _ => Effect::None,
     }
 }

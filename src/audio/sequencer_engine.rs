@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::audio::voice::{EnvelopeState, Voice};
-use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect};
+use crate::audio::filter::StateVariableFilter;
+use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect, FilterType};
 use crate::sequencer::instrument::{
     DuplicateCheckAction, DuplicateCheckType, NewNoteAction,
 };
@@ -601,6 +602,24 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     });
                 }
             }
+            if let Some(ref filter_env) = inst.filter_envelope {
+                if filter_env.flags.enabled {
+                    voice.filter_env = Some(EnvelopeState {
+                        envelope: Arc::new(filter_env.clone()),
+                        current_point: 0,
+                        position: -1.0,
+                        released: false,
+                        finished: false,
+                    });
+                }
+            }
+
+            // Set filter from instrument defaults
+            voice.filter_cutoff = inst.filter_cutoff as f32;
+            voice.filter_resonance = inst.filter_resonance as f32 / 128.0;
+            voice.filter_type = inst.filter_type;
+            voice.svf = StateVariableFilter { low: 0.0, band: 0.0, high: 0.0, filter_type: inst.filter_type };
+            voice.envelope_filter_cutoff = 1.0;
 
             // Auto-vibrato init
             if inst.vib_depth > 0 {
@@ -683,6 +702,9 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             if let Some(ref mut env) = voice.pan_env {
                 env.released = true;
             }
+            if let Some(ref mut env) = voice.filter_env {
+                env.released = true;
+            }
         }
     }
 
@@ -738,8 +760,17 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             }
 
             Effect::FormatSpecific(fe) => {
-                if let Some(offset) = fe.sample_offset() {
-                    ch.last_sample_offset = offset;
+                match fe {
+                    FormatEffect::Xm(XmEffect::SetSampleOffset(offset))
+                    | FormatEffect::Mod(ModEffect::SetSampleOffset(offset))
+                    | FormatEffect::S3m(S3mEffect::SetSampleOffset(offset))
+                    | FormatEffect::It(ItEffect::SetSampleOffset(offset)) => {
+                        ch.last_sample_offset = *offset;
+                    }
+                    FormatEffect::Xm(XmEffect::KeyOff { .. }) => {
+                        ch.active_effects.key_off = true;
+                    }
+                    _ => {}
                 }
             }
 
@@ -1265,22 +1296,48 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     self.state.channels[channel].active_effects.vibrato = true;
                 }
             }
-            
-            Effect::FormatSpecific(fe) => {
-                match fe {
-                    FormatEffect::Xm(XmEffect::SetSampleOffset(offset)) => {
-                        ch.last_sample_offset = *offset;
+
+            Effect::SetFilterCutoff { cutoff } => {
+                let cutoff_f = *cutoff as f32;
+                self.state.channels[channel].filter_cutoff = cutoff_f;
+                for voice in &mut self.voices {
+                    if voice.active && voice.channel == Some(channel) {
+                        voice.filter_cutoff = cutoff_f;
                     }
-                    FormatEffect::Mod(ModEffect::SetSampleOffset(offset)) => {
-                        ch.last_sample_offset = *offset;
+                }
+            }
+
+            Effect::SetFilterResonance { resonance } => {
+                let res_f = *resonance as f32 / 128.0;
+                self.state.channels[channel].filter_resonance = res_f;
+                for voice in &mut self.voices {
+                    if voice.active && voice.channel == Some(channel) {
+                        voice.filter_resonance = res_f;
                     }
-                    FormatEffect::S3m(S3mEffect::SetSampleOffset(offset)) => {
-                        ch.last_sample_offset = *offset;
+                }
+            }
+
+            Effect::SetFilterType { filter_type } => {
+                let ft = FilterType::from_u8(*filter_type);
+                self.state.channels[channel].filter_type = ft;
+                for voice in &mut self.voices {
+                    if voice.active && voice.channel == Some(channel) {
+                        voice.filter_type = ft;
+                        voice.svf.filter_type = ft;
                     }
-                    FormatEffect::It(ItEffect::SetSampleOffset(offset)) => {
-                        ch.last_sample_offset = *offset;
+                }
+            }
+
+            Effect::FilterCutoffSlide { amount } => {
+                self.state.channels[channel].last_filter_cutoff_slide = *amount;
+                self.state.channels[channel].active_effects.filter_cutoff_slide = true;
+                let slide = *amount as f32;
+                let new_cutoff = (self.state.channels[channel].filter_cutoff + slide).clamp(0.0, 0xFFFF as f32);
+                self.state.channels[channel].filter_cutoff = new_cutoff;
+                for voice in &mut self.voices {
+                    if voice.active && voice.channel == Some(channel) {
+                        voice.filter_cutoff = new_cutoff;
                     }
-                    _ => {}
                 }
             }
         }
@@ -1449,6 +1506,18 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 }
             }
 
+            // Filter cutoff slide (per-tick)
+            if ae.filter_cutoff_slide {
+                let slide = self.state.channels[ch].last_filter_cutoff_slide as f32;
+                let new_cutoff = (self.state.channels[ch].filter_cutoff + slide).clamp(0.0, 0xFFFF as f32);
+                self.state.channels[ch].filter_cutoff = new_cutoff;
+                for voice in &mut self.voices {
+                    if voice.active && voice.channel == Some(ch) {
+                        voice.filter_cutoff = new_cutoff;
+                    }
+                }
+            }
+
             // Retrig
             if is_xm {
                 let retrig_speed = self.state.channels[ch].retrig_speed;
@@ -1486,6 +1555,18 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     if tick == cutoff {
                         self.cut_channel_voices(ch);
                         self.state.channels[ch].note_cut_tick = None;
+                    }
+                }
+
+                if self.state.channels[ch].active_effects.key_off {
+                    self.state.channels[ch].active_effects.key_off = false;
+                    for voice in &mut self.voices {
+                        if voice.active && voice.channel == Some(ch) {
+                            if let Some(ref mut env) = voice.vol_env { env.released = true; }
+                            if let Some(ref mut env) = voice.pan_env { env.released = true; }
+                            if let Some(ref mut env) = voice.pitch_env { env.released = true; }
+                            if let Some(ref mut env) = voice.filter_env { env.released = true; }
+                        }
                     }
                 }
             } else {
@@ -1898,6 +1979,23 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                             });
                         }
                     }
+                    if let Some(ref filter_env) = inst.filter_envelope {
+                        if filter_env.flags.enabled {
+                            voice.filter_env = Some(EnvelopeState {
+                                envelope: Arc::new(filter_env.clone()),
+                                current_point: 0,
+                                position: -1.0,
+                                released: false,
+                                finished: false,
+                            });
+                        }
+                    }
+
+                    voice.filter_cutoff = inst.filter_cutoff as f32;
+                    voice.filter_resonance = inst.filter_resonance as f32 / 128.0;
+                    voice.filter_type = inst.filter_type;
+                    voice.svf = StateVariableFilter { low: 0.0, band: 0.0, high: 0.0, filter_type: inst.filter_type };
+                    voice.envelope_filter_cutoff = 1.0;
 
                     if inst.vib_depth > 0 {
                         voice.auto_vib_pos = 0;
@@ -2123,6 +2221,25 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     });
                 }
             }
+            if let Some(ref filter_env) = inst.filter_envelope {
+                if filter_env.flags.enabled {
+                    self.voices[voice_idx].filter_env = Some(EnvelopeState {
+                        envelope: Arc::new(filter_env.clone()),
+                        current_point: 0,
+                        position: 0.0,
+                        released: false,
+                        finished: false,
+                    });
+                }
+            }
+
+            // Set filter from instrument defaults
+            self.voices[voice_idx].filter_cutoff = inst.filter_cutoff as f32;
+            self.voices[voice_idx].filter_resonance = inst.filter_resonance as f32 / 128.0;
+            self.voices[voice_idx].filter_type = inst.filter_type;
+            self.voices[voice_idx].svf = StateVariableFilter { low: 0.0, band: 0.0, high: 0.0, filter_type: inst.filter_type };
+            self.voices[voice_idx].envelope_filter_cutoff = 0.0;
+
             self.voices[voice_idx].fade_out_rate = inst.fade_out;
         }
     }
@@ -2157,10 +2274,12 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                         if let Some(ref mut env) = self.voices[*voice_idx].vol_env { env.released = true; }
                         if let Some(ref mut env) = self.voices[*voice_idx].pan_env { env.released = true; }
                         if let Some(ref mut env) = self.voices[*voice_idx].pitch_env { env.released = true; }
+                        if let Some(ref mut env) = self.voices[*voice_idx].filter_env { env.released = true; }
                     }
                     DuplicateCheckAction::NoteFade => {
                         self.voices[*voice_idx].fading = true;
                         if let Some(ref mut env) = self.voices[*voice_idx].vol_env { env.released = true; }
+                        if let Some(ref mut env) = self.voices[*voice_idx].filter_env { env.released = true; }
                     }
                 }
             }
@@ -2190,10 +2309,16 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     if let Some(ref mut env) = self.voices[voice_idx].pitch_env {
                         env.released = true;
                     }
+                    if let Some(ref mut env) = self.voices[voice_idx].filter_env {
+                        env.released = true;
+                    }
                 }
                 NewNoteAction::NoteFade => {
                     self.voices[voice_idx].fading = true;
                     if let Some(ref mut env) = self.voices[voice_idx].vol_env {
+                        env.released = true;
+                    }
+                    if let Some(ref mut env) = self.voices[voice_idx].filter_env {
                         env.released = true;
                     }
                 }
@@ -2212,6 +2337,9 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     env.released = true;
                 }
                 if let Some(ref mut env) = voice.pitch_env {
+                    env.released = true;
+                }
+                if let Some(ref mut env) = voice.filter_env {
                     env.released = true;
                 }
             }
@@ -2248,14 +2376,14 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
         match vol {
             65..=74 => {
-                let amount = (vol - 65) as f32 / 9.0;
-                let new_vol = (ch_state.channel_volume as f32 + amount * 64.0 / 9.0).min(64.0) as u8;
-                ch_state.channel_volume = new_vol;
+                let amount = vol - 65;
+                ch_state.channel_volume = (ch_state.channel_volume as u16 + amount as u16).min(64) as u8;
+                ch_state.row_volume = ch_state.channel_volume;
             }
             75..=84 => {
-                let amount = (vol - 75) as f32;
-                let new_vol = (ch_state.channel_volume as f32 - amount * 64.0 / 9.0).max(0.0) as u8;
-                ch_state.channel_volume = new_vol;
+                let amount = vol - 75;
+                ch_state.channel_volume = ch_state.channel_volume.saturating_sub(amount);
+                ch_state.row_volume = ch_state.channel_volume;
             }
             85..=94 => {
                 ch_state.last_tone_portamento_speed = vol - 85;
@@ -2263,15 +2391,17 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             95..=104 => {
                 ch_state.last_vibrato_speed = vol - 95;
             }
-            105..=124 => {
-                ch_state.row_volume = vol - 118;
+            105..=114 => {
+                ch_state.last_vibrato_depth = vol - 105;
+            }
+            115..=124 => {
+                ch_state.last_portamento_up_speed = vol - 115;
             }
             125..=127 => {
-                ch_state.row_volume = vol;
             }
             128..=192 => {
                 let pan = vol - 128;
-                ch_state.channel_panning = (pan as f32 / 64.0 * 255.0).min(255.0) as u8;
+                ch_state.channel_panning = (pan as u16 * 255 / 64).min(255) as u8;
             }
             193..=207 => {
                 let speed = vol - 193;
@@ -2637,6 +2767,12 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 let pitch_offset = (env_val as f64 - 32.0) / 32.0;
                 let freq_mod = 2.0_f64.powf(pitch_offset / 12.0);
                 voice.sample_delta = voice.current_frequency * freq_mod / self.output_sample_rate;
+            }
+
+            if let Some(ref mut env) = voice.filter_env {
+                advance_single_envelope(env);
+                let env_val = evaluate_envelope(env);
+                voice.envelope_filter_cutoff = env_val / 64.0;
             }
 
             // XM volume/panning calculation (FT2-compatible)
@@ -3351,6 +3487,7 @@ mod tests {
             1.0,
             crate::audio::commands::InterpolationType::Linear,
             &[],
+            48000.0,
         );
 
         let max_sample = left.iter().chain(right.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);

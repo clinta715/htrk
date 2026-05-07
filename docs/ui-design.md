@@ -560,6 +560,8 @@ Upper keyboard row (octave N+1):
 |-----|--------|
 | `Ctrl+N` | New song |
 | `Ctrl+O` | Open file |
+| `Ctrl+I` | Import sample |
+| `Ctrl+Shift+I` | Import instrument |
 | `Ctrl+S` | Save file |
 | `Ctrl+Shift+S` | Save as... |
 | `Ctrl+Q` | Quit |
@@ -615,7 +617,8 @@ Upper keyboard row (octave N+1):
 File
   ├─ New Song                  Ctrl+N
   ├─ Open...                   Ctrl+O
-  ├─ Recent Files ─────────────►
+  ├─ Import Sample...          Ctrl+I
+  ├─ Import Instrument...      Ctrl+Shift+I
   ├─ ───────────────────────
   ├─ Save                      Ctrl+S
   ├─ Save As...                Ctrl+Shift+S

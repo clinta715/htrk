@@ -1,6 +1,7 @@
 use crate::audio::commands::InterpolationType;
 use crate::audio::resampler;
 use crate::audio::voice::Voice;
+use crate::sequencer::effect::FilterType;
 use crate::sequencer::sample::LoopType;
 
 pub fn mix_voices(
@@ -10,6 +11,7 @@ pub fn mix_voices(
     master_volume: f32,
     interpolation: InterpolationType,
     muted_channels: &[bool],
+    sample_rate: f32,
 ) {
     for voice in voices.iter_mut() {
         if !voice.active {
@@ -39,6 +41,11 @@ pub fn mix_voices(
         let left_gain = vol * (1.0 - pan);
         let right_gain = vol * pan;
 
+        let has_filter = voice.filter_cutoff < 65534.0
+            || voice.filter_resonance > 0.001
+            || voice.filter_env.is_some()
+            || voice.svf.filter_type != FilterType::LowPass;
+
         for i in 0..output_left.len() {
             if voice.position < 0.0 || voice.position as usize >= sample_data.len() {
                 voice.active = false;
@@ -55,8 +62,19 @@ pub fn mix_voices(
                 voice.direction,
             );
 
-            output_left[i] += s * left_gain;
-            output_right[i] += s * right_gain;
+            let filtered = if has_filter {
+                let base_cutoff = voice.filter_cutoff;
+                let env_mod = voice.envelope_filter_cutoff;
+                let cutoff_frac = (base_cutoff / 65535.0).clamp(0.0, 1.0);
+                let env_cutoff_frac = cutoff_frac * env_mod;
+                let cutoff_hz = 20.0 * (1000.0_f32).powf(env_cutoff_frac);
+                voice.svf.process(s, cutoff_hz, voice.filter_resonance, sample_rate)
+            } else {
+                s
+            };
+
+            output_left[i] += filtered * left_gain;
+            output_right[i] += filtered * right_gain;
 
             voice.position += voice.sample_delta * voice.direction;
 
@@ -243,6 +261,7 @@ mod tests {
             1.0,
             InterpolationType::Linear,
             &[],
+            48000.0,
         );
 
         let has_audio = left.iter().any(|&s| s.abs() > 0.001);
@@ -264,6 +283,7 @@ mod tests {
             1.0,
             InterpolationType::Linear,
             &[],
+            48000.0,
         );
 
         assert!(left.iter().all(|&s| s == 0.0));
@@ -288,6 +308,7 @@ mod tests {
             1.0,
             InterpolationType::Linear,
             &muted,
+            48000.0,
         );
 
         assert!(left.iter().all(|&s| s == 0.0));
@@ -357,7 +378,7 @@ mod tests {
         let mut left = vec![0.0f32; 10];
         let mut right = vec![0.0f32; 10];
         let mut voices = [voice];
-        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Nearest, &[]);
+        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Nearest, &[], 48000.0);
         let voice = &voices[0];
 
         assert!(voice.active, "Voice should still be active after loop wrap");
@@ -394,7 +415,7 @@ mod tests {
         let mut left = vec![0.0f32; 8];
         let mut right = vec![0.0f32; 8];
         let mut voices = [voice];
-        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Nearest, &[]);
+        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Nearest, &[], 48000.0);
         let voice = &voices[0];
 
         assert!(voice.active);
@@ -434,7 +455,7 @@ mod tests {
         let mut left = vec![0.0f32; 10];
         let mut right = vec![0.0f32; 10];
         let mut voices = [voice];
-        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Nearest, &[]);
+        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Nearest, &[], 48000.0);
         let voice = &voices[0];
 
         assert!(!voice.active, "Non-looping voice should deactivate after reaching end");
@@ -468,7 +489,7 @@ mod tests {
         let mut left = vec![0.0f32; 4];
         let mut right = vec![0.0f32; 4];
         let mut voices = [voice];
-        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Linear, &[]);
+        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Linear, &[], 48000.0);
         let voice = &voices[0];
 
         assert!(voice.active, "Voice should stay active");
@@ -513,7 +534,7 @@ mod tests {
         let mut left = vec![0.0f32; 6];
         let mut right = vec![0.0f32; 6];
 
-        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Nearest, &[]);
+        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Nearest, &[], 48000.0);
         brick_wall_limit(&mut left, &mut right);
 
         for &s in &left {

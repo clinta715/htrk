@@ -174,6 +174,18 @@ impl FileBrowser {
     pub fn close(&mut self) {
         self.show = false;
     }
+
+    pub fn restore_last_dirs(&mut self, config: &crate::app_config::AppConfig) {
+        for mode in [BrowserMode::Modules, BrowserMode::Samples, BrowserMode::Instruments, BrowserMode::Projects] {
+            if let Some(path) = config.get_last_dir(mode) {
+                let path_clone = path.clone();
+                if self.mode == mode && path.is_dir() {
+                    self.current_path = path;
+                }
+                self.last_dirs.insert(mode, path_clone);
+            }
+        }
+    }
     
     pub fn refresh(&mut self) -> std::io::Result<()> {
         self.entries.clear();

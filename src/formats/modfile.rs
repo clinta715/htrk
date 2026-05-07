@@ -132,7 +132,8 @@ fn convert_effect(effect_code: u8, effect_param: u8) -> Effect {
                 0xC => Effect::NoteCutAfter { ticks: val },
                 0xD => Effect::NoteDelay { ticks: val },
                 0xE => Effect::PatternDelay { ticks: val },
-                0xF => Effect::None,
+                0xF => Effect::FormatSpecific(FormatEffect::Mod(ModEffect::Raw { effect: 0xE0 | sub, param: val })),
+                _ if sub > 0 => Effect::FormatSpecific(FormatEffect::Mod(ModEffect::Raw { effect: 0xE0 | sub, param: val })),
                 _ => Effect::None,
             }
         }
@@ -149,6 +150,7 @@ fn convert_effect(effect_code: u8, effect_param: u8) -> Effect {
                 }
             }
         }
+        // effect_code is masked to 4 bits (0-15) by callers, but add default for safety
         _ => Effect::None,
     }
 }

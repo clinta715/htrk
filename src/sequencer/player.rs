@@ -1,6 +1,7 @@
 use crate::sequencer::effect::Effect;
 use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
+use crate::sequencer::effect::FilterType;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ActiveEffects {
@@ -13,6 +14,8 @@ pub struct ActiveEffects {
     pub arpeggio: bool,
     pub panbrello: bool,
     pub tremor: bool,
+    pub key_off: bool,
+    pub filter_cutoff_slide: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -47,6 +50,11 @@ pub struct ChannelState {
     pub tremor_active: bool,
     pub glissando: bool,
     pub fine_tune_offset: i8,
+
+    pub filter_cutoff: f32,
+    pub filter_resonance: f32,
+    pub filter_type: FilterType,
+    pub last_filter_cutoff_slide: i16,
 
     pub portamento_target_period: Option<f64>,
 
@@ -113,6 +121,10 @@ impl Default for ChannelState {
             tremor_active: true,
             glissando: false,
             fine_tune_offset: 0,
+            filter_cutoff: 0xFFFF as f32,
+            filter_resonance: 0.0,
+            filter_type: FilterType::LowPass,
+            last_filter_cutoff_slide: 0,
             portamento_target_period: None,
             muted: false,
             solo: false,

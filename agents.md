@@ -20,3 +20,17 @@ To prevent regressions in the sequencer and audio engine, follow these rules whe
 ## 4. Testing Requirements
 - **Mandate**: No fix is complete without an empirical reproduction test.
 - **Rule**: When fixing a sequencer bug, add a unit test to `src/audio/sequencer_engine.rs` that simulates the specific pattern/row transition that failed. Use `advance_row()` and `advance()` in tests to verify state transitions.
+
+## 5. Module Mutation Pattern
+- **Mandate**: Never use `Arc::get_mut()` directly on `self.module` without first ensuring unique ownership.
+- **Rule**: Always call `self.ensure_module_ownership()` before any `Arc::get_mut()` call on the module. This method checks `Arc::strong_count()` and, if > 1, clones the module, creates a new Arc, and sends `LoadModule` to the audio engine.
+- **Pattern**:
+  ```rust
+  self.ensure_module_ownership();
+  if let Some(ref mut module) = self.module {
+      if let Some(arc_module) = Arc::get_mut(module) {
+          // mutate arc_module safely
+      }
+  }
+  ```
+- **Why**: The audio engine always holds a clone of `Arc<Module>`, so `Arc::get_mut()` returns `None` unless ownership is ensured first.

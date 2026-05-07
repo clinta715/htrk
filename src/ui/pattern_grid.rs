@@ -1,6 +1,6 @@
 use eframe::egui::{self, Pos2, Rect, Stroke};
 
-use crate::sequencer::effect::Effect;
+use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect};
 use crate::sequencer::note::{Note, TONE_NAMES};
 use crate::sequencer::pattern::Cell;
 
@@ -459,6 +459,31 @@ fn format_effect(effect: &Effect) -> (String, String) {
         Effect::VolSlideDown { amount } => (".".to_string(), format!("D{:X}", amount)),
         Effect::VolPortamento { speed } => (".".to_string(), format!("~{:02X}", speed)),
         Effect::VolVibrato { speed } => (".".to_string(), format!("V{:X}", speed)),
-        Effect::FormatSpecific(_) => ("?".to_string(), "??".to_string()),
+        Effect::SetFilterCutoff { cutoff } => ("Z".to_string(), format!("{:02X}", cutoff >> 8)),
+        Effect::SetFilterResonance { resonance } => ("R".to_string(), format!("{:02X}", resonance)),
+        Effect::SetFilterType { filter_type } => ("X".to_string(), format!("{:02X}", filter_type)),
+        Effect::FilterCutoffSlide { amount } => ("Y".to_string(), format!("{:+03}", amount)),
+        Effect::FormatSpecific(fe) => {
+            match fe {
+                FormatEffect::Xm(xe) => match xe {
+                    XmEffect::SetSampleOffset(o) => ("9".to_string(), format!("{:02X}", o >> 8)),
+                    XmEffect::KeyOff { .. } => ("K".to_string(), "00".to_string()),
+                    XmEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
+                    _ => ("x".to_string(), "??".to_string()),
+                },
+                FormatEffect::It(ie) => match ie {
+                    ItEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
+                    _ => ("i".to_string(), "??".to_string()),
+                },
+                FormatEffect::Mod(me) => match me {
+                    ModEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
+                    _ => ("m".to_string(), "??".to_string()),
+                },
+                FormatEffect::S3m(se) => match se {
+                    S3mEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
+                    _ => ("s".to_string(), "??".to_string()),
+                },
+            }
+        }
     }
 }

@@ -41,6 +41,15 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             shortcut_row(ui, "Alt+Delete", "Delete row");
                             ui.add_space(8.0);
 
+                            section_header(ui, "FILE");
+                            shortcut_row(ui, "Ctrl+N", "New song");
+                            shortcut_row(ui, "Ctrl+O", "Open module...");
+                            shortcut_row(ui, "Ctrl+I", "Import sample...");
+                            shortcut_row(ui, "Ctrl+Shift+I", "Import instrument...");
+                            shortcut_row(ui, "Ctrl+S", "Save");
+                            shortcut_row(ui, "Ctrl+Shift+S", "Save As...");
+                            ui.add_space(8.0);
+
                             section_header(ui, "EDITING");
                             shortcut_row(ui, "Ctrl+Z / Y", "Undo / Redo");
                             shortcut_row(ui, "Ctrl+A", "Select all");

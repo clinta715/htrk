@@ -37,6 +37,11 @@ pub fn draw_envelope_editor(
             egui::Color32::from_rgba_premultiplied(180, 100, 30, 40),
             "Pitch",
         ),
+        EnvelopeType::Filter => (
+            egui::Color32::from_rgb(200, 100, 255),
+            egui::Color32::from_rgba_premultiplied(120, 50, 160, 40),
+            "Filter",
+        ),
     };
 
     let desired_size = ui.available_size();

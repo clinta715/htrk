@@ -66,10 +66,12 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
                 0xB => Effect::PatternLoop { count: val },
                 0xC => Effect::NoteCutAfter { ticks: val },
                 0xD => Effect::NoteDelay { ticks: val },
+                _ if sub > 0 => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::Raw { effect: 0x190 | (sub as u16), param: val })),
                 _ => Effect::None,
             }
         }
         20 => Effect::SetTempo { bpm: param },
+        _ if effect_code > 0 => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::Raw { effect: effect_code as u16, param })),
         _ => Effect::None,
     }
 }
@@ -106,6 +108,15 @@ fn effect_to_s3m(effect: &Effect) -> (u8, u8) {
         Effect::SetPanning { pan } => (19, 0x80 | (pan >> 4)),
         Effect::SetFineTune { tune } => (19, 0x20 | (tune & 0x0F)),
         Effect::PatternLoop { count } => (19, 0x60 | (count & 0x0F)),
+        Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::Raw { effect, param })) => {
+            if *effect >= 0x190 {
+                (19, (((*effect as u8) & 0x0F) << 4) | (param & 0x0F))
+            } else {
+                (*effect as u8, *param)
+            }
+        }
+        Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::SetSampleOffset(offset))) => (15, (offset >> 8) as u8),
+        Effect::FormatSpecific(_) => (0, 0),
         _ => (0, 0),
     }
 }

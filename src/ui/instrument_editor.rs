@@ -15,14 +15,17 @@ pub enum InstrumentEditEvent {
     PitchPanCenterChanged(u8),
     RandomVolumeChanged(u8),
     RandomPanningChanged(u8),
+    FilterCutoffChanged(u16),
+    FilterResonanceChanged(u8),
+    FilterTypeChanged(crate::sequencer::effect::FilterType),
     EnvelopePointMoved(EnvelopeType, usize, u16, u8),
     EnvelopePointAdded(EnvelopeType, u16, u8),
     EnvelopePointRemoved(EnvelopeType, usize),
     EnvelopeSustainChanged(EnvelopeType, Option<usize>),
     EnvelopeLoopChanged(EnvelopeType, bool, Option<usize>, Option<usize>),
     EnvelopeFlagsChanged(EnvelopeType, EnvelopeFlags),
-    NoteMapChanged(u8, u8), // note, new_dest
-    SampleMapChanged(u8, u8), // note, sample_idx
+    NoteMapChanged(u8, u8),
+    SampleMapChanged(u8, u8),
 }
 
 pub fn draw_instrument_editor(
@@ -93,12 +96,17 @@ pub fn draw_instrument_editor(
                             env_type = EnvelopeType::Pitch;
                             ui.data_mut(|d| d.insert_temp(env_type_id, env_type));
                         }
+                        if ui.selectable_label(env_type == EnvelopeType::Filter, "Filter").clicked() {
+                            env_type = EnvelopeType::Filter;
+                            ui.data_mut(|d| d.insert_temp(env_type_id, env_type));
+                        }
                     });
 
                     let envelope = match env_type {
                         EnvelopeType::Volume => &inst.volume_envelope,
                         EnvelopeType::Panning => &inst.panning_envelope,
                         EnvelopeType::Pitch => &inst.pitch_envelope,
+                        EnvelopeType::Filter => &inst.filter_envelope,
                     };
 
                     if let Some(ref env) = envelope {
@@ -299,6 +307,35 @@ pub fn draw_instrument_editor(
                                 let mut rpan = inst.random_panning;
                                 if ui.add(egui::Slider::new(&mut rpan, 0..=100)).changed() {
                                     event = Some(InstrumentEditEvent::RandomPanningChanged(rpan));
+                                }
+                                ui.end_row();
+
+                                ui.label("Filter Cutoff:");
+                                let mut cutoff = inst.filter_cutoff;
+                                if ui.add(egui::DragValue::new(&mut cutoff).range(0..=0xFFFF)).changed() {
+                                    event = Some(InstrumentEditEvent::FilterCutoffChanged(cutoff));
+                                }
+                                ui.end_row();
+
+                                ui.label("Filter Res:");
+                                let mut res = inst.filter_resonance;
+                                if ui.add(egui::Slider::new(&mut res, 0..=255)).changed() {
+                                    event = Some(InstrumentEditEvent::FilterResonanceChanged(res));
+                                }
+                                ui.end_row();
+
+                                ui.label("Filter Type:");
+                                let ft = inst.filter_type;
+                                let mut ft_u8 = ft.to_u8();
+                                ui.horizontal(|ui| {
+                                    if ui.selectable_label(ft_u8 == 0, "LP").clicked() { ft_u8 = 0; }
+                                    if ui.selectable_label(ft_u8 == 1, "HP").clicked() { ft_u8 = 1; }
+                                    if ui.selectable_label(ft_u8 == 2, "BP").clicked() { ft_u8 = 2; }
+                                    if ui.selectable_label(ft_u8 == 3, "Notch").clicked() { ft_u8 = 3; }
+                                });
+                                let new_ft = crate::sequencer::effect::FilterType::from_u8(ft_u8);
+                                if new_ft != ft {
+                                    event = Some(InstrumentEditEvent::FilterTypeChanged(new_ft));
                                 }
                                 ui.end_row();
                             });

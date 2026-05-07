@@ -1,5 +1,24 @@
 # Bug Fixes
 
+## Arc::get_mut Silent Failure on Module Mutation
+**Date:** 2026-05-06
+
+### Symptom
+Operations like importing a WAV sample, undo/redo, inserting rows, and order list edits would silently fail whenever the audio engine thread held a reference to the `Arc<Module>`. `Arc::get_mut()` returns `None` when `Arc::strong_count > 1`, and all call sites treated this as a no-op.
+
+### Root Cause
+`Arc::get_mut()` only succeeds when there is a single owner. The audio engine always holds a clone of `Arc<Module>` (sent via `AudioCommand::LoadModule`), so `strong_count` is always >= 2 during playback — and often even when stopped if the audio thread hasn't released its copy yet.
+
+### Fix
+- Added `ensure_module_ownership()` method to `HtrkApp` that checks `Arc::strong_count()`.
+- If count > 1, it clones the module data, creates a new `Arc`, and sends `AudioCommand::LoadModule` to the audio engine with the new copy.
+- All former `Arc::get_mut()` call sites (15 locations) replaced with `ensure_module_ownership()` followed by `Arc::get_mut()`.
+- This guarantees mutations always succeed.
+
+### Verification
+- All 174 existing unit tests pass.
+- Manual verification: WAV import works while playing.
+
 ## cry4bass.mod - Pattern 8, Row 30: Looping Sample Fix
 **Date:** 2026-05-04
 
