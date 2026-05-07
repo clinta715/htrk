@@ -313,17 +313,20 @@ impl HtrkApp {
     }
 
     fn ensure_module_ownership(&mut self) {
-        let needs_clone = match &self.module {
-            Some(arc) => Arc::strong_count(arc) > 1,
-            None => false,
-        };
-        if needs_clone {
-            if let Some(arc) = self.module.take() {
-                let cloned = (*arc).clone();
-                let new_arc = Arc::new(cloned);
-                self.send_command(AudioCommand::LoadModule(new_arc.clone()));
-                self.module = Some(new_arc);
+        let new_module = match &self.module {
+            Some(arc) if Arc::strong_count(arc) > 1 => {
+                Some(Arc::new((**arc).clone()))
             }
+            _ => None,
+        };
+        if let Some(new_arc) = new_module {
+            self.module = Some(new_arc);
+        }
+    }
+
+    fn sync_module_to_audio(&mut self) {
+        if let Some(ref module) = self.module {
+            self.send_command(AudioCommand::LoadModule(module.clone()));
         }
     }
 
@@ -456,6 +459,7 @@ impl HtrkApp {
                 let _ = self.undo_manager.execute(cmd, arc_module);
             }
         }
+        self.sync_module_to_audio();
     }
 
     fn advance_cursor_down(&mut self, step: usize) {
@@ -500,6 +504,7 @@ impl HtrkApp {
                                         let _ = self.undo_manager.undo(arc_module);
                                     }
                                 }
+                                self.sync_module_to_audio();
                                 handled = true;
                             }
                             egui::Key::Y => {
@@ -509,6 +514,7 @@ impl HtrkApp {
                                         let _ = self.undo_manager.redo(arc_module);
                                     }
                                 }
+                                self.sync_module_to_audio();
                                 handled = true;
                             }
                             egui::Key::C => {
@@ -681,6 +687,7 @@ impl HtrkApp {
                                     }
                                 }
                             }
+                            self.sync_module_to_audio();
                         }
                         egui::Key::Delete if modifiers.alt => {
                             self.ensure_module_ownership();
@@ -699,6 +706,7 @@ impl HtrkApp {
                                     }
                                 }
                             }
+                            self.sync_module_to_audio();
                         }
                         egui::Key::Space => {
                             let playing = self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
@@ -969,6 +977,7 @@ impl HtrkApp {
                 }
             }
         }
+        self.sync_module_to_audio();
     }
 
     fn skip_to_prev_pattern(&mut self) {
@@ -1085,6 +1094,7 @@ impl HtrkApp {
                         m.samples.push(sample);
                     }
                 }
+                self.sync_module_to_audio();
             }
             Err(e) => {
                 eprintln!("Failed to import WAV: {}", e);
@@ -1327,6 +1337,7 @@ impl HtrkApp {
                         let _ = self.undo_manager.execute(type_cmd, m);
                     }
                 }
+                self.sync_module_to_audio();
                 return;
             }
         };
@@ -1337,6 +1348,7 @@ impl HtrkApp {
                 let _ = self.undo_manager.execute(cmd, m);
             }
         }
+        self.sync_module_to_audio();
     }
 
     fn handle_instrument_edit(&mut self, event: InstrumentEditEvent) {
@@ -1518,6 +1530,7 @@ impl HtrkApp {
                 let _ = self.undo_manager.execute(cmd, m);
             }
         }
+        self.sync_module_to_audio();
     }
 }
 
@@ -1696,6 +1709,7 @@ impl eframe::App for HtrkApp {
                         let _ = self.undo_manager.undo(arc_module);
                     }
                 }
+                self.sync_module_to_audio();
             }
             if menu_resp.redo {
                 self.ensure_module_ownership();
@@ -1704,6 +1718,7 @@ impl eframe::App for HtrkApp {
                         let _ = self.undo_manager.redo(arc_module);
                     }
                 }
+                self.sync_module_to_audio();
             }
             if menu_resp.cut {
                 self.copy_selection();
@@ -1831,6 +1846,7 @@ impl eframe::App for HtrkApp {
                             }
                         }
                     }
+                    self.sync_module_to_audio();
                 } else {
                     ui.label("No module loaded");
                 }

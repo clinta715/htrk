@@ -22,8 +22,8 @@ To prevent regressions in the sequencer and audio engine, follow these rules whe
 - **Rule**: When fixing a sequencer bug, add a unit test to `src/audio/sequencer_engine.rs` that simulates the specific pattern/row transition that failed. Use `advance_row()` and `advance()` in tests to verify state transitions.
 
 ## 5. Module Mutation Pattern
-- **Mandate**: Never use `Arc::get_mut()` directly on `self.module` without first ensuring unique ownership.
-- **Rule**: Always call `self.ensure_module_ownership()` before any `Arc::get_mut()` call on the module. This method checks `Arc::strong_count()` and, if > 1, clones the module, creates a new Arc, and sends `LoadModule` to the audio engine.
+- **Mandate**: Never use `Arc::get_mut()` directly on `self.module` without first ensuring unique ownership, and always sync to the audio engine after mutation.
+- **Rule**: Always call `self.ensure_module_ownership()` before any `Arc::get_mut()` call on the module. Always call `self.sync_module_to_audio()` after mutation. `ensure_module_ownership()` only clones the module if needed (does NOT send to audio engine). `sync_module_to_audio()` sends `LoadModule` to the audio engine with the current (mutated) Arc.
 - **Pattern**:
   ```rust
   self.ensure_module_ownership();
@@ -32,5 +32,6 @@ To prevent regressions in the sequencer and audio engine, follow these rules whe
           // mutate arc_module safely
       }
   }
+  self.sync_module_to_audio();
   ```
-- **Why**: The audio engine always holds a clone of `Arc<Module>`, so `Arc::get_mut()` returns `None` unless ownership is ensured first.
+- **Why**: The audio engine always holds a clone of `Arc<Module>`, so `Arc::get_mut()` returns `None` unless ownership is ensured first. After mutation, the audio engine must be updated with `sync_module_to_audio()` so it picks up the changes.
