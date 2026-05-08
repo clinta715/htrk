@@ -13,6 +13,7 @@ pub fn draw_waveform(
     loop_end: usize,
     has_loop: bool,
     selection: &mut Option<(usize, usize)>,
+    sample_index: usize,
 ) -> Option<WaveformEvent> {
     let mut event = None;
     let desired_size = ui.available_size();
@@ -89,8 +90,8 @@ pub fn draw_waveform(
         let start_x = rect.left() + (loop_start as f32 / len as f32) * width;
         let end_x = rect.left() + (loop_end as f32 / len as f32) * width;
 
-        let marker_id = ui.make_persistent_id("waveform_marker_drag");
-        let sel_id = ui.make_persistent_id("waveform_sel_drag");
+        let marker_id = ui.make_persistent_id(format!("waveform_marker_drag_{}", sample_index));
+        let sel_id = ui.make_persistent_id(format!("waveform_sel_drag_{}", sample_index));
         let mut dragging_marker = ui.data_mut(|d| d.get_temp::<Option<usize>>(marker_id).flatten());
         let mut selecting = ui.data_mut(|d| d.get_temp::<bool>(sel_id)).unwrap_or(false);
 
@@ -152,7 +153,7 @@ pub fn draw_waveform(
         painter.circle_filled(egui::pos2(start_x, rect.top() + 10.0), 5.0, egui::Color32::YELLOW);
         painter.circle_filled(egui::pos2(end_x, rect.bottom() - 10.0), 5.0, egui::Color32::YELLOW);
     } else {
-        let sel_id = ui.make_persistent_id("waveform_sel_drag");
+        let sel_id = ui.make_persistent_id(format!("waveform_sel_drag_{}", sample_index));
         let mut selecting = ui.data_mut(|d| d.get_temp::<bool>(sel_id)).unwrap_or(false);
 
         if response.drag_started() {

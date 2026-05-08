@@ -26,6 +26,11 @@ pub enum InstrumentEditEvent {
     EnvelopeFlagsChanged(EnvelopeType, EnvelopeFlags),
     NoteMapChanged(u8, u8),
     SampleMapChanged(u8, u8),
+    SampleMapFillAll(u8),
+    VibTypeChanged(u8),
+    VibSweepChanged(u8),
+    VibDepthChanged(u8),
+    VibRateChanged(u8),
 }
 
 pub fn draw_instrument_editor(
@@ -39,6 +44,8 @@ pub fn draw_instrument_editor(
     // We need a way to track the "current sample to paint" in the UI
     let paint_sample_id = ui.make_persistent_id("sample_map_paint_idx");
     let mut paint_sample_idx = ui.data(|d| d.get_temp::<u8>(paint_sample_id).unwrap_or(0));
+    let browser_open_id = ui.make_persistent_id("sample_browser_open");
+    let mut browser_open = ui.data(|d| d.get_temp::<bool>(browser_open_id).unwrap_or(false));
 
     // Track which envelope is being edited
     let env_type_id = ui.make_persistent_id("instrument_env_type");
@@ -48,8 +55,11 @@ pub fn draw_instrument_editor(
         // Instrument List
         ui.vertical(|ui| {
             ui.set_width(150.0);
+            ui.set_height(ui.available_height());
             ui.heading("Instruments");
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
                 for i in 1..module.instruments.len().max(100) {
                     if let Some(inst) = module.instruments.get(i) {
                         let name = &inst.name;
@@ -109,6 +119,8 @@ pub fn draw_instrument_editor(
                         EnvelopeType::Filter => &inst.filter_envelope,
                     };
 
+                    let env_hovered_id = ui.make_persistent_id("env_hovered");
+
                     if let Some(ref env) = envelope {
                         // Envelope controls
                         ui.horizontal(|ui| {
@@ -130,7 +142,7 @@ pub fn draw_instrument_editor(
                                 _ => "Sustain: --".to_string(),
                             };
                             ui.label(sustain_str);
-                            let hv = ui.data(|d| d.get_temp::<Option<usize>>(ui.make_persistent_id("env_hovered")).flatten());
+                            let hv = ui.data(|d| d.get_temp::<Option<usize>>(env_hovered_id).flatten());
                             if ui.button("Set Sus").clicked() {
                                 if let Some(idx) = hv {
                                     if idx < env.points.len() {
@@ -183,7 +195,7 @@ pub fn draw_instrument_editor(
 
                         // Envelope graph
                         let env_resp = crate::ui::envelope_editor::draw_envelope_editor(ui, env, env_type);
-                        ui.data_mut(|d| d.insert_temp(ui.make_persistent_id("env_hovered"), env_resp.hovered_point));
+                        ui.data_mut(|d| d.insert_temp(env_hovered_id, env_resp.hovered_point));
                         if let Some(env_event) = env_resp.event {
                             match env_event {
                                 crate::ui::envelope_editor::EnvelopeEditEvent::PointMoved(idx, t, v) => {
@@ -210,7 +222,7 @@ pub fn draw_instrument_editor(
                         ui.group(|ui| {
                             ui.set_width(300.0);
                             ui.heading("NNAs & Duplicate Check");
-                            egui::Grid::new("instrument_nna").show(ui, |ui| {
+                            egui::Grid::new(format!("instrument_nna_{}", *selected_instrument)).show(ui, |ui| {
                                 ui.label("NNA:");
                                 ui.horizontal(|ui| {
                                     use crate::sequencer::instrument::NewNoteAction;
@@ -267,7 +279,7 @@ pub fn draw_instrument_editor(
                         ui.group(|ui| {
                             ui.set_width(300.0);
                             ui.heading("Volumes & Panning");
-                            egui::Grid::new("instrument_vols").show(ui, |ui| {
+                            egui::Grid::new(format!("instrument_vols_{}", *selected_instrument)).show(ui, |ui| {
                                 ui.label("Global Vol:");
                                 let mut gvol = inst.global_volume;
                                 if ui.add(egui::Slider::new(&mut gvol, 0..=128)).changed() {
@@ -342,25 +354,84 @@ pub fn draw_instrument_editor(
                         });
                     });
 
+                    ui.horizontal(|ui| {
+                        ui.group(|ui| {
+                            ui.set_width(300.0);
+                            ui.heading("Auto-Vibrato");
+                            egui::Grid::new(format!("instrument_vib_{}", *selected_instrument)).show(ui, |ui| {
+                                ui.label("Type:");
+                                ui.horizontal(|ui| {
+                                    if ui.selectable_label(inst.vib_type == 0, "Sine").clicked() {
+                                        event = Some(InstrumentEditEvent::VibTypeChanged(0));
+                                    }
+                                    if ui.selectable_label(inst.vib_type == 1, "Ramp").clicked() {
+                                        event = Some(InstrumentEditEvent::VibTypeChanged(1));
+                                    }
+                                    if ui.selectable_label(inst.vib_type == 2, "Square").clicked() {
+                                        event = Some(InstrumentEditEvent::VibTypeChanged(2));
+                                    }
+                                    if ui.selectable_label(inst.vib_type == 3, "Random").clicked() {
+                                        event = Some(InstrumentEditEvent::VibTypeChanged(3));
+                                    }
+                                });
+                                ui.end_row();
+
+                                ui.label("Sweep:");
+                                let mut sweep = inst.vib_sweep;
+                                if ui.add(egui::DragValue::new(&mut sweep).range(0..=255).speed(1)).changed() {
+                                    event = Some(InstrumentEditEvent::VibSweepChanged(sweep));
+                                }
+                                ui.end_row();
+
+                                ui.label("Depth:");
+                                let mut depth = inst.vib_depth;
+                                if ui.add(egui::DragValue::new(&mut depth).range(0..=255).speed(1)).changed() {
+                                    event = Some(InstrumentEditEvent::VibDepthChanged(depth));
+                                }
+                                ui.end_row();
+
+                                ui.label("Rate:");
+                                let mut rate = inst.vib_rate;
+                                if ui.add(egui::DragValue::new(&mut rate).range(0..=255).speed(1)).changed() {
+                                    event = Some(InstrumentEditEvent::VibRateChanged(rate));
+                                }
+                                ui.end_row();
+                            });
+                        });
+                    });
+
                     // Sample Map
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
                             ui.label("Paint Sample:");
-                            if ui.add(egui::DragValue::new(&mut paint_sample_idx).range(0..=module.samples.len() as u8)).changed() {
-                                ui.data_mut(|d| d.insert_temp(paint_sample_id, paint_sample_idx));
+                            if ui.button("Browse...").clicked() {
+                                browser_open = true;
                             }
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.button("Fill All").clicked() {
+                                    event = Some(InstrumentEditEvent::SampleMapFillAll(paint_sample_idx));
+                                }
+                            });
                         });
+
+                        crate::ui::sample_palette::draw_inline_sample_palette(ui, module, &mut paint_sample_idx);
 
                         if let Some(map_event) = crate::ui::sample_map::draw_sample_map(
                             ui,
                             &inst.sample_map,
-                            paint_sample_idx
+                            paint_sample_idx,
+                            module,
                         ) {
                             match map_event {
                                 crate::ui::sample_map::SampleMapEvent::NoteClicked(note) |
                                 crate::ui::sample_map::SampleMapEvent::NoteDragged(note) => {
                                     if inst.sample_map[note as usize].saturating_sub(1) != paint_sample_idx {
                                         event = Some(InstrumentEditEvent::SampleMapChanged(note, paint_sample_idx));
+                                    }
+                                }
+                                crate::ui::sample_map::SampleMapEvent::NoteCleared(note) => {
+                                    if inst.sample_map[note as usize] != 0 {
+                                        event = Some(InstrumentEditEvent::SampleMapChanged(note, 0));
                                     }
                                 }
                             }
@@ -382,6 +453,22 @@ pub fn draw_instrument_editor(
                 ui.label("No instrument selected. Click on an instrument in the list to the left.");
             });
         }
+    });
+
+    if browser_open {
+        if let Some(idx) = crate::ui::sample_palette::draw_sample_browser_popup(
+            ui.ctx(),
+            module,
+            paint_sample_idx,
+            &mut browser_open,
+        ) {
+            paint_sample_idx = idx;
+        }
+    }
+
+    ui.data_mut(|d| {
+        d.insert_temp(paint_sample_id, paint_sample_idx);
+        d.insert_temp(browser_open_id, browser_open);
     });
 
     event
