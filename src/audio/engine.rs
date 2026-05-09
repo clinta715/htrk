@@ -5,7 +5,9 @@ use ringbuf::{traits::*, HeapRb, HeapCons, HeapProd};
 use crate::audio::commands::{AudioCommand, InterpolationType};
 use crate::audio::mixer;
 use crate::audio::playback_state::AtomicPlaybackState;
+use crate::audio::playback_state::MAX_CHANNELS;
 use crate::audio::sequencer_engine::SequencerEngine;
+use crate::debug_log;
 use crate::sequencer::module::Module;
 use crate::sequencer::module::COMMAND_BUFFER_SIZE;
 
@@ -23,6 +25,8 @@ pub struct AudioEngine {
     output_channels: u16,
     mix_left: Vec<f32>,
     mix_right: Vec<f32>,
+    ch_mix_left: [Vec<f32>; MAX_CHANNELS],
+    ch_mix_right: [Vec<f32>; MAX_CHANNELS],
 }
 
 pub struct CommandSender {
@@ -54,6 +58,8 @@ pub fn create_engine_and_sender(
         output_channels: channels.max(1),
         mix_left: vec![0.0; BUFFER_SIZE],
         mix_right: vec![0.0; BUFFER_SIZE],
+        ch_mix_left: std::array::from_fn(|_| vec![0.0; BUFFER_SIZE]),
+        ch_mix_right: std::array::from_fn(|_| vec![0.0; BUFFER_SIZE]),
     };
 
     let sender = CommandSender { tx };
@@ -71,15 +77,20 @@ impl AudioEngine {
 
         {
             static CB_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let count = CB_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if count < 5 {
-                eprintln!("[AUDIO] callback #{}: frames={} playing={}", count, frame_count, self.sequencer.state.playing);
+            let _count = CB_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            #[cfg(feature = "audio_debug")]
+            if _count < 3 {
+                debug_log!("[CALLBACK] #{} playing={}", _count, self.sequencer.state.playing);
             }
         }
 
         if self.mix_left.len() != frame_count {
             self.mix_left.resize(frame_count, 0.0);
             self.mix_right.resize(frame_count, 0.0);
+            for ch in 0..MAX_CHANNELS {
+                self.ch_mix_left[ch].resize(frame_count, 0.0);
+                self.ch_mix_right[ch].resize(frame_count, 0.0);
+            }
         }
 
         for s in self.mix_left.iter_mut() {
@@ -88,21 +99,41 @@ impl AudioEngine {
         for s in self.mix_right.iter_mut() {
             *s = 0.0;
         }
+        for ch in 0..MAX_CHANNELS {
+            for s in self.ch_mix_left[ch].iter_mut() {
+                *s = 0.0;
+            }
+            for s in self.ch_mix_right[ch].iter_mut() {
+                *s = 0.0;
+            }
+        }
 
         if self.sequencer.state.playing {
             let mut samples_done = 0;
-            while samples_done < frame_count {
-                let samples_remaining = frame_count - samples_done;
-                let samples_per_tick = self.sequencer.state.samples_per_tick;
-                let samples_until_tick = (samples_per_tick - self.sequencer.state.sample_counter).max(0.0).ceil() as usize;
+            while samples_done < frame_count && self.sequencer.state.playing {
+                let samples_per_tick = self.sequencer.state.samples_per_tick.max(1.0);
 
-                if samples_until_tick == 0 {
+                // If sample_counter reached or exceeded samples_per_tick, it's time for a new tick
+                if self.sequencer.state.sample_counter >= samples_per_tick {
                     self.sequencer.process_tick();
-                    self.sequencer.state.sample_counter = 0.0;
-                    continue;
+                    self.sequencer.state.sample_counter -= samples_per_tick;
+
+                    if !self.sequencer.state.playing {
+                        break;
+                    }
                 }
 
-                let chunk = samples_until_tick.min(samples_remaining);
+                let samples_remaining_in_tick = samples_per_tick - self.sequencer.state.sample_counter;
+                let samples_remaining_in_buffer = (frame_count - samples_done) as f64;
+
+                let chunk_f = samples_remaining_in_tick.min(samples_remaining_in_buffer);
+                let chunk = chunk_f.ceil() as usize;
+                let chunk = chunk.min(frame_count - samples_done);
+
+                if chunk == 0 {
+                    // Safety break to prevent infinite loops if chunk is somehow 0
+                    break;
+                }
 
                 let muted_channels: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.muted).collect();
                 let solo_channels: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.solo).collect();
@@ -115,28 +146,32 @@ impl AudioEngine {
                     muted_channels
                 };
 
-                mixer::mix_voices(
+                mixer::mix_voices_per_channel(
                     &mut self.sequencer.voices,
                     &mut self.mix_left[samples_done..samples_done + chunk],
                     &mut self.mix_right[samples_done..samples_done + chunk],
+                    &mut self.ch_mix_left,
+                    &mut self.ch_mix_right,
+                    samples_done,
+                    chunk,
                     self.master_volume,
                     self.interpolation,
                     &effective_mute,
-                    OUTPUT_SAMPLE_RATE as f32,
+                    self.output_sample_rate as f32,
                 );
 
                 self.sequencer.state.sample_counter += chunk as f64;
                 samples_done += chunk;
             }
-
-            {
-                static PEAK_LOG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                let n = PEAK_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if n < 20 {
-                    let peak_l = self.mix_left[..frame_count].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                    let peak_r = self.mix_right[..frame_count].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                    eprintln!("[PEAK] #{}: L={:.6} R={:.6}", n, peak_l, peak_r);
-                }
+        }
+        #[cfg(feature = "audio_debug")]
+        {
+            static PEAK_LOG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = PEAK_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n < 20 {
+                let peak_l = self.mix_left[..frame_count].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+                let peak_r = self.mix_right[..frame_count].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+                debug_log!("[PEAK] #{}: L={:.6} R={:.6}", n, peak_l, peak_r);
             }
         }
 
@@ -166,41 +201,50 @@ impl AudioEngine {
     fn process_commands(&mut self) {
         while let Some(cmd) = self.command_rx.try_pop() {
             #[cfg(feature = "audio_debug")]
-            eprintln!("[AUDIO CMD] {:?}", cmd);
+            debug_log!("[AUDIO CMD] {:?}", cmd);
             match cmd {
                 AudioCommand::Play => {
                     self.sequencer.play();
-                    let num_active = self.sequencer.voices.iter().filter(|v| v.active).count();
-                    let ch_vols: Vec<u8> = self.sequencer.state.channels.iter().take(4).map(|c| c.channel_volume).collect();
-                    let ch_pans: Vec<u8> = self.sequencer.state.channels.iter().take(4).map(|c| c.channel_panning).collect();
-                    eprintln!("[AUDIO] Play command: playing={}, module={}, active_voices={}, ch_vol={:?}, ch_pan={:?}",
-                        self.sequencer.state.playing, self.module.is_some(), num_active, ch_vols, ch_pans);
+                    #[cfg(feature = "audio_debug")]
+                    {
+                        let num_active = self.sequencer.voices.iter().filter(|v| v.active).count();
+                        let ch_vols: Vec<u8> = self.sequencer.state.channels.iter().take(4).map(|c| c.channel_volume).collect();
+                        let ch_pans: Vec<u8> = self.sequencer.state.channels.iter().take(4).map(|c| c.channel_panning).collect();
+                        debug_log!("[AUDIO] Play command: playing={}, module={}, active_voices={}, ch_vol={:?}, ch_pan={:?}",
+                            self.sequencer.state.playing, self.module.is_some(), num_active, ch_vols, ch_pans);
+                    }
                 }
                 AudioCommand::Stop => {
                     self.sequencer.stop();
-                    eprintln!("[AUDIO] Stop command");
+                    #[cfg(feature = "audio_debug")]
+                    debug_log!("[AUDIO] Stop command");
                 }
                 AudioCommand::Pause => {
                     self.sequencer.pause();
                 }
                 AudioCommand::LoadModule(module) => {
-                    let samples_with_data = module.samples.iter().filter(|s| !s.data.is_empty()).count();
-                    let fmt = format!("{:?}", module.format);
-                    let order_len = module.order_list.len();
-                    let first_order = module.order_list.first().copied().unwrap_or(0);
-                    let has_non_empty_pattern = module.patterns.iter().any(|p| p.data.iter().any(|row| row.iter().any(|c| !c.is_empty())));
+                    #[cfg(feature = "audio_debug")]
+                    let _debug_info = {
+                        let samples_with_data = module.samples.iter().filter(|s| !s.data.is_empty()).count();
+                        let fmt = format!("{:?}", module.format);
+                        let order_len = module.order_list.len();
+                        let first_order = module.order_list.first().copied().unwrap_or(0);
+                        let has_non_empty_pattern = module.patterns.iter().any(|p| p.data.iter().any(|row| row.iter().any(|c| !c.is_empty())));
+                        (fmt, samples_with_data, order_len, first_order, has_non_empty_pattern)
+                    };
                     self.module = Some(module.clone());
                     self.sequencer.load_module(module);
-                    eprintln!("[AUDIO] Module loaded: format={} {}/{} samples have data, {} instruments, {} patterns ({} rows, non_empty={}), order_list_len={}, first_order={}, BPM={} speed={}",
-                        fmt,
-                        samples_with_data,
+                    #[cfg(feature = "audio_debug")]
+                    debug_log!("[AUDIO] Module loaded: format={} {}/{} samples have data, {} instruments, {} patterns ({} rows, non_empty={}), order_list_len={}, first_order={}, BPM={} speed={}",
+                        _debug_info.0,
+                        _debug_info.1,
                         self.module.as_ref().map(|m| m.samples.len()).unwrap_or(0),
                         self.module.as_ref().map(|m| m.instruments.len()).unwrap_or(0),
                         self.module.as_ref().map(|m| m.patterns.len()).unwrap_or(0),
                         self.module.as_ref().map(|m| m.patterns.first().map(|p| p.num_rows).unwrap_or(0)).unwrap_or(0),
-                        has_non_empty_pattern,
-                        order_len,
-                        first_order,
+                        _debug_info.4,
+                        _debug_info.2,
+                        _debug_info.3,
                         self.sequencer.state.bpm,
                         self.sequencer.state.speed);
                 }
@@ -240,6 +284,9 @@ impl AudioEngine {
                 AudioCommand::SeekTo { order, row } => {
                     self.sequencer.play_from(order, row);
                 }
+                AudioCommand::SetPlayMode(mode) => {
+                    self.sequencer.state.play_mode = mode;
+                }
             }
         }
     }
@@ -264,6 +311,8 @@ impl AudioEngine {
         self.playback_state
             .current_pattern
             .store(state.current_pattern as u16, std::sync::atomic::Ordering::Relaxed);
+        self.playback_state
+            .set_play_mode(state.play_mode);
 
         let active = self.sequencer.voices.iter().filter(|v| v.active).count();
         self.playback_state
@@ -300,7 +349,14 @@ impl AudioEngine {
             self.playback_state.channel_peaks[ch].store(peak.to_bits(), std::sync::atomic::Ordering::Relaxed);
         }
 
-        self.playback_state.write_scope(&self.mix_left[..frame_count], &self.mix_right[..frame_count]);
+        for ch in 0..crate::audio::playback_state::MAX_CHANNELS {
+            self.playback_state.write_channel_scope(
+                ch,
+                &self.ch_mix_left[ch][..frame_count],
+                &self.ch_mix_right[ch][..frame_count],
+            );
+        }
+        self.playback_state.finish_channel_scope_write(frame_count);
     }
 
     #[allow(dead_code)]

@@ -1,8 +1,163 @@
 use crate::audio::commands::InterpolationType;
 use crate::audio::resampler;
 use crate::audio::voice::Voice;
+use crate::debug_log;
 use crate::sequencer::effect::FilterType;
 use crate::sequencer::sample::LoopType;
+
+use crate::audio::playback_state::MAX_CHANNELS;
+
+pub fn mix_voices_per_channel(
+    voices: &mut [Voice],
+    output_left: &mut [f32],
+    output_right: &mut [f32],
+    ch_left: &mut [Vec<f32>],
+    ch_right: &mut [Vec<f32>],
+    offset: usize,
+    len: usize,
+    master_volume: f32,
+    interpolation: InterpolationType,
+    muted_channels: &[bool],
+    sample_rate: f32,
+) {
+    static VD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    for voice in voices.iter_mut() {
+        if !voice.active {
+            continue;
+        }
+        let vd = VD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(feature = "audio_debug")]
+        if vd < 5 {
+            debug_log!("[VOICE] ch={:?} base_vol={:.4} final_vol={:.4} pan={:.4}",
+                voice.channel, voice.base_volume, voice.final_volume, voice.final_panning);
+        }
+
+        if let Some(ch) = voice.channel {
+            if ch < muted_channels.len() && muted_channels[ch] {
+                continue;
+            }
+        }
+
+        let sample_data = match &voice.sample {
+            Some(data) => match std::sync::Arc::as_ref(data) {
+                s if !s.is_empty() => s,
+                _ => continue,
+            },
+            None => continue,
+        };
+
+        let loop_type = voice.loop_type;
+        let loop_start = voice.loop_start;
+        let loop_end = voice.loop_end;
+
+        let vol = voice.final_volume * master_volume;
+        let pan = voice.final_panning;
+        let left_gain = vol * (1.0 - pan);
+        let right_gain = vol * pan;
+
+        let has_filter = voice.filter_cutoff < 65534.0
+            || voice.filter_resonance > 0.001
+            || voice.filter_env.is_some()
+            || voice.svf.filter_type != FilterType::LowPass;
+
+        let ch_idx = voice.channel.unwrap_or(MAX_CHANNELS);
+
+        for i in 0..len {
+            if voice.position < 0.0 || voice.position as usize >= sample_data.len() {
+                voice.active = false;
+                break;
+            }
+
+            let s = resampler::resample(
+                sample_data,
+                voice.position,
+                loop_start,
+                loop_end,
+                interpolation,
+                loop_type,
+                voice.direction,
+            );
+
+            let filtered = if has_filter {
+                let base_cutoff = voice.filter_cutoff;
+                let env_mod = voice.envelope_filter_cutoff;
+                let cutoff_frac = (base_cutoff / 65535.0).clamp(0.0, 1.0);
+                let env_cutoff_frac = cutoff_frac * env_mod;
+                let cutoff_hz = 20.0 * (1000.0_f32).powf(env_cutoff_frac);
+                voice.svf.process(s, cutoff_hz, voice.filter_resonance, sample_rate)
+            } else {
+                s
+            };
+
+            let fl = filtered * left_gain;
+            let fr = filtered * right_gain;
+            output_left[i] += fl;
+            output_right[i] += fr;
+
+            if ch_idx < ch_left.len() {
+                ch_left[ch_idx][offset + i] += fl;
+                ch_right[ch_idx][offset + i] += fr;
+            }
+
+            voice.position += voice.sample_delta * voice.direction;
+
+            match loop_type {
+                LoopType::Forward => {
+                    if loop_end > loop_start && voice.position >= loop_end as f64 {
+                        let loop_len = (loop_end - loop_start) as f64;
+                        if loop_len > 0.0 {
+                            voice.position = loop_start as f64 + (voice.position - loop_start as f64) % loop_len;
+                        } else {
+                            voice.active = false;
+                            break;
+                        }
+                    }
+                    if voice.position as usize >= sample_data.len() {
+                        voice.active = false;
+                        break;
+                    }
+                }
+                LoopType::PingPong => {
+                    if loop_end > loop_start {
+                        if voice.direction > 0.0 && voice.position >= loop_end as f64 {
+                            voice.position = 2.0 * loop_end as f64 - voice.position;
+                            voice.direction = -1.0;
+                        } else if voice.direction < 0.0 && voice.position < loop_start as f64 {
+                            voice.position = 2.0 * loop_start as f64 - voice.position;
+                            voice.direction = 1.0;
+                        }
+                        if voice.position < 0.0 {
+                            voice.active = false;
+                            break;
+                        }
+                    } else if voice.position as usize >= sample_data.len() {
+                        voice.active = false;
+                        break;
+                    }
+                }
+                LoopType::Backward => {
+                    if loop_end > loop_start && voice.position < loop_start as f64 {
+                        let loop_len = (loop_end - loop_start) as f64;
+                        let offset_inner = (loop_start as f64 - voice.position) % loop_len;
+                        voice.position = (loop_end as f64) - offset_inner;
+                        if voice.position >= loop_end as f64 {
+                            voice.position = (loop_end - 1) as f64;
+                        }
+                    } else if voice.position < 0.0 || voice.position as usize >= sample_data.len() {
+                        voice.active = false;
+                        break;
+                    }
+                }
+                LoopType::None => {
+                    if voice.position as usize >= sample_data.len() || voice.position < 0.0 {
+                        voice.active = false;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
 
 pub fn mix_voices(
     voices: &mut [Voice],
@@ -13,9 +168,16 @@ pub fn mix_voices(
     muted_channels: &[bool],
     sample_rate: f32,
 ) {
+    static VD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     for voice in voices.iter_mut() {
         if !voice.active {
             continue;
+        }
+        let vd = VD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(feature = "audio_debug")]
+        if vd < 5 {
+            debug_log!("[VOICE] ch={:?} base_vol={:.4} final_vol={:.4} pan={:.4}",
+                voice.channel, voice.base_volume, voice.final_volume, voice.final_panning);
         }
 
         if let Some(ch) = voice.channel {

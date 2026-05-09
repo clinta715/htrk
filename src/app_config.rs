@@ -51,6 +51,9 @@ pub struct AppConfig {
 
     #[serde(default = "default_theme")]
     pub theme_preset: String,
+
+    #[serde(default)]
+    pub debug: bool,
 }
 
 fn default_font_size() -> u32 { 12 }
@@ -87,6 +90,7 @@ impl Default for AppConfig {
             backup_directory: None,
 
             theme_preset: default_theme(),
+            debug: false,
         }
     }
 }

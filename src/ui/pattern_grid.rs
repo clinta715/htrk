@@ -136,12 +136,23 @@ impl Selection {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContextMenuAction {
+    FillInstrument,
+    InterpolateVolume,
+    InterpolateEffect,
+    Reverse,
+    Randomize,
+}
+
 pub struct PatternGridResponse {
     pub _cursor_moved: bool,
     pub _cell_edited: bool,
     pub _selection_changed: bool,
     pub clicked_position: Option<CursorPosition>,
     pub drag_position: Option<CursorPosition>,
+    pub context_menu_action: Option<ContextMenuAction>,
+    pub effect_tooltip: Option<String>,
 }
 
 pub fn draw_pattern_grid(
@@ -167,12 +178,17 @@ pub fn draw_pattern_grid(
     );
 
     let painter = ui.painter_at(rect);
+    let mut context_menu_action: Option<ContextMenuAction> = None;
+    let mut effect_tooltip: Option<String> = None;
+
     let _grid_response = PatternGridResponse {
         _cursor_moved: false,
         _cell_edited: false,
         _selection_changed: false,
         clicked_position: None,
         drag_position: None,
+        context_menu_action: None,
+        effect_tooltip: None,
     };
 
     let first_row = scroll_row;
@@ -184,10 +200,13 @@ pub fn draw_pattern_grid(
         let display_row = row - first_row;
         let y = rect.top() + display_row as f32 * ROW_HEIGHT;
         let is_highlight = row % 4 == 0;
+        let is_measure = row % 16 == 0;
         let is_playback = playback_row == Some(row);
 
         let bg = if is_playback {
             theme.bg_playback
+        } else if is_measure {
+            theme.bg_measure
         } else if is_highlight {
             theme.bg_highlight
         } else {
@@ -199,12 +218,19 @@ pub fn draw_pattern_grid(
             bg,
         );
 
+        let row_num_color = if is_measure {
+            theme.fg_note
+        } else if is_highlight {
+            theme.fg_instrument
+        } else {
+            theme.fg_note_empty
+        };
         painter.text(
             Pos2::new(rect.left() + 2.0, y + ROW_HEIGHT * 0.5),
             egui::Align2::LEFT_CENTER,
             format!("{:03}", row),
             egui::FontId::monospace(FONT_SIZE),
-            theme.fg_note_empty,
+            row_num_color,
         );
 
         for ch in first_ch..last_ch {
@@ -231,6 +257,96 @@ pub fn draw_pattern_grid(
 
             let cell = pattern.cell(row, ch);
             draw_cell(&painter, x, y, cell, theme);
+
+            if let Some(hover_pos) = ui.input(|i| i.pointer.hover_pos()) {
+                let cell_rect = Rect::from_min_size(
+                    Pos2::new(x, y),
+                    egui::vec2(CHANNEL_WIDTH - 2.0, ROW_HEIGHT),
+                );
+                if cell_rect.contains(hover_pos) && cell.effect != Effect::None {
+                    let sub_col_x = hover_pos.x - x;
+                    let char_pos = sub_col_x / CHAR_WIDTH;
+                    if char_pos >= 10.0 {
+                        effect_tooltip = Some(effect_tooltip_text(&cell.effect));
+        }
+    }
+}
+
+fn effect_tooltip_text(effect: &Effect) -> String {
+    match effect {
+        Effect::Arpeggio { note1, note2 } => format!("Arpeggio: +{} +{} semitones", note1, note2),
+        Effect::PortamentoUp { speed } => format!("Portamento Up: speed={}", speed),
+        Effect::PortamentoDown { speed } => format!("Portamento Down: speed={}", speed),
+        Effect::TonePortamento { speed } => format!("Tone Portamento: speed={}", speed),
+        Effect::Vibrato { speed, depth } => format!("Vibrato: speed={} depth={}", speed, depth),
+        Effect::TonePortamentoVolumeSlide { up } => format!("Tone Porta + Vol Slide"),
+        Effect::VibratoVolumeSlide { up } => format!("Vibrato + Vol Slide"),
+        Effect::Tremolo { speed, depth } => format!("Tremolo: speed={} depth={}", speed, depth),
+        Effect::SetPanning { pan } => {
+            let pct = (*pan as f32 / 255.0 * 100.0) as u8;
+            if *pan < 85 { format!("Pan: {} (left {}%)", pan, pct) }
+            else if *pan > 170 { format!("Pan: {} (right {}%)", pan, pct) }
+            else { format!("Pan: {} (center {}%)", pan, pct) }
+        }
+        Effect::SetSampleOffset { offset } => format!("Sample Offset: {}", offset),
+        Effect::VolumeSlide { up, down } => {
+            if *up > 0 { format!("Vol Slide Up: {}", up) }
+            else { format!("Vol Slide Down: {}", down) }
+        }
+        Effect::PositionJump { order } => format!("Position Jump: order {}", order),
+        Effect::SetVolume { volume } => format!("Set Volume: {}/64", (*volume).min(64)),
+        Effect::PatternBreak { row } => format!("Pattern Break: row {}", row),
+        Effect::ExtendedEffect { param } => {
+            let sub = (param >> 4) & 0x0F;
+            let val = param & 0x0F;
+            match sub {
+                0 => "Set Filter".to_string(),
+                1 => format!("Fine Porta Up: {}", val),
+                2 => format!("Fine Porta Down: {}", val),
+                3 => format!("Glissando: {}", if val > 0 { "On" } else { "Off" }),
+                4 => format!("Vibrato Waveform: {}", match val { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
+                5 => format!("Set Fine Tune: {}", val),
+                6 => format!("Pattern Loop: {}", if val == 0 { "Set marker".to_string() } else { format!("Loop {}x", val) }),
+                7 => format!("Tremolo Waveform: {}", match val { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
+                8 => format!("Set Panning (fine)"),
+                9 => format!("Retrigger: every {} ticks", val),
+                0xA => format!("Fine Vol Up: {}", val),
+                0xB => format!("Fine Vol Down: {}", val),
+                0xC => format!("Note Cut after {} ticks", val),
+                0xD => format!("Note Delay: {} ticks", val),
+                0xE => "Pattern Delay".to_string(),
+                _ => format!("Extended E{:X}{:02X}", sub, val),
+            }
+        }
+        Effect::SetSpeed { speed } => format!("Speed: {} ticks/row", speed),
+        Effect::SetTempo { bpm } => format!("Tempo: {} BPM", bpm),
+        Effect::SetGlobalVolume { volume } => format!("Global Volume: {}", volume),
+        Effect::GlobalVolumeSlide { .. } => "Global Volume Slide".to_string(),
+        Effect::SetEnvelopePosition { tick } => format!("Envelope Position: tick {}", tick),
+        Effect::Panbrello { speed, depth } => format!("Panbrello: speed={} depth={}", speed, depth),
+        Effect::PatternDelay { ticks } => format!("Pattern Delay: {} ticks", ticks),
+        Effect::SetPanPosition { pan } => format!("Pan Position: {}", pan),
+        Effect::GlissandoControl { on } => format!("Glissando: {}", if *on { "On" } else { "Off" }),
+        Effect::VibratoWaveform { waveform } => format!("Vibrato Waveform: {}", match waveform & 3 { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
+        Effect::SetFineTune { tune } => format!("Fine Tune: {}", tune),
+        Effect::PatternLoop { count } => format!("Pattern Loop: {}", if *count == 0 { "Set marker".to_string() } else { format!("Loop {}x", count) }),
+        Effect::TremoloWaveform { waveform } => format!("Tremolo Waveform: {}", match waveform & 3 { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
+        Effect::SetPanning16 { pan } => format!("Fine Panning: {}", pan),
+        Effect::Retrigger { interval } => format!("Retrigger: every {} ticks", interval),
+        Effect::NoteCutAfter { ticks } => format!("Note Cut after {} ticks", ticks),
+        Effect::NoteDelay { ticks } => format!("Note Delay: {} ticks", ticks),
+        Effect::FinePortamentoUp { speed } => format!("Fine Porta Up: {}", speed),
+        Effect::FinePortamentoDown { speed } => format!("Fine Porta Down: {}", speed),
+        Effect::FineVolumeSlideUp { amount } => format!("Fine Vol Up: {}", amount),
+        Effect::FineVolumeSlideDown { amount } => format!("Fine Vol Down: {}", amount),
+        Effect::Tremor { ontime, offtime } => format!("Tremor: on={} off={}", ontime, offtime),
+        Effect::SetFilterCutoff { cutoff } => format!("Filter Cutoff: {}", cutoff),
+        Effect::SetFilterResonance { resonance } => format!("Filter Resonance: {}", resonance),
+        Effect::SetFilterType { filter_type } => format!("Filter Type: {}", match filter_type { 0 => "LP", 1 => "HP", 2 => "BP", _ => "Notch" }),
+        Effect::FilterCutoffSlide { amount } => format!("Filter Cutoff Slide: {}", amount),
+        _ => String::new(),
+    }
+}
         }
     }
 
@@ -293,12 +409,40 @@ pub fn draw_pattern_grid(
         }
     }
 
+    let has_selection = selection.is_some();
+    response.context_menu(|ui| {
+        ui.label(egui::RichText::new("Block Operations").strong());
+        ui.separator();
+        if ui.add_enabled(has_selection, egui::Button::new("Fill Instrument")).clicked() {
+            context_menu_action = Some(ContextMenuAction::FillInstrument);
+            ui.close_menu();
+        }
+        if ui.add_enabled(has_selection, egui::Button::new("Interpolate Volume")).clicked() {
+            context_menu_action = Some(ContextMenuAction::InterpolateVolume);
+            ui.close_menu();
+        }
+        if ui.add_enabled(has_selection, egui::Button::new("Interpolate Effect")).clicked() {
+            context_menu_action = Some(ContextMenuAction::InterpolateEffect);
+            ui.close_menu();
+        }
+        if ui.add_enabled(has_selection, egui::Button::new("Reverse")).clicked() {
+            context_menu_action = Some(ContextMenuAction::Reverse);
+            ui.close_menu();
+        }
+        if ui.add_enabled(has_selection, egui::Button::new("Randomize")).clicked() {
+            context_menu_action = Some(ContextMenuAction::Randomize);
+            ui.close_menu();
+        }
+    });
+
     PatternGridResponse {
         _cursor_moved: clicked_position.is_some(),
         _cell_edited: false,
         _selection_changed: drag_position.is_some(),
         clicked_position,
         drag_position,
+        context_menu_action,
+        effect_tooltip,
     }
 }
 

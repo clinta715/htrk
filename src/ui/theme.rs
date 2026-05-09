@@ -9,6 +9,7 @@ pub enum ThemePreset {
     BlueFusion,
     HighContrast,
     MatrixGreen,
+    Ft2Classic,
 }
 
 impl ThemePreset {
@@ -21,6 +22,7 @@ impl ThemePreset {
             ThemePreset::BlueFusion,
             ThemePreset::HighContrast,
             ThemePreset::MatrixGreen,
+            ThemePreset::Ft2Classic,
         ]
     }
 
@@ -33,6 +35,24 @@ impl ThemePreset {
             ThemePreset::BlueFusion => "Blue Fusion",
             ThemePreset::HighContrast => "High Contrast",
             ThemePreset::MatrixGreen => "Matrix Green",
+            ThemePreset::Ft2Classic => "FT2 Classic",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::all().iter().find(|p| p.name() == name).copied()
+    }
+
+    pub fn config_key(self) -> &'static str {
+        match self {
+            ThemePreset::DarkModern => "DarkModern",
+            ThemePreset::DarkRetro => "DarkRetro",
+            ThemePreset::Light => "Light",
+            ThemePreset::AmberTerminal => "AmberTerminal",
+            ThemePreset::BlueFusion => "BlueFusion",
+            ThemePreset::HighContrast => "HighContrast",
+            ThemePreset::MatrixGreen => "MatrixGreen",
+            ThemePreset::Ft2Classic => "Ft2Classic",
         }
     }
 }
@@ -41,6 +61,7 @@ impl ThemePreset {
 pub struct TrackerTheme {
     pub bg_default: Color32,
     pub bg_highlight: Color32,
+    pub bg_measure: Color32,
     pub bg_selected: Color32,
     pub bg_playback: Color32,
     pub bg_channel_alt: Color32,
@@ -81,6 +102,7 @@ impl Default for TrackerTheme {
         TrackerTheme {
             bg_default: Color32::from_rgb(24, 24, 32),
             bg_highlight: Color32::from_rgb(32, 32, 44),
+            bg_measure: Color32::from_rgb(40, 40, 56),
             bg_selected: Color32::from_rgb(60, 60, 120),
             bg_playback: Color32::from_rgb(40, 60, 40),
             bg_channel_alt: Color32::from_rgb(28, 28, 36),
@@ -125,6 +147,7 @@ impl TrackerTheme {
             ThemePreset::DarkRetro => TrackerTheme {
                 bg_default: Color32::from_rgb(0, 0, 0),
                 bg_highlight: Color32::from_rgb(0, 0, 32),
+                bg_measure: Color32::from_rgb(0, 0, 64),
                 bg_selected: Color32::from_rgb(48, 48, 80),
                 bg_playback: Color32::from_rgb(0, 32, 0),
                 bg_channel_alt: Color32::from_rgb(8, 8, 16),
@@ -156,6 +179,7 @@ impl TrackerTheme {
             ThemePreset::Light => TrackerTheme {
                 bg_default: Color32::from_rgb(240, 240, 240),
                 bg_highlight: Color32::from_rgb(220, 220, 240),
+                bg_measure: Color32::from_rgb(200, 200, 230),
                 bg_selected: Color32::from_rgb(160, 160, 220),
                 bg_playback: Color32::from_rgb(200, 240, 200),
                 bg_channel_alt: Color32::from_rgb(230, 230, 240),
@@ -187,6 +211,7 @@ impl TrackerTheme {
             ThemePreset::AmberTerminal => TrackerTheme {
                 bg_default: Color32::from_rgb(0, 0, 0),
                 bg_highlight: Color32::from_rgb(12, 8, 0),
+                bg_measure: Color32::from_rgb(24, 16, 0),
                 bg_selected: Color32::from_rgb(40, 28, 0),
                 bg_playback: Color32::from_rgb(20, 14, 0),
                 bg_channel_alt: Color32::from_rgb(8, 6, 0),
@@ -218,6 +243,7 @@ impl TrackerTheme {
             ThemePreset::BlueFusion => TrackerTheme {
                 bg_default: Color32::from_rgb(10, 10, 26),
                 bg_highlight: Color32::from_rgb(16, 16, 40),
+                bg_measure: Color32::from_rgb(24, 24, 56),
                 bg_selected: Color32::from_rgb(24, 40, 80),
                 bg_playback: Color32::from_rgb(8, 30, 50),
                 bg_channel_alt: Color32::from_rgb(14, 14, 32),
@@ -249,6 +275,7 @@ impl TrackerTheme {
             ThemePreset::HighContrast => TrackerTheme {
                 bg_default: Color32::from_rgb(0, 0, 0),
                 bg_highlight: Color32::from_rgb(20, 20, 20),
+                bg_measure: Color32::from_rgb(40, 40, 40),
                 bg_selected: Color32::from_rgb(60, 60, 60),
                 bg_playback: Color32::from_rgb(30, 50, 30),
                 bg_channel_alt: Color32::from_rgb(10, 10, 10),
@@ -280,6 +307,7 @@ impl TrackerTheme {
             ThemePreset::MatrixGreen => TrackerTheme {
                 bg_default: Color32::from_rgb(0, 4, 0),
                 bg_highlight: Color32::from_rgb(0, 8, 0),
+                bg_measure: Color32::from_rgb(0, 16, 0),
                 bg_selected: Color32::from_rgb(0, 24, 0),
                 bg_playback: Color32::from_rgb(0, 20, 0),
                 bg_channel_alt: Color32::from_rgb(0, 6, 0),
@@ -307,6 +335,38 @@ impl TrackerTheme {
                 transport_bg: Color32::from_rgb(0, 4, 0),
                 transport_fg: Color32::from_rgb(0, 128, 0),
                 transport_active: Color32::from_rgb(0, 255, 0),
+            },
+            ThemePreset::Ft2Classic => TrackerTheme {
+                bg_default: Color32::from_rgb(0, 0, 128),
+                bg_highlight: Color32::from_rgb(0, 0, 168),
+                bg_measure: Color32::from_rgb(0, 0, 220),
+                bg_selected: Color32::from_rgb(32, 32, 200),
+                bg_playback: Color32::from_rgb(0, 40, 0),
+                bg_channel_alt: Color32::from_rgb(0, 0, 140),
+                fg_note: Color32::from_rgb(255, 255, 255),
+                fg_note_empty: Color32::from_rgb(80, 80, 160),
+                fg_note_off: Color32::from_rgb(200, 200, 0),
+                fg_note_cut: Color32::from_rgb(255, 80, 80),
+                fg_instrument: Color32::from_rgb(0, 255, 255),
+                fg_volume: Color32::from_rgb(100, 255, 100),
+                fg_effect: Color32::from_rgb(255, 128, 128),
+                fg_effect_param: Color32::from_rgb(255, 160, 160),
+                cursor_outline: Color32::from_rgb(255, 255, 255),
+                cursor_fill: Color32::from_rgba_premultiplied(255, 255, 255, 50),
+                playback_cursor: Color32::from_rgb(80, 255, 80),
+                channel_header_bg: Color32::from_rgb(0, 0, 160),
+                channel_header_fg: Color32::from_rgb(255, 255, 255),
+                channel_muted: Color32::from_rgb(255, 80, 80),
+                channel_solo: Color32::from_rgb(80, 255, 80),
+                order_bg: Color32::from_rgb(0, 0, 96),
+                order_fg: Color32::from_rgb(200, 200, 255),
+                order_selected: Color32::from_rgb(255, 255, 0),
+                order_playing: Color32::from_rgb(80, 255, 80),
+                status_bg: Color32::from_rgb(0, 0, 96),
+                status_fg: Color32::from_rgb(200, 200, 255),
+                transport_bg: Color32::from_rgb(0, 0, 96),
+                transport_fg: Color32::from_rgb(200, 200, 255),
+                transport_active: Color32::from_rgb(80, 255, 80),
             },
         }
     }

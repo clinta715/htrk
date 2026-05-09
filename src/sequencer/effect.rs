@@ -1,6 +1,7 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 pub enum Effect {
+    #[default]
     None,
 
     Arpeggio { note1: u8, note2: u8 },
@@ -73,6 +74,18 @@ pub enum FormatEffect {
     It(ItEffect),
 }
 
+impl FormatEffect {
+    pub fn sample_offset(&self) -> Option<u16> {
+        match self {
+            FormatEffect::Xm(XmEffect::SetSampleOffset(offset)) => Some(*offset),
+            FormatEffect::Mod(ModEffect::SetSampleOffset(offset)) => Some(*offset),
+            FormatEffect::S3m(S3mEffect::SetSampleOffset(offset)) => Some(*offset),
+            FormatEffect::It(ItEffect::SetSampleOffset(offset)) => Some(*offset),
+            _ => None,
+        }
+    }
+}
+
 /// XM-specific effects that require special handling
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum XmEffect {
@@ -138,7 +151,7 @@ impl FilterType {
         }
     }
 
-    pub fn to_u8(self) -> u8 {
+    pub fn to_u8(&self) -> u8 {
         match self {
             FilterType::LowPass => 0,
             FilterType::HighPass => 1,
@@ -148,137 +161,60 @@ impl FilterType {
     }
 }
 
-impl FormatType {
-    pub fn supports_volume_column(&self) -> bool {
-        matches!(self, FormatType::Xm)
-    }
-    
-    /// Check if format supports sample offset effect (most tracker formats)
-    pub fn supports_sample_offset(&self) -> bool {
-        matches!(self, FormatType::Mod | FormatType::Xm | FormatType::S3m | FormatType::It)
-    }
-    
-    /// Check if format uses linear frequency periods (XM, IT)
-    pub fn uses_linear_periods(&self) -> bool {
-        matches!(self, FormatType::Xm | FormatType::It)
-    }
-    
-    /// Check if format uses Amiga period table (MOD, S3M)
-    pub fn uses_amiga_periods(&self) -> bool {
-        matches!(self, FormatType::Mod | FormatType::S3m)
-    }
-}
-
-impl FormatEffect {
-    /// Get the sample offset from a FormatEffect if it contains one
-    pub fn sample_offset(&self) -> Option<u16> {
-        match self {
-            FormatEffect::Xm(XmEffect::SetSampleOffset(o)) => Some(*o),
-            FormatEffect::Mod(ModEffect::SetSampleOffset(o)) => Some(*o),
-            FormatEffect::S3m(S3mEffect::SetSampleOffset(o)) => Some(*o),
-            FormatEffect::It(ItEffect::SetSampleOffset(o)) => Some(*o),
-            _ => None,
-        }
-    }
-    
-    /// Get the format type for this effect
-    pub fn format(&self) -> FormatType {
-        match self {
-            FormatEffect::Xm(_) => FormatType::Xm,
-            FormatEffect::Mod(_) => FormatType::Mod,
-            FormatEffect::S3m(_) => FormatType::S3m,
-            FormatEffect::It(_) => FormatType::It,
-        }
+pub fn effect_param_value(effect: &Effect) -> Option<u8> {
+    match effect {
+        Effect::Arpeggio { note1, note2 } => Some((*note1 << 4) | note2),
+        Effect::PortamentoUp { speed } => Some(*speed),
+        Effect::PortamentoDown { speed } => Some(*speed),
+        Effect::TonePortamento { speed } => Some(*speed),
+        Effect::Vibrato { speed, depth } => Some((*speed << 4) | depth),
+        Effect::VolumeSlide { up, down } => Some((*up << 4) | down),
+        Effect::PositionJump { order } => Some(*order),
+        Effect::SetVolume { volume } => Some(*volume),
+        Effect::PatternBreak { row } => Some(*row),
+        Effect::ExtendedEffect { param } => Some(*param),
+        Effect::SetSpeed { speed } => Some(*speed),
+        Effect::SetTempo { bpm } => Some(*bpm),
+        Effect::SetGlobalVolume { volume } => Some(*volume),
+        Effect::SetPanning { pan } => Some(*pan),
+        Effect::SetPanPosition { pan } => Some(*pan),
+        Effect::SetSampleOffset { offset } => Some((*offset >> 8) as u8),
+        Effect::Tremolo { speed, depth } => Some((*speed << 4) | depth),
+        Effect::PatternDelay { ticks } => Some(*ticks),
+        Effect::Panbrello { speed, depth } => Some((*speed << 4) | depth),
+        Effect::Tremor { ontime, offtime } => Some((*ontime << 4) | offtime),
+        Effect::Retrigger { interval } => Some(*interval),
+        Effect::NoteCutAfter { ticks } => Some(*ticks),
+        Effect::NoteDelay { ticks } => Some(*ticks),
+        Effect::FinePortamentoUp { speed } => Some(*speed),
+        Effect::FinePortamentoDown { speed } => Some(*speed),
+        Effect::FineVolumeSlideUp { amount } => Some(*amount),
+        Effect::FineVolumeSlideDown { amount } => Some(*amount),
+        Effect::SetFilterCutoff { cutoff } => Some((*cutoff >> 8) as u8),
+        Effect::SetFilterResonance { resonance } => Some(*resonance),
+        Effect::SetFilterType { filter_type } => Some(*filter_type),
+        _ => None,
     }
 }
 
-impl Default for Effect {
-    fn default() -> Self {
-        Effect::None
-    }
-}
+use crate::sequencer::pattern::Cell;
 
-impl Effect {
-    pub fn effect_byte(&self) -> Option<u8> {
-        match self {
-            Effect::None => None,
-            Effect::Arpeggio { note1, note2 } => Some((note1 << 4) | (note2 & 0x0F)),
-            Effect::PortamentoUp { speed } => Some(*speed),
-            Effect::PortamentoDown { speed } => Some(*speed),
-            Effect::TonePortamento { speed } => Some(*speed),
-            Effect::Vibrato { speed, depth } => Some((speed << 4) | (depth & 0x0F)),
-            Effect::TonePortamentoVolumeSlide { up } => Some(*up as u8),
-            Effect::VibratoVolumeSlide { up } => Some(*up as u8),
-            Effect::Tremolo { speed, depth } => Some((speed << 4) | (depth & 0x0F)),
-            Effect::SetPanning { pan } => Some(*pan),
-            Effect::SetSampleOffset { offset } => Some((offset >> 8) as u8),
-            Effect::VolumeSlide { up, down } => Some((up << 4) | (down & 0x0F)),
-            Effect::PositionJump { order } => Some(*order),
-            Effect::SetVolume { volume } => Some(*volume),
-            Effect::PatternBreak { row } => Some(((row / 10) << 4) | (row % 10)),
-            Effect::ExtendedEffect { param } => Some(*param),
-            Effect::SetSpeed { speed } => Some(*speed),
-            Effect::SetTempo { bpm } => Some(*bpm),
-            Effect::SetGlobalVolume { volume } => Some(*volume),
-            Effect::GlobalVolumeSlide { up, down } => Some(((*up).max(0) as u8) << 4 | ((*down).unsigned_abs().min(15) as u8)),
-            Effect::SetEnvelopePosition { tick } => Some((tick & 0xFF) as u8),
-            Effect::Panbrello { speed, depth } => Some((speed << 4) | (depth & 0x0F)),
-            Effect::PatternDelay { ticks } => Some(*ticks),
-            Effect::SetPanPosition { pan } => Some(*pan),
-            Effect::GlissandoControl { on } => if *on { Some(1) } else { Some(0) },
-            Effect::VibratoWaveform { waveform } => Some(*waveform),
-            Effect::SetFineTune { tune } => Some(*tune),
-            Effect::PatternLoop { count } => Some(*count),
-            Effect::TremoloWaveform { waveform } => Some(*waveform),
-            Effect::SetPanning16 { pan } => Some(*pan),
-            Effect::Retrigger { interval } => Some(*interval),
-            Effect::NoteCutAfter { ticks } => Some(*ticks),
-            Effect::NoteDelay { ticks } => Some(*ticks),
-            Effect::FinePortamentoUp { speed } => Some(*speed),
-            Effect::FinePortamentoDown { speed } => Some(*speed),
-            Effect::FineVolumeSlideUp { amount } => Some(*amount),
-            Effect::FineVolumeSlideDown { amount } => Some(*amount),
-            Effect::Tremor { ontime, offtime } => Some((ontime << 4) | (offtime & 0x0F)),
-            Effect::VolSetVolume { vol } => Some(*vol),
-            Effect::VolFineSlideUp { amount } => Some(*amount),
-            Effect::VolFineSlideDown { amount } => Some(*amount),
-            Effect::VolSlideUp { amount } => Some(*amount),
-            Effect::VolSlideDown { amount } => Some(*amount),
-            Effect::VolPortamento { speed } => Some(*speed),
-            Effect::VolVibrato { speed } => Some(*speed),
-            Effect::SetFilterCutoff { cutoff } => Some((cutoff >> 8) as u8),
-            Effect::SetFilterResonance { resonance } => Some(*resonance),
-            Effect::SetFilterType { filter_type } => Some(*filter_type),
-            Effect::FilterCutoffSlide { amount } => Some((*amount as i16).clamp(0, 255) as u8),
-            Effect::FormatSpecific(fe) => {
-                // Format-specific effects don't have a simple effect byte representation
-                // Return the effect byte from the underlying format effect if possible
-                match fe {
-                    FormatEffect::Xm(XmEffect::SetSampleOffset(o)) => Some((o >> 8) as u8),
-                    FormatEffect::Mod(ModEffect::SetSampleOffset(o)) => Some((o >> 8) as u8),
-                    FormatEffect::S3m(S3mEffect::SetSampleOffset(o)) => Some((o >> 8) as u8),
-                    FormatEffect::It(ItEffect::SetSampleOffset(o)) => Some((o >> 8) as u8),
-                    _ => None,
-                }
-            }
-        }
+pub fn set_effect_param_value(mut cell: Cell, val: u8) -> Cell {
+    match &mut cell.effect {
+        Effect::PortamentoUp { speed } => *speed = val,
+        Effect::PortamentoDown { speed } => *speed = val,
+        Effect::TonePortamento { speed } => *speed = val,
+        Effect::SetSpeed { speed } => *speed = val,
+        Effect::SetTempo { bpm } => *bpm = val,
+        Effect::SetVolume { volume } => *volume = val,
+        Effect::PositionJump { order } => *order = val,
+        Effect::SetGlobalVolume { volume } => *volume = val,
+        Effect::SetPanning { pan } => *pan = val,
+        Effect::ExtendedEffect { param } => *param = val,
+        Effect::PatternBreak { row } => *row = val,
+        _ => {}
     }
-}#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum ExtendedEffect {
-    NoteCut,
-    NoteDelay,
-    PatternDelay,
-    Glissando,
-    VibratoWaveform,
-    SetFineTune,
-    PatternLoop,
-    TremoloWaveform,
-    SetPanning,
-    Retrigger,
-    FineVolSlideUp,
-    FineVolSlideDown,
-    InvertLoop,
+    cell
 }
 
 #[cfg(test)]

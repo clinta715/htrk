@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 fn create_test_module() -> Module {
     let mut module = Module::default();
+    module.samples.clear();
+    module.instruments.clear();
     module.name = "Test Module".to_string();
 
     let mut pat = Pattern::new(64);

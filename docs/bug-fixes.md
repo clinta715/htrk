@@ -1,6 +1,29 @@
 # Bug Fixes
 
-## Arc::get_mut Silent Failure on Module Mutation
+## Playback Stall and Timing Accuracy Fix
+**Date:** 2026-05-09
+
+### Symptom
+When attempting to play a song, the sequencer would advance exactly one row, the VU meters would flicker, and then playback would stop. The application remained responsive.
+
+### Root Cause
+1.  **UI Feedback Loop:** The Pattern Order panel in `src/app.rs` was calling `sync_module_to_audio()` on every frame. `sync_module_to_audio()` sends `AudioCommand::LoadModule`, which causes the audio engine to stop playback for safety.
+2.  **Audio Engine Latency:** The `process_callback` loop processed ticks *after* mixing samples for that tick, introducing a 1-tick delay for all notes and effects.
+3.  **Timing Inaccuracy:** The sample counter was reset to 0 on each tick instead of using a subtractive approach, leading to cumulative timing errors from fractional samples.
+
+### Fix
+- **UI:** Wrapped the `sync_module_to_audio()` call in the order list panel with a `changed` flag. It now only triggers when the user actually modifies the order list or pattern indices.
+- **Audio Engine:**
+  - Refactored the `process_callback` loop to trigger `sequencer.process_tick()` at the **beginning** of the tick.
+  - Used `sample_counter -= samples_per_tick` to maintain fractional precision.
+- **Sequencer Engine:**
+  - Refactored `play()` and `play_from()` to initialize the state for immediate tick processing in the next callback.
+  - Removed redundant manual `process_tick_zero_unified()` calls during initialization.
+
+### Verification
+- Verified that playback now continues correctly across multiple rows and patterns.
+- Notes trigger with sample-accurate precision.
+- All 174 library tests pass.
 **Date:** 2026-05-06
 
 ### Symptom

@@ -11,6 +11,7 @@ use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::player::{ActiveEffects, ChannelState, PlayMode, SequencerState};
 use crate::sequencer::sample::{Sample, VibratoWaveform, LoopType};
+use crate::debug_log;
 use crate::sequencer::period::{
     get_arp_tab, get_note_period, get_vib_tab, period_to_frequency, relocate_ton,
 };
@@ -82,6 +83,7 @@ impl SequencerEngine {
 
     pub fn play(&mut self) {
         if self.module.is_none() {
+            debug_log!("[PLAY] No module loaded, returning");
             return;
         }
         self.stop_playback_state();
@@ -100,6 +102,16 @@ impl SequencerEngine {
             self.state.channels[i].channel_volume = module.channel_volume[i];
         }
 
+        #[cfg(feature = "audio_debug")]
+        debug_log!("[PLAY] Module loaded: {} samples, {} patterns, BPM={} speed={}",
+            module.samples.len(), module.patterns.len(), self.state.bpm, self.state.speed);
+        #[cfg(feature = "audio_debug")]
+        debug_log!("[PLAY] Channel volumes: ch0={} ch1={} ch2={} ch3={}",
+            self.state.channels[0].channel_volume,
+            self.state.channels[1].channel_volume,
+            self.state.channels[2].channel_volume,
+            self.state.channels[3].channel_volume);
+
         self.state.current_order = 0;
         self.state.current_row = 0;
         self.state.current_pattern = self.get_pattern_for_order(0);
@@ -114,11 +126,11 @@ impl SequencerEngine {
         self.state.playing = true;
         self.state.paused = false;
         self.state.current_tick = 0;
-        self.state.sample_counter = 0.0;
+        self.state.sample_counter = self.state.samples_per_tick;
 
-        self.process_tick_zero_unified();
-
-        self.state.current_tick = 1;
+        #[cfg(feature = "audio_debug")]
+        debug_log!("[PLAY] Ready: playing={}, order={}, row={}",
+            self.state.playing, self.state.current_order, self.state.current_row);
     }
 
     pub fn play_from(&mut self, order: u16, row: u16) {
@@ -156,11 +168,8 @@ impl SequencerEngine {
 
         self.state.playing = true;
         self.state.paused = false;
-        self.state.sample_counter = 0.0;
-
-        self.process_tick_zero_unified();
-
-        self.state.current_tick = 1;
+        self.state.current_tick = 0;
+        self.state.sample_counter = self.state.samples_per_tick;
     }
 
     pub fn stop(&mut self) {
@@ -461,7 +470,7 @@ impl SequencerEngine {
         let sample = sample.unwrap();
 
         // Extract values before mutating
-        let (rel_ton, fine_tune, period, linear) = {
+        let (_rel_ton, _fine_tune, period, linear) = {
             let ch_state = &mut self.state.channels[channel];
             ch_state.rel_ton = sample.relative_note;
 
@@ -495,12 +504,12 @@ impl SequencerEngine {
         } else {
             NewNoteAction::NoteCut
         };
-let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             module.instruments[instrument_idx].duplicate_check_type
         } else {
             DuplicateCheckType::Disabled
         };
-        let dca = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+        let _dca = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             module.instruments[instrument_idx].duplicate_check_action
         } else {
             DuplicateCheckAction::NoteCut
@@ -3153,7 +3162,7 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
     fn compute_portamento_target(
         &self,
-        channel: usize,
+        _channel: usize,
         _note_key: u8,
         remapped_key: u8,
         sample: Option<&Sample>,
@@ -3179,10 +3188,8 @@ let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 }
 
 fn compute_samples_per_tick(bpm: u16, sample_rate: f64) -> f64 {
-    if bpm == 0 {
-        return 0.0;
-    }
-    sample_rate * 5.0 / (bpm as f64 * 2.0)
+    let safe_bpm = if bpm == 0 { 125.0 } else { bpm as f64 };
+    sample_rate * 5.0 / (safe_bpm * 2.0)
 }
 
 fn get_vibrato_value(waveform: VibratoWaveform, phase: f32) -> f32 {
@@ -3464,10 +3471,14 @@ mod tests {
         engine.load_module(module.clone());
         engine.play();
 
+        // With the new engine loop, play() doesn't trigger tick 0 immediately.
+        // We need to call process_tick() or advance() to trigger the notes.
+        engine.process_tick();
+
         assert!(engine.state.playing, "Engine should be playing after play()");
 
         let active_after_play = engine.voices.iter().filter(|v| v.active).count();
-        assert!(active_after_play > 0, "Should have at least 1 active voice after play, got {}", active_after_play);
+        assert!(active_after_play > 0, "Should have at least 1 active voice after tick 0, got {}", active_after_play);
 
         let voice = engine.voices.iter().find(|v| v.active).unwrap();
         assert!(voice.sample.is_some(), "Active voice should have sample data");

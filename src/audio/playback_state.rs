@@ -2,9 +2,11 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU8};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::sequencer::player::PlayMode;
+
 static MASTER_VOLUME_DEFAULT: f32 = 0.25;
 
-pub const SCOPE_SIZE: usize = 2048;
+pub const CHANNEL_SCOPE_SIZE: usize = 512;
 pub const MAX_CHANNELS: usize = 64;
 
 pub struct AtomicPlaybackState {
@@ -17,15 +19,16 @@ pub struct AtomicPlaybackState {
     pub active_voices: AtomicU8,
     pub cpu_usage_pct: AtomicU8,
     master_volume_bits: AtomicU32,
+    pub play_mode_bits: AtomicU8,
 
     pub master_peak_left: AtomicU32,
     pub master_peak_right: AtomicU32,
     pub channel_peaks: [AtomicU32; MAX_CHANNELS],
 
-    pub scope_left: Arc<Vec<AtomicU32>>,
-    pub scope_right: Arc<Vec<AtomicU32>>,
-    pub scope_write_pos: AtomicU32,
-    pub scope_available: AtomicU32,
+    pub channel_scope_left: [Arc<Vec<AtomicU32>>; MAX_CHANNELS],
+    pub channel_scope_right: [Arc<Vec<AtomicU32>>; MAX_CHANNELS],
+    pub channel_scope_write_pos: AtomicU32,
+    pub channel_scope_available: AtomicU32,
 }
 
 impl AtomicPlaybackState {
@@ -36,6 +39,25 @@ impl AtomicPlaybackState {
     #[allow(dead_code)]
     pub fn set_master_volume(&self, vol: f32) {
         self.master_volume_bits.store(vol.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn play_mode(&self) -> PlayMode {
+        match self.play_mode_bits.load(Ordering::Relaxed) {
+            1 => PlayMode::Loop,
+            2 => PlayMode::Pattern,
+            3 => PlayMode::Order,
+            _ => PlayMode::Once,
+        }
+    }
+
+    pub fn set_play_mode(&self, mode: PlayMode) {
+        let bits: u8 = match mode {
+            PlayMode::Once => 0,
+            PlayMode::Loop => 1,
+            PlayMode::Pattern => 2,
+            PlayMode::Order => 3,
+        };
+        self.play_mode_bits.store(bits, Ordering::Relaxed);
     }
 
     pub fn master_peak(&self) -> (f32, f32) {
@@ -52,31 +74,49 @@ impl AtomicPlaybackState {
         }
     }
 
-    pub fn write_scope(&self, left: &[f32], right: &[f32]) {
-        let len = left.len().min(right.len()).min(SCOPE_SIZE);
-        let pos = self.scope_write_pos.load(Ordering::Relaxed) as usize;
-        for i in 0..len {
-            let idx = (pos + i) % SCOPE_SIZE;
-            self.scope_left[idx].store(left[i].to_bits(), Ordering::Relaxed);
-            self.scope_right[idx].store(right[i].to_bits(), Ordering::Relaxed);
+    pub fn write_channel_scope(&self, ch: usize, left: &[f32], right: &[f32]) {
+        if ch >= MAX_CHANNELS {
+            return;
         }
-        self.scope_write_pos.store(((pos + len) % SCOPE_SIZE) as u32, Ordering::Relaxed);
-        self.scope_available.store((self.scope_available.load(Ordering::Relaxed) + len as u32).min(SCOPE_SIZE as u32), Ordering::Relaxed);
+        let len = left.len().min(right.len()).min(CHANNEL_SCOPE_SIZE);
+        let pos = self.channel_scope_write_pos.load(Ordering::Relaxed) as usize;
+        let ch_left = &self.channel_scope_left[ch];
+        let ch_right = &self.channel_scope_right[ch];
+        for i in 0..len {
+            let idx = (pos + i) % CHANNEL_SCOPE_SIZE;
+            ch_left[idx].store(left[i].to_bits(), Ordering::Relaxed);
+            ch_right[idx].store(right[i].to_bits(), Ordering::Relaxed);
+        }
     }
 
-    pub fn read_scope(&self) -> (Vec<f32>, Vec<f32>) {
-        let available = self.scope_available.load(Ordering::Relaxed) as usize;
-        let available = available.min(SCOPE_SIZE);
+    pub fn finish_channel_scope_write(&self, frame_count: usize) {
+        let len = frame_count.min(CHANNEL_SCOPE_SIZE);
+        let pos = self.channel_scope_write_pos.load(Ordering::Relaxed) as usize;
+        self.channel_scope_write_pos.store(((pos + len) % CHANNEL_SCOPE_SIZE) as u32, Ordering::Relaxed);
+        self.channel_scope_available.store(
+            (self.channel_scope_available.load(Ordering::Relaxed) + len as u32).min(CHANNEL_SCOPE_SIZE as u32),
+            Ordering::Relaxed,
+        );
+    }
+
+    pub fn read_channel_scope(&self, ch: usize) -> (Vec<f32>, Vec<f32>) {
+        if ch >= MAX_CHANNELS {
+            return (Vec::new(), Vec::new());
+        }
+        let available = self.channel_scope_available.load(Ordering::Relaxed) as usize;
+        let available = available.min(CHANNEL_SCOPE_SIZE);
         if available == 0 {
             return (Vec::new(), Vec::new());
         }
-        let pos = self.scope_write_pos.load(Ordering::Relaxed) as usize;
+        let pos = self.channel_scope_write_pos.load(Ordering::Relaxed) as usize;
+        let ch_left = &self.channel_scope_left[ch];
+        let ch_right = &self.channel_scope_right[ch];
         let mut left = Vec::with_capacity(available);
         let mut right = Vec::with_capacity(available);
         for i in 0..available {
-            let idx = (pos + SCOPE_SIZE - available + i) % SCOPE_SIZE;
-            left.push(f32::from_bits(self.scope_left[idx].load(Ordering::Relaxed)));
-            right.push(f32::from_bits(self.scope_right[idx].load(Ordering::Relaxed)));
+            let idx = (pos + CHANNEL_SCOPE_SIZE - available + i) % CHANNEL_SCOPE_SIZE;
+            left.push(f32::from_bits(ch_left[idx].load(Ordering::Relaxed)));
+            right.push(f32::from_bits(ch_right[idx].load(Ordering::Relaxed)));
         }
         (left, right)
     }
@@ -84,8 +124,12 @@ impl AtomicPlaybackState {
 
 impl Default for AtomicPlaybackState {
     fn default() -> Self {
-        let scope_left = Arc::new((0..SCOPE_SIZE).map(|_| AtomicU32::new(0)).collect::<Vec<_>>());
-        let scope_right = Arc::new((0..SCOPE_SIZE).map(|_| AtomicU32::new(0)).collect::<Vec<_>>());
+        let channel_scope_left = std::array::from_fn(|_| {
+            Arc::new((0..CHANNEL_SCOPE_SIZE).map(|_| AtomicU32::new(0)).collect::<Vec<_>>())
+        });
+        let channel_scope_right = std::array::from_fn(|_| {
+            Arc::new((0..CHANNEL_SCOPE_SIZE).map(|_| AtomicU32::new(0)).collect::<Vec<_>>())
+        });
         AtomicPlaybackState {
             current_order: AtomicU16::new(0),
             current_row: AtomicU16::new(0),
@@ -96,13 +140,14 @@ impl Default for AtomicPlaybackState {
             active_voices: AtomicU8::new(0),
             cpu_usage_pct: AtomicU8::new(0),
             master_volume_bits: AtomicU32::new(MASTER_VOLUME_DEFAULT.to_bits()),
+            play_mode_bits: AtomicU8::new(0),
             master_peak_left: AtomicU32::new(0),
             master_peak_right: AtomicU32::new(0),
             channel_peaks: std::array::from_fn(|_| AtomicU32::new(0)),
-            scope_left,
-            scope_right,
-            scope_write_pos: AtomicU32::new(0),
-            scope_available: AtomicU32::new(0),
+            channel_scope_left,
+            channel_scope_right,
+            channel_scope_write_pos: AtomicU32::new(0),
+            channel_scope_available: AtomicU32::new(0),
         }
     }
 }

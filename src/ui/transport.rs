@@ -2,6 +2,7 @@ use eframe::egui;
 
 use crate::audio::commands::AudioCommand;
 use crate::audio::playback_state::AtomicPlaybackState;
+use crate::sequencer::player::PlayMode;
 
 use super::theme::TrackerTheme;
 
@@ -41,6 +42,7 @@ pub fn draw_transport(
     let order = playback_state.current_order.load(std::sync::atomic::Ordering::Relaxed);
     let row = playback_state.current_row.load(std::sync::atomic::Ordering::Relaxed);
     let pattern = playback_state.current_pattern.load(std::sync::atomic::Ordering::Relaxed);
+    let play_mode = playback_state.play_mode();
 
     ui.horizontal(|ui| {
         ui.visuals_mut().widgets.inactive.bg_fill = theme.transport_bg;
@@ -79,6 +81,36 @@ pub fn draw_transport(
                 sender.send(AudioCommand::PlayFrom { order, row });
             }
             resp.play_from_clicked = true;
+        }
+
+        ui.separator();
+
+        let is_pattern_mode = play_mode == PlayMode::Pattern;
+        let pat_label = if is_pattern_mode { "[Pat]" } else { " Pat " };
+        if ui.selectable_label(is_pattern_mode, pat_label).clicked() {
+            if let Some(ref mut sender) = command_sender {
+                sender.send(AudioCommand::SetPlayMode(PlayMode::Pattern));
+            }
+        }
+
+        let is_song_mode = play_mode == PlayMode::Order;
+        let song_label = if is_song_mode { "[Song]" } else { " Song " };
+        if ui.selectable_label(is_song_mode, song_label).clicked() {
+            if let Some(ref mut sender) = command_sender {
+                sender.send(AudioCommand::SetPlayMode(PlayMode::Order));
+            }
+        }
+
+        let is_loop = play_mode == PlayMode::Loop;
+        let loop_label = if is_loop { "[Loop]" } else { " Loop " };
+        if ui.selectable_label(is_loop, loop_label).clicked() {
+            if let Some(ref mut sender) = command_sender {
+                if is_loop {
+                    sender.send(AudioCommand::SetPlayMode(PlayMode::Once));
+                } else {
+                    sender.send(AudioCommand::SetPlayMode(PlayMode::Loop));
+                }
+            }
         }
 
         ui.separator();

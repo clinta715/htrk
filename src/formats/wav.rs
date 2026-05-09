@@ -86,7 +86,7 @@ pub fn import_wav(data: &[u8]) -> FormatResult<Sample> {
     };
 
     Ok(Sample {
-        name: String::from("Imported"),
+        name: String::new(),
         data: Arc::new(samples),
         sample_rate,
         bits_per_sample: bits as u8,
@@ -174,7 +174,7 @@ mod tests {
         let imported = import_wav(&wav_bytes).unwrap();
         assert_eq!(imported.sample_rate, rate);
         assert_eq!(imported.data.len(), num_samples);
-        assert_eq!(imported.name, "Imported");
+        assert_eq!(imported.name, "");
 
         for i in 0..num_samples {
             let original_i16 = (data[i].clamp(-1.0, 1.0) * 32767.0) as i16;

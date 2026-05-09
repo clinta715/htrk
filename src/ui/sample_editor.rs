@@ -40,6 +40,7 @@ pub fn draw_sample_editor(
         // Sample List
         ui.vertical(|ui| {
             ui.set_width(220.0);
+            ui.set_height(ui.available_height());
 
             ui.horizontal(|ui| {
                 ui.heading("Samples");
@@ -56,7 +57,7 @@ pub fn draw_sample_editor(
             ui.separator();
 
             egui::ScrollArea::vertical()
-                .max_height(ui.available_height() - 60.0)
+                .auto_shrink([false, false])
                 .show(ui, |ui| {
                     let num_samples = module.samples.len();
                     if num_samples <= 1 {
@@ -162,6 +163,7 @@ pub fn draw_sample_editor(
                         sample.loop_end,
                         sample.loop_type != crate::sequencer::sample::LoopType::None,
                         selection,
+                        *selected_sample,
                     ) {
                         match w_event {
                             crate::ui::waveform::WaveformEvent::LoopStartChanged(pos) => {
@@ -180,7 +182,7 @@ pub fn draw_sample_editor(
                         ui.group(|ui| {
                             ui.set_width(200.0);
                             ui.heading("Playback");
-                            egui::Grid::new("sample_playback").show(ui, |ui| {
+                            egui::Grid::new(format!("sample_playback_{}", *selected_sample)).show(ui, |ui| {
                                 ui.label("Default Vol:");
                                 let mut vol = sample.default_volume;
                                 if ui.add(egui::Slider::new(&mut vol, 0..=64)).changed() {
@@ -210,7 +212,7 @@ pub fn draw_sample_editor(
                         ui.group(|ui| {
                             ui.set_width(200.0);
                             ui.heading("Tuning");
-                            egui::Grid::new("sample_tuning").show(ui, |ui| {
+                            egui::Grid::new(format!("sample_tuning_{}", *selected_sample)).show(ui, |ui| {
                                 ui.label("Relative Note:");
                                 let mut rel = sample.relative_note;
                                 if ui.add(egui::DragValue::new(&mut rel).range(-96..=95)).changed() {
@@ -237,7 +239,7 @@ pub fn draw_sample_editor(
                         ui.group(|ui| {
                             ui.set_width(250.0);
                             ui.heading("Loop");
-                            egui::Grid::new("sample_loop").show(ui, |ui| {
+                            egui::Grid::new(format!("sample_loop_{}", *selected_sample)).show(ui, |ui| {
                                 ui.label("Type:");
                                 ui.horizontal(|ui| {
                                     if ui.selectable_label(sample.loop_type == crate::sequencer::sample::LoopType::None, "Off").clicked() {

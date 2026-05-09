@@ -32,6 +32,7 @@ pub fn draw_channel_headers(
     muted_channels: &[bool],
     solo_channels: &[bool],
     channel_names: &[String],
+    channel_panning: &[u8],
     rename_state: &mut ChannelRenameState,
     theme: &TrackerTheme,
     playback_state: &AtomicPlaybackState,
@@ -142,6 +143,26 @@ pub fn draw_channel_headers(
                     };
                     painter.rect_filled(fill_rect, 0.0, color);
                 }
+
+                let pan_val = channel_panning.get(ch).copied().unwrap_or(32);
+                let (pan_rect, _) = ui.allocate_exact_size(egui::vec2(vu_width, 3.0), egui::Sense::hover());
+                let pan_painter = ui.painter_at(pan_rect);
+                pan_painter.rect_filled(pan_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+                let center_x = pan_rect.center().x;
+                let dot_x = pan_rect.left() + (pan_val as f32 / 64.0) * pan_rect.width();
+                pan_painter.line_segment(
+                    [egui::pos2(center_x, pan_rect.top()), egui::pos2(center_x, pan_rect.bottom())],
+                    egui::Stroke::new(0.5, egui::Color32::from_rgb(50, 50, 60)),
+                );
+                let dot_r = 2.0;
+                let dot_color = if pan_val < 20 {
+                    egui::Color32::from_rgb(100, 100, 255)
+                } else if pan_val > 44 {
+                    egui::Color32::from_rgb(255, 100, 100)
+                } else {
+                    egui::Color32::from_rgb(180, 180, 200)
+                };
+                pan_painter.circle_filled(egui::pos2(dot_x, pan_rect.center().y), dot_r, dot_color);
             });
         }
     });

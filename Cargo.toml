@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 audio_debug = []
+debug_log = []
 
 [dependencies]
 eframe = "0.31"

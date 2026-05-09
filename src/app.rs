@@ -5,6 +5,7 @@ use eframe::egui;
 use crate::audio::commands::AudioCommand;
 use crate::audio::engine::{CommandSender, create_engine_and_sender};
 use crate::audio::playback_state::AtomicPlaybackState;
+use crate::debug_log;
 use crate::edit::{
     SetCellCommand, InsertRowCommand, UndoManager, SampleProperty, SetSamplePropertyCommand,
     InstrumentProperty, SetInstrumentPropertyCommand, AddEnvelopePointCommand,
@@ -211,7 +212,8 @@ impl HtrkApp {
 
         let device = match device {
             Some(d) => {
-                eprintln!("[AUDIO] Using device: {:?}", d.name());
+                #[cfg(feature = "audio_debug")]
+                debug_log!("[AUDIO] Using device: {:?}", d.name());
                 d
             }
             None => {
@@ -231,7 +233,8 @@ impl HtrkApp {
         let actual_sample_rate = supported_config.sample_rate();
         let sample_format = supported_config.sample_format();
         let config = supported_config.config();
-        eprintln!("[AUDIO] Sample rate: {}, format: {:?}, channels: {}", actual_sample_rate, sample_format, config.channels);
+        #[cfg(feature = "audio_debug")]
+        debug_log!("[AUDIO] Sample rate: {}, format: {:?}, channels: {}", actual_sample_rate, sample_format, config.channels);
 
         self.current_sample_rate = actual_sample_rate;
         self.current_sample_format = format!("{:?}", sample_format);
@@ -248,6 +251,9 @@ impl HtrkApp {
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     engine.process_callback(data);
                 },
+                #[cfg(feature = "audio_debug")]
+                |err| debug_log!("Audio stream error: {}", err),
+                #[cfg(not(feature = "audio_debug"))]
                 |err| eprintln!("Audio stream error: {}", err),
                 None,
             ),
@@ -263,6 +269,9 @@ impl HtrkApp {
                         }
                         let _ = frames;
                     },
+                    #[cfg(feature = "audio_debug")]
+                    |err| debug_log!("Audio stream error: {}", err),
+                    #[cfg(not(feature = "audio_debug"))]
                     |err| eprintln!("Audio stream error: {}", err),
                     None,
                 )
@@ -278,11 +287,17 @@ impl HtrkApp {
                             *out = (s as i32 + 32768) as u16;
                         }
                     },
+                    #[cfg(feature = "audio_debug")]
+                    |err| debug_log!("Audio stream error: {}", err),
+                    #[cfg(not(feature = "audio_debug"))]
                     |err| eprintln!("Audio stream error: {}", err),
                     None,
                 )
             }
             _ => {
+                #[cfg(feature = "audio_debug")]
+                debug_log!("Unsupported sample format: {:?}", sample_format);
+                #[cfg(not(feature = "audio_debug"))]
                 eprintln!("Unsupported sample format: {:?}", sample_format);
                 return;
             }
@@ -294,11 +309,13 @@ impl HtrkApp {
                     eprintln!("[AUDIO] Failed to start audio stream: {}", e);
                     return;
                 }
-                eprintln!("[AUDIO] Audio stream started successfully");
+                #[cfg(feature = "audio_debug")]
+                debug_log!("[AUDIO] Audio stream started successfully");
                 self.stream = Some(stream);
                 self.command_sender = Some(sender);
                 if let Some(ref module) = self.module {
-                    eprintln!("[AUDIO] Loading module: {} ({} samples, {} instruments)", 
+                    #[cfg(feature = "audio_debug")]
+                    debug_log!("[AUDIO] Loading module: {} ({} samples, {} instruments)",
                         module.name, module.samples.len(), module.instruments.len());
                     self.send_command(AudioCommand::LoadModule(module.clone()));
                 }
@@ -318,9 +335,12 @@ impl HtrkApp {
 
     fn send_command(&mut self, cmd: AudioCommand) {
         #[cfg(feature = "audio_debug")]
-        eprintln!("[CMD] {:?}", cmd);
+        debug_log!("[CMD] {:?}", cmd);
         if let Some(ref mut sender) = self.command_sender {
             sender.send(cmd);
+        } else {
+            #[cfg(feature = "audio_debug")]
+            debug_log!("[CMD] Error: command_sender is None!");
         }
     }
 
@@ -2117,12 +2137,14 @@ impl eframe::App for HtrkApp {
                         self.cursor.row = 0;
                         self.scroll_row = 0;
                     }
+                    let mut changed = false;
                     self.ensure_module_ownership();
                     if let Some(ref mut m) = self.module {
                         if let Some(arc_module) = Arc::get_mut(m) {
                             if let Some((order_idx, new_pat)) = pattern_changed {
                                 if order_idx < arc_module.order_list.len() {
                                     arc_module.order_list[order_idx] = new_pat;
+                                    changed = true;
                                 }
                             }
                             if should_insert || should_delete {
@@ -2130,6 +2152,7 @@ impl eframe::App for HtrkApp {
                                     let new_pat = arc_module.patterns.len() as u8;
                                     arc_module.patterns.push(crate::sequencer::Pattern::new(64));
                                     arc_module.order_list.insert(self.selected_order + 1, new_pat);
+                                    changed = true;
                                 }
                                 if should_delete && arc_module.order_list.len() > 1 {
                                     if self.selected_order < arc_module.order_list.len() {
@@ -2137,6 +2160,7 @@ impl eframe::App for HtrkApp {
                                         if self.selected_order >= arc_module.order_list.len() {
                                             self.selected_order = arc_module.order_list.len().saturating_sub(1);
                                         }
+                                        changed = true;
                                     }
                                 }
                             }
@@ -2147,6 +2171,7 @@ impl eframe::App for HtrkApp {
                                     let insert_at = insert_at.min(arc_module.order_list.len());
                                     arc_module.order_list.insert(insert_at, item);
                                     self.selected_order = insert_at;
+                                    changed = true;
                                 }
                             }
                             if should_duplicate {
@@ -2158,17 +2183,21 @@ impl eframe::App for HtrkApp {
                                     let insert_at = (self.selected_order + 1).min(arc_module.order_list.len());
                                     arc_module.order_list.insert(insert_at, new_idx);
                                     self.selected_order = insert_at;
+                                    changed = true;
                                 }
                             }
                             if let Some((order_idx, new_rows)) = pattern_resized {
                                 let pat_idx = *arc_module.order_list.get(order_idx).unwrap_or(&0) as usize;
                                 if pat_idx < arc_module.patterns.len() {
                                     arc_module.patterns[pat_idx].resize_rows(new_rows);
+                                    changed = true;
                                 }
                             }
                         }
                     }
-                    self.sync_module_to_audio();
+                    if changed {
+                        self.sync_module_to_audio();
+                    }
                 } else {
                     ui.label("No module loaded");
                 }

@@ -27,6 +27,7 @@ pub struct MenuResponse {
     pub select_device: Option<String>,
     pub show_shortcuts: bool,
     pub show_about: bool,
+    pub show_settings: bool,
 }
 
 impl Default for MenuResponse {
@@ -56,6 +57,7 @@ impl Default for MenuResponse {
             select_device: None,
             show_shortcuts: false,
             show_about: false,
+            show_settings: false,
         }
     }
 }
@@ -100,6 +102,11 @@ pub fn draw_menu_bar(
             }
             if ui.button("Save As...  Ctrl+Shift+S").clicked() {
                 resp.save_as = true;
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button("Settings...    F10").clicked() {
+                resp.show_settings = true;
                 ui.close_menu();
             }
         });

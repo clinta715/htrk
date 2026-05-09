@@ -1,4 +1,5 @@
 use crate::sequencer::instrument::{EnvelopeFlags, EnvelopePoint};
+use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
 use std::sync::Arc;
 
@@ -393,6 +394,10 @@ pub enum InstrumentProperty {
     FilterCutoff(u16),
     FilterResonance(u8),
     FilterType(crate::sequencer::effect::FilterType),
+    VibType(u8),
+    VibSweep(u8),
+    VibDepth(u8),
+    VibRate(u8),
 }
 
 pub struct SetInstrumentPropertyCommand {
@@ -421,6 +426,10 @@ impl EditCommand for SetInstrumentPropertyCommand {
             InstrumentProperty::FilterCutoff(c) => inst.filter_cutoff = *c,
             InstrumentProperty::FilterResonance(r) => inst.filter_resonance = *r,
             InstrumentProperty::FilterType(t) => inst.filter_type = *t,
+            InstrumentProperty::VibType(v) => inst.vib_type = *v,
+            InstrumentProperty::VibSweep(v) => inst.vib_sweep = *v,
+            InstrumentProperty::VibDepth(v) => inst.vib_depth = *v,
+            InstrumentProperty::VibRate(v) => inst.vib_rate = *v,
         }
         Ok(())
     }
@@ -444,6 +453,10 @@ impl EditCommand for SetInstrumentPropertyCommand {
             InstrumentProperty::FilterCutoff(c) => inst.filter_cutoff = *c,
             InstrumentProperty::FilterResonance(r) => inst.filter_resonance = *r,
             InstrumentProperty::FilterType(t) => inst.filter_type = *t,
+            InstrumentProperty::VibType(v) => inst.vib_type = *v,
+            InstrumentProperty::VibSweep(v) => inst.vib_sweep = *v,
+            InstrumentProperty::VibDepth(v) => inst.vib_depth = *v,
+            InstrumentProperty::VibRate(v) => inst.vib_rate = *v,
         }
         Ok(())
     }
@@ -773,5 +786,187 @@ impl EditCommand for SetEnvelopeFlagsCommand {
 
     fn description(&self) -> &str {
         "Set Envelope Flags"
+    }
+}
+
+pub struct TransposeCommand {
+    pub order: usize,
+    pub delta: i8,
+    pub old_notes: Vec<(usize, usize, Note)>,
+}
+
+impl EditCommand for TransposeCommand {
+    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
+        if pat_idx >= module.patterns.len() {
+            return Err(EditError::NoSelection);
+        }
+        for &(row, ch, note) in &self.old_notes {
+            if let Note::On(key) = note {
+                let new_key = (key as i8 + self.delta).max(0).min(119) as u8;
+                module.patterns[pat_idx].data[row][ch].note = Note::On(new_key);
+            }
+        }
+        Ok(())
+    }
+
+    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
+        if pat_idx >= module.patterns.len() {
+            return Err(EditError::NoSelection);
+        }
+        for &(row, ch, note) in &self.old_notes {
+            module.patterns[pat_idx].data[row][ch].note = note;
+        }
+        Ok(())
+    }
+
+    fn description(&self) -> &str {
+        "Transpose"
+    }
+}
+
+pub struct FillInstrumentCommand {
+    pub order: usize,
+    pub old_cells: Vec<(usize, usize, Cell)>,
+    pub instrument: u8,
+}
+
+impl EditCommand for FillInstrumentCommand {
+    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
+        if pat_idx >= module.patterns.len() {
+            return Err(EditError::NoSelection);
+        }
+        for &(row, ch, _) in &self.old_cells {
+            let cell = &mut module.patterns[pat_idx].data[row][ch];
+            if cell.note != Note::None {
+                cell.instrument = Some(self.instrument);
+            }
+        }
+        Ok(())
+    }
+
+    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
+        if pat_idx >= module.patterns.len() {
+            return Err(EditError::NoSelection);
+        }
+        for (row, ch, old_cell) in &self.old_cells {
+            module.patterns[pat_idx].data[*row][*ch] = *old_cell;
+        }
+        Ok(())
+    }
+
+    fn description(&self) -> &str {
+        "Fill Instrument"
+    }
+}
+
+pub struct InterpolateCommand {
+    pub order: usize,
+    pub old_cells: Vec<(usize, usize, Cell)>,
+    pub new_cells: Vec<(usize, usize, Cell)>,
+}
+
+impl EditCommand for InterpolateCommand {
+    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
+        if pat_idx >= module.patterns.len() {
+            return Err(EditError::NoSelection);
+        }
+        for (row, ch, cell) in &self.new_cells {
+            module.patterns[pat_idx].data[*row][*ch] = *cell;
+        }
+        Ok(())
+    }
+
+    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
+        if pat_idx >= module.patterns.len() {
+            return Err(EditError::NoSelection);
+        }
+        for (row, ch, cell) in &self.old_cells {
+            module.patterns[pat_idx].data[*row][*ch] = *cell;
+        }
+        Ok(())
+    }
+
+    fn description(&self) -> &str {
+        "Interpolate"
+    }
+}
+
+pub struct ReverseCommand {
+    pub order: usize,
+    pub channel: usize,
+    pub start_row: usize,
+    pub end_row: usize,
+    pub old_cells: Vec<Cell>,
+}
+
+impl EditCommand for ReverseCommand {
+    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
+        if pat_idx >= module.patterns.len() {
+            return Err(EditError::NoSelection);
+        }
+        let mut cells: Vec<Cell> = (self.start_row..=self.end_row)
+            .map(|r| module.patterns[pat_idx].data[r][self.channel])
+            .collect();
+        cells.reverse();
+        for (i, r) in (self.start_row..=self.end_row).enumerate() {
+            module.patterns[pat_idx].data[r][self.channel] = cells[i];
+        }
+        Ok(())
+    }
+
+    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
+        if pat_idx >= module.patterns.len() {
+            return Err(EditError::NoSelection);
+        }
+        for (i, r) in (self.start_row..=self.end_row).enumerate() {
+            module.patterns[pat_idx].data[r][self.channel] = self.old_cells[i];
+        }
+        Ok(())
+    }
+
+    fn description(&self) -> &str {
+        "Reverse"
+    }
+}
+
+pub struct RandomizeCommand {
+    pub order: usize,
+    pub old_cells: Vec<(usize, usize, Cell)>,
+    pub new_cells: Vec<(usize, usize, Cell)>,
+}
+
+impl EditCommand for RandomizeCommand {
+    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
+        if pat_idx >= module.patterns.len() {
+            return Err(EditError::NoSelection);
+        }
+        for (row, ch, cell) in &self.new_cells {
+            module.patterns[pat_idx].data[*row][*ch] = *cell;
+        }
+        Ok(())
+    }
+
+    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
+        if pat_idx >= module.patterns.len() {
+            return Err(EditError::NoSelection);
+        }
+        for (row, ch, cell) in &self.old_cells {
+            module.patterns[pat_idx].data[*row][*ch] = *cell;
+        }
+        Ok(())
+    }
+
+    fn description(&self) -> &str {
+        "Randomize"
     }
 }
