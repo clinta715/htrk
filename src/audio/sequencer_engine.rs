@@ -1217,14 +1217,14 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             }
 
             Effect::PatternLoop { count } => {
-                if !is_xm {
-                    if *count == 0 {
-                        if self.state.pattern_loop_count == 0 {
-                            self.state.pattern_loop_start = Some((self.state.current_order, self.state.current_row));
-                        }
-                    } else if self.state.pattern_loop_count == 0 {
-                        self.state.pattern_loop_count = *count;
+                if is_xm {
+                    // XM doesn't support pattern loops, skip
+                } else if *count == 0 {
+                    if self.state.pattern_loop_count == 0 {
+                        self.state.pattern_loop_start = Some((self.state.current_order, self.state.current_row));
                     }
+                } else if self.state.pattern_loop_count == 0 {
+                    self.state.pattern_loop_count = *count;
                 }
             }
 
@@ -4015,5 +4015,92 @@ mod tests {
             engine.voices.iter().any(|v| v.active && v.channel == Some(0)),
             "Voice should be active on ch0 at tick 3 (delayed note trigger)"
         );
+    }
+
+    #[test]
+    fn mod_pattern_loop_sets_loop_start() {
+        use crate::sequencer::pattern::Pattern;
+
+        let mut engine = SequencerEngine::new(48000.0);
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            ..Module::default()
+        });
+
+        engine.load_module(module.clone());
+        engine.play();
+
+        engine.state.current_order = 2;
+        engine.state.current_row = 16;
+        engine.state.channels.resize(1, ChannelState::default());
+        engine.use_xm_model = false;
+
+        // E6x with count=0 sets loop start
+        let cell = Cell {
+            effect: Effect::PatternLoop { count: 0 },
+            ..Cell::default()
+        };
+
+        engine.process_cell_unified(0, &cell);
+
+        // Loop start should be captured
+        assert!(
+            engine.state.pattern_loop_start.is_some(),
+            "Pattern loop start should be set when count=0"
+        );
+        let (order, row) = engine.state.pattern_loop_start.unwrap();
+        assert_eq!(order, 2);
+        assert_eq!(row, 16);
+    }
+
+    #[test]
+    fn mod_pattern_loop_executes_loop() {
+        use crate::sequencer::pattern::Pattern;
+
+        let mut engine = SequencerEngine::new(48000.0);
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            ..Module::default()
+        });
+
+        engine.load_module(module.clone());
+        engine.play();
+
+        engine.state.current_order = 0;
+        engine.state.current_row = 4;
+        engine.state.channels.resize(1, ChannelState::default());
+        engine.use_xm_model = false;
+
+        // First, E60 to set loop start at row 4
+        let cell_start = Cell {
+            effect: Effect::PatternLoop { count: 0 },
+            ..Cell::default()
+        };
+        engine.process_cell_unified(0, &cell_start);
+        assert!(engine.state.pattern_loop_start.is_some());
+
+        // Reset row for the test
+        engine.state.current_row = 0;
+
+        // Then E62 (count=2) to set loop repeat count
+        let cell_loop = Cell {
+            effect: Effect::PatternLoop { count: 2 },
+            ..Cell::default()
+        };
+        engine.process_cell_unified(0, &cell_loop);
+
+        assert_eq!(engine.state.pattern_loop_count, 2);
+
+        // After advance_row, should loop back and decrement
+        engine.advance_row();
+
+        assert_eq!(engine.state.pattern_loop_count, 1);
+        assert_eq!(engine.state.current_row, 4);
     }
 }

@@ -110,7 +110,7 @@ fn convert_effect(effect_code: u8, effect_param: u8) -> Effect {
             volume: effect_param.min(64),
         },
         0xD => {
-            let row = (effect_param >> 4) * 10 + (effect_param & 0x0F);
+            let row = effect_param;
             Effect::PatternBreak { row }
         }
         0xE => {
@@ -488,7 +488,8 @@ mod tests {
 
     #[test]
     fn convert_effect_pattern_break() {
-        assert_eq!(convert_effect(0xD, 0x13), Effect::PatternBreak { row: 13 });
+        // MOD uses plain binary: 0x0D = decimal 13
+        assert_eq!(convert_effect(0xD, 0x0D), Effect::PatternBreak { row: 13 });
     }
 
     #[test]

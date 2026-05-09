@@ -1,5 +1,25 @@
 # Bug Fixes
 
+## MOD Positional Commands Fix
+**Date:** 2026-05-09
+
+### Symptom
+.MOD playback can get stuck in infinite repeating loops or skip to incorrect positions when positional commands are used.
+
+### Root Cause
+1.  **Effect Dxx (Pattern Break):** The row was decoded as BCD (binary-coded decimal), but MOD files use plain binary. For example, D1E (row 30) decoded as (1×10 + 14) = 24 instead of 30.
+2.  **Effect E6x (Pattern Loop):** The format check was inverted. The condition `if !is_xm` incorrectly skipped the effect for MOD/S3M formats and only processed it for non-MOD (XM). Since MOD and S3M support pattern loops but XM doesn't, this caused loops to be ignored in MOD files.
+
+### Fix
+- **modfile.rs:** Changed row calculation in `convert_effect` from BCD `(param >> 4) * 10 + (param & 0x0F)` to plain binary `param`.
+- **sequencer_engine.rs:** Changed condition in `PatternLoop` handling from `if !is_xm` to `if is_xm` to skip only for XM, allowing MOD/S3M to use pattern loops.
+
+### Verification
+- Added `mod_pattern_loop_sets_loop_start` unit test.
+- Added `mod_pattern_loop_executes_loop` unit test.
+- Updated `convert_effect_pattern_break` test to use correct binary value.
+- All 176 library tests pass.
+
 ## Playback Stall and Timing Accuracy Fix
 **Date:** 2026-05-09
 
