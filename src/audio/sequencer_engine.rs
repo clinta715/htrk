@@ -122,6 +122,7 @@ impl SequencerEngine {
         self.state.row_delay_active = false;
         self.state.pattern_loop_start = None;
         self.state.pattern_loop_count = 0;
+        self.state.pattern_loop_final_pass = false;
 
         self.state.playing = true;
         self.state.paused = false;
@@ -165,6 +166,7 @@ impl SequencerEngine {
         self.state.row_delay_active = false;
         self.state.pattern_loop_start = None;
         self.state.pattern_loop_count = 0;
+        self.state.pattern_loop_final_pass = false;
 
         self.state.playing = true;
         self.state.paused = false;
@@ -1220,11 +1222,20 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 if is_xm {
                     // XM doesn't support pattern loops, skip
                 } else if *count == 0 {
+                    // Set loop start point
                     if self.state.pattern_loop_count == 0 {
                         self.state.pattern_loop_start = Some((self.state.current_order, self.state.current_row));
                     }
-                } else if self.state.pattern_loop_count == 0 {
-                    self.state.pattern_loop_count = *count;
+                } else if !self.state.pattern_loop_final_pass {
+                    // Trigger jump at end of row
+                    if self.state.pattern_loop_count == 0 {
+                        self.state.pattern_loop_count = *count;
+                    }
+                    
+                    let loop_row = self.state.pattern_loop_start
+                        .map(|(_, row)| row)
+                        .unwrap_or(0);
+                    self.state.pattern_loop_jump_target = Some(loop_row);
                 }
             }
 
@@ -3001,6 +3012,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 self.state.current_pattern = self.get_pattern_for_order(target_order as u16);
                 let target_row = self.state.pattern_break_row.take().unwrap_or(0);
                 self.state.current_row = target_row;
+                self.reset_pattern_loop_state();
                 return;
             } else {
                 self.stop();
@@ -3016,6 +3028,24 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             }
             self.state.current_pattern = self.get_pattern_for_order(self.state.current_order);
             self.state.current_row = target_row;
+            self.reset_pattern_loop_state();
+            return;
+        }
+
+        // Handle Pattern Loop jump
+        if let Some(target_row) = self.state.pattern_loop_jump_target.take() {
+            debug_log!("[LOOP] Jump to {} count={}", target_row, self.state.pattern_loop_count);
+            if self.state.pattern_loop_count > 0 {
+                self.state.current_row = target_row;
+                self.state.pattern_loop_count -= 1;
+                if self.state.pattern_loop_count == 0 {
+                    self.state.pattern_loop_start = None;
+                    self.state.pattern_loop_final_pass = true;
+                }
+            } else {
+                self.state.pattern_loop_start = None;
+                self.state.pattern_loop_final_pass = true;
+            }
             return;
         }
 
@@ -3026,21 +3056,19 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             64
         };
 
-        if self.state.pattern_loop_count > 0 {
-            if let Some((loop_order, loop_row)) = self.state.pattern_loop_start {
-                self.state.current_order = loop_order;
-                self.state.current_row = loop_row;
-                self.state.current_pattern = self.get_pattern_for_order(loop_order);
-                self.state.pattern_loop_count -= 1;
-                if self.state.pattern_loop_count == 0 {
-                    self.state.pattern_loop_start = None;
-                }
-                return;
-            }
-        }
-
         let next_row = self.state.current_row as usize + 1;
         if next_row >= pattern_rows {
+            if self.state.pattern_loop_count > 0 {
+                if let Some((_loop_order, loop_row)) = self.state.pattern_loop_start {
+                    self.state.current_row = loop_row;
+                    self.state.pattern_loop_count -= 1;
+                    if self.state.pattern_loop_count == 0 {
+                        self.state.pattern_loop_start = None;
+                        self.state.pattern_loop_final_pass = true;
+                    }
+                    return;
+                }
+            }
             self.state.current_order += 1;
             if (self.state.current_order as usize) >= module.order_list.len() {
                 self.handle_song_end();
@@ -3048,9 +3076,18 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             }
             self.state.current_pattern = self.get_pattern_for_order(self.state.current_order);
             self.state.current_row = 0;
+            self.reset_pattern_loop_state();
         } else {
             self.state.current_row = next_row as u8;
         }
+    }
+
+    fn reset_pattern_loop_state(&mut self) {
+        debug_log!("[LOOP] Resetting pattern loop state");
+        self.state.pattern_loop_start = None;
+        self.state.pattern_loop_count = 0;
+        self.state.pattern_loop_final_pass = false;
+        self.state.pattern_loop_jump_target = None;
     }
 
     fn handle_song_end(&mut self) {
@@ -4085,8 +4122,8 @@ mod tests {
         engine.process_cell_unified(0, &cell_start);
         assert!(engine.state.pattern_loop_start.is_some());
 
-        // Reset row for the test
-        engine.state.current_row = 0;
+        // Move to row 63 (last row) for the loop trigger
+        engine.state.current_row = 63;
 
         // Then E62 (count=2) to set loop repeat count
         let cell_loop = Cell {
@@ -4097,10 +4134,161 @@ mod tests {
 
         assert_eq!(engine.state.pattern_loop_count, 2);
 
-        // After advance_row, should loop back and decrement
+        // After advance_row from last row, should loop back and decrement
         engine.advance_row();
 
         assert_eq!(engine.state.pattern_loop_count, 1);
         assert_eq!(engine.state.current_row, 4);
+    }
+
+    #[test]
+    fn mod_pattern_loop_advances_to_next_order() {
+        use crate::sequencer::pattern::Pattern;
+
+        let mut engine = SequencerEngine::new(48000.0);
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0, 1],
+            patterns: vec![
+                Pattern::new(64),
+                Pattern::new(64),
+            ],
+            ..Module::default()
+        });
+
+        engine.load_module(module.clone());
+        engine.play();
+
+        engine.state.current_order = 0;
+        engine.state.current_row = 4;
+        engine.state.channels.resize(1, ChannelState::default());
+        engine.use_xm_model = false;
+
+        // E60 to set loop start at row 4
+        let cell_start = Cell {
+            effect: Effect::PatternLoop { count: 0 },
+            ..Cell::default()
+        };
+        engine.process_cell_unified(0, &cell_start);
+        assert!(engine.state.pattern_loop_start.is_some());
+
+        // Move to row 63 for the trigger
+        engine.state.current_row = 63;
+
+        // E61 (count=1) to trigger one loop iteration
+        let cell_loop = Cell {
+            effect: Effect::PatternLoop { count: 1 },
+            ..Cell::default()
+        };
+        engine.process_cell_unified(0, &cell_loop);
+        assert_eq!(engine.state.pattern_loop_count, 1);
+
+        // advance_row: count 1->0, loop back to row 4
+        engine.advance_row();
+        assert_eq!(engine.state.pattern_loop_count, 0);
+        assert_eq!(engine.state.current_row, 4);
+        assert_eq!(engine.state.current_order, 0);
+        assert_eq!(engine.state.pattern_loop_start, None);
+
+        // Advance from row 4 through the rest of the pattern back to row 63
+        for _ in 0..59 {
+            engine.advance_row();
+        }
+        assert_eq!(engine.state.current_row, 63);
+        assert_eq!(engine.state.current_order, 0);
+
+        // Now at row 63 again with no loop active - advance past last row to next order
+        engine.advance_row();
+        assert_eq!(engine.state.current_order, 1);
+        assert_eq!(engine.state.current_row, 0);
+    }
+
+    #[test]
+    fn mod_pattern_loop_count_3_exits_correctly() {
+        use crate::sequencer::pattern::Pattern;
+
+        let mut engine = SequencerEngine::new(48000.0);
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0, 1],
+            patterns: vec![
+                Pattern::new(64),
+                Pattern::new(64),
+            ],
+            ..Module::default()
+        });
+
+        engine.load_module(module.clone());
+        engine.play();
+
+        engine.state.current_order = 0;
+        engine.state.current_row = 0;
+        engine.state.channels.resize(1, ChannelState::default());
+        engine.use_xm_model = false;
+
+        // E60 to set loop start at row 0
+        let cell_start = Cell {
+            effect: Effect::PatternLoop { count: 0 },
+            ..Cell::default()
+        };
+        engine.process_cell_unified(0, &cell_start);
+        assert!(engine.state.pattern_loop_start.is_some());
+
+        // Move to row 63
+        engine.state.current_row = 63;
+
+        // E63 (count=3) - same as wash.mod pattern 3
+        let cell_loop = Cell {
+            effect: Effect::PatternLoop { count: 3 },
+            ..Cell::default()
+        };
+        engine.process_cell_unified(0, &cell_loop);
+        assert_eq!(engine.state.pattern_loop_count, 3);
+
+        // Iteration 1: count 3->2, jump back to row 0
+        engine.advance_row();
+        assert_eq!(engine.state.pattern_loop_count, 2);
+        assert_eq!(engine.state.current_row, 0);
+        assert_eq!(engine.state.current_order, 0);
+
+        // Advance to row 63
+        for _ in 0..63 {
+            engine.advance_row();
+        }
+        assert_eq!(engine.state.current_row, 63);
+
+        // Iteration 2: count 2->1, jump back to row 0
+        engine.advance_row();
+        assert_eq!(engine.state.pattern_loop_count, 1);
+        assert_eq!(engine.state.current_row, 0);
+        assert_eq!(engine.state.current_order, 0);
+
+        // Advance to row 63
+        for _ in 0..63 {
+            engine.advance_row();
+        }
+        assert_eq!(engine.state.current_row, 63);
+
+        // Iteration 3 (final): count 1->0, jump back to row 0 for final pass
+        engine.advance_row();
+        assert_eq!(engine.state.pattern_loop_count, 0);
+        assert_eq!(engine.state.pattern_loop_start, None);
+        assert_eq!(engine.state.pattern_loop_final_pass, true);
+        assert_eq!(engine.state.current_row, 0);
+        assert_eq!(engine.state.current_order, 0);
+
+        // Advance through final pass to row 63 (loop commands ignored due to final_pass flag)
+        for _ in 0..63 {
+            engine.advance_row();
+        }
+        assert_eq!(engine.state.current_row, 63);
+
+        // Advance past row 63 to next order
+        engine.advance_row();
+        assert_eq!(engine.state.current_order, 1);
+        assert_eq!(engine.state.current_row, 0);
+        assert_eq!(engine.state.pattern_loop_final_pass, false);
     }
 }

@@ -197,6 +197,8 @@ pub struct SequencerState {
     pub row_delay_active: bool,
     pub pattern_loop_start: Option<(u16, u8)>,
     pub pattern_loop_count: u8,
+    pub pattern_loop_final_pass: bool,
+    pub pattern_loop_jump_target: Option<u8>,
 
     pub channels: Vec<ChannelState>,
 
@@ -226,6 +228,8 @@ impl Default for SequencerState {
             row_delay_active: false,
             pattern_loop_start: None,
             pattern_loop_count: 0,
+            pattern_loop_final_pass: false,
+            pattern_loop_jump_target: None,
             channels: vec![ChannelState::default(); 64],
             play_mode: PlayMode::Once,
         }
@@ -264,3 +268,4 @@ mod tests {
         assert_ne!(PlayMode::Pattern, PlayMode::Order);
     }
 }
+
