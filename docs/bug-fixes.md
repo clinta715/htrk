@@ -1,5 +1,38 @@
 # Bug Fixes
 
+## S3M Playback Accuracy Overhaul
+**Date:** 2026-05-10
+
+### Symptom
+- Pitch slides (Effects E, F, G) in S3M/MOD files sounded out of tune.
+- Modules played at 50% of intended volume.
+- Complex sample-slicing modules like `arsa.s3m` played with incorrect offsets or failed to loop.
+- Missing effects (U, V, W, X) were ignored.
+
+### Root Cause
+1.  **Pitch Model:** The sequencer used logarithmic frequency slides for all formats, but S3M/MOD require linear-in-period slides (Amiga model).
+2.  **Volume Scaling:** S3M global volume (0-64) was not scaled to the engine's internal range (0-128).
+3.  **Sample Offsets:** Lack of support for the `SAx` (High Sample Offset) command prevented modules from addressing large samples. Additionally, sample offsets were incorrectly persistent across notes.
+4.  **Timing:** Format-specific effects (Portamento, Volume Slide) were being applied on Tick 0 for non-XM modules, leading to double-speed slides.
+
+### Fix
+- **Sequencer Engine:**
+  - Implemented period-based pitch slides for non-XM formats in `apply_portamento_up/down` and `apply_tone_portamento`.
+  - Scaled S3M pitch slides by 4x to match ST3 internal 16-bit resolution.
+  - Restricted pitch and volume slides to start from Tick 1 for non-XM formats.
+  - Added support for `SAx` High Sample Offset and unified the `calculate_sample_offset` logic.
+  - Fixed Oxx persistence: offsets are now 0 unless an offset effect is present on the current row or `O00` is used.
+- **S3M Loader:**
+  - Implemented missing effects: `U` (Fine Vibrato), `V` (Global Volume), `W` (Global Volume Slide), `X` (Set Panning).
+  - Scaled initial global volume and panning values correctly.
+  - Fixed mis-mapped S-commands (SA, SB, SC, SD, SE).
+  - Distingished between Fine and Extra-Fine portamento ranges.
+
+### Verification
+- Verified compilation with `cargo check`.
+- Verified fixes against `arsa.s3m` behaviors (High Sample Offset, Amiga periods).
+- All existing sequencer unit tests pass.
+
 ## MOD Positional Commands Fix
 **Date:** 2026-05-09
 

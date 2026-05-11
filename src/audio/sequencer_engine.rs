@@ -522,14 +522,16 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             0
         };
 
-        let vol = self.compute_channel_volume(channel);
-        let pan = self.compute_channel_panning(channel);
+        let sample_offset = self.calculate_sample_offset(channel, cell, sample);
 
         self.handle_nna(channel, NewNoteAction::NoteCut,
             DuplicateCheckType::Disabled, DuplicateCheckAction::NoteCut,
             instrument_idx as usize, sample_idx as usize);
 
         let voice_idx = self.allocate_voice(channel);
+        let vol = self.compute_channel_volume(channel);
+        let pan = self.compute_channel_panning(channel);
+
         let voice = &mut self.voices[voice_idx];
         voice.trigger(
             sample.data.clone(),
@@ -541,7 +543,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             self.output_sample_rate,
             vol,
             pan,
-            0,
+            sample_offset,
             Some(instrument_idx as u8),
             Some(sample_idx as u8),
             Note::On(note_key),
@@ -552,34 +554,10 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         if sample.loop_type == LoopType::Backward {
             voice.direction = -1.0;
             let max_pos = sample.data.len().max(1) - 1;
-            voice.position = max_pos as f64;
+            if sample_offset == 0 {
+                voice.position = max_pos as f64;
+            }
         }
-
-        // Voice sample offset
-        let sample_offset = match &cell.effect {
-            Effect::SetSampleOffset { offset } => {
-                let off = *offset as usize;
-                if sample.loop_start < sample.loop_end && off >= sample.loop_end {
-                    sample.loop_start + (off - sample.loop_start) % (sample.loop_end - sample.loop_start)
-                } else {
-                    off.min(sample.data.len().saturating_sub(1))
-                }
-            }
-            Effect::FormatSpecific(fe) => {
-                if let Some(offset) = fe.sample_offset() {
-                    let off = offset as usize;
-                    if sample.loop_start < sample.loop_end && off >= sample.loop_end {
-                        sample.loop_start + (off - sample.loop_start) % (sample.loop_end - sample.loop_start)
-                    } else {
-                        off.min(sample.data.len().saturating_sub(1))
-                    }
-                } else {
-                    self.state.channels[channel].last_sample_offset as usize
-                }
-            }
-            _ => self.state.channels[channel].last_sample_offset as usize
-        };
-        voice.position = sample_offset as f64;
 
         // Setup envelopes for XM
         if instrument_idx > 0 && instrument_idx < module.instruments.len() {
@@ -648,14 +626,47 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             voice.instrument_index = Some(instrument_idx as u8);
         }
 
-        // Set sample offset on channel state
+        // Update last_sample_offset based on current effect
         if let Effect::SetSampleOffset { offset } = &cell.effect {
-            self.state.channels[channel].last_sample_offset = *offset;
+            if *offset > 0 {
+                self.state.channels[channel].last_sample_offset = *offset;
+            }
         } else if let Effect::FormatSpecific(fe) = &cell.effect {
             if let Some(offset) = fe.sample_offset() {
-                self.state.channels[channel].last_sample_offset = offset;
+                if offset > 0 {
+                    self.state.channels[channel].last_sample_offset = offset;
+                }
             }
         }
+    }
+
+    fn calculate_sample_offset(&self, channel: usize, cell: &Cell, sample: &Sample) -> usize {
+        let ch = &self.state.channels[channel];
+        let offset = match &cell.effect {
+            Effect::SetSampleOffset { offset } => {
+                let off = if *offset == 0 {
+                    ch.last_sample_offset as u32
+                } else {
+                    *offset as u32
+                };
+                ((ch.high_sample_offset as u32) << 16) | off
+            }
+            Effect::FormatSpecific(fe) => {
+                if let Some(offset) = fe.sample_offset() {
+                    let off = if offset == 0 {
+                        ch.last_sample_offset as u32
+                    } else {
+                        offset as u32
+                    };
+                    ((ch.high_sample_offset as u32) << 16) | off
+                } else {
+                    0
+                }
+            }
+            _ => 0,
+        } as usize;
+
+        offset.min(sample.data.len().saturating_sub(1))
     }
 
     fn handle_note_off_period(&mut self, channel: usize) {
@@ -781,6 +792,11 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     FormatEffect::Xm(XmEffect::KeyOff { .. }) => {
                         ch.active_effects.key_off = true;
                     }
+                    FormatEffect::S3m(S3mEffect::Raw { effect, param }) => {
+                        if *effect == 0x19A {
+                            ch.high_sample_offset = *param;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -830,26 +846,21 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     ch.last_portamento_up_speed = *speed;
                 }
                 ch.active_effects.portamento_up = true;
-                if is_row_start {
-                    if is_xm {
-                        if *speed > 0 {
-                            let spd = (*speed as u16) << 2;
-                            ch.real_period = ch.real_period.saturating_sub(spd).max(1);
-                            ch.out_period = ch.real_period;
-                            let out = ch.out_period;
-                            let module = self.module.as_ref().unwrap().clone();
-                            let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
-                            let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
-                            for voice in &mut self.voices {
-                                if voice.active && voice.channel == Some(channel) {
-                                    voice.current_frequency = freq;
-                                    voice.sample_delta = delta;
-                                }
+                if is_row_start && is_xm {
+                    if *speed > 0 {
+                        let spd = (*speed as u16) << 2;
+                        ch.real_period = ch.real_period.saturating_sub(spd).max(1);
+                        ch.out_period = ch.real_period;
+                        let out = ch.out_period;
+                        let module = self.module.as_ref().unwrap().clone();
+                        let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                        let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
+                        for voice in &mut self.voices {
+                            if voice.active && voice.channel == Some(channel) {
+                                voice.current_frequency = freq;
+                                voice.sample_delta = delta;
                             }
                         }
-                    } else {
-                        let s = self.state.channels[channel].last_portamento_up_speed;
-                        self.apply_portamento_up(channel, s);
                     }
                 }
             }
@@ -859,26 +870,21 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     ch.last_portamento_down_speed = *speed;
                 }
                 ch.active_effects.portamento_down = true;
-                if is_row_start {
-                    if is_xm {
-                        if *speed > 0 {
-                            let spd = (*speed as u16) << 2;
-                            ch.real_period = ch.real_period.saturating_add(spd).min(31999);
-                            ch.out_period = ch.real_period;
-                            let out = ch.out_period;
-                            let module = self.module.as_ref().unwrap().clone();
-                            let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
-                            let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
-                            for voice in &mut self.voices {
-                                if voice.active && voice.channel == Some(channel) {
-                                    voice.current_frequency = freq;
-                                    voice.sample_delta = delta;
-                                }
+                if is_row_start && is_xm {
+                    if *speed > 0 {
+                        let spd = (*speed as u16) << 2;
+                        ch.real_period = ch.real_period.saturating_add(spd).min(31999);
+                        ch.out_period = ch.real_period;
+                        let out = ch.out_period;
+                        let module = self.module.as_ref().unwrap().clone();
+                        let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                        let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
+                        for voice in &mut self.voices {
+                            if voice.active && voice.channel == Some(channel) {
+                                voice.current_frequency = freq;
+                                voice.sample_delta = delta;
                             }
                         }
-                    } else {
-                        let s = self.state.channels[channel].last_portamento_down_speed;
-                        self.apply_portamento_down(channel, s);
                     }
                 }
             }
@@ -902,7 +908,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                             }
                         }
                     } else if *speed > 0 {
-                        self.apply_portamento_up(channel, *speed);
+                        self.apply_portamento_up(channel, *speed as u16);
                     }
                 }
             }
@@ -926,7 +932,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                             }
                         }
                     } else if *speed > 0 {
-                        self.apply_portamento_down(channel, *speed);
+                        self.apply_portamento_down(channel, *speed as u16);
                     }
                 }
             }
@@ -957,7 +963,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 if *up > 0 { ch.last_volume_slide_up = *up; }
                 if *down > 0 { ch.last_volume_slide_down = *down; }
                 ch.active_effects.volume_slide = true;
-                if !is_xm && is_row_start {
+                if is_xm && is_row_start {
                     self.apply_volume_slide(channel);
                 }
             }
@@ -1186,12 +1192,12 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     match sub {
                         0x1 => {
                             if is_row_start {
-                                self.apply_portamento_up(channel, val << 4);
+                                self.apply_portamento_up(channel, (val as u16) << 4);
                             }
                         }
                         0x2 => {
                             if is_row_start {
-                                self.apply_portamento_down(channel, val << 4);
+                                self.apply_portamento_down(channel, (val as u16) << 4);
                             }
                         }
                         0x8 => {
@@ -1437,7 +1443,8 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                         }
                     }
                 } else if spd > 0 {
-                    self.apply_portamento_up(ch, spd);
+                    let actual_spd = if module.format == ModuleFormat::S3M { spd as u16 * 4 } else { spd as u16 };
+                    self.apply_portamento_up(ch, actual_spd);
                 }
             }
             if ae.portamento_down {
@@ -1461,7 +1468,8 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                         }
                     }
                 } else if spd > 0 {
-                    self.apply_portamento_down(ch, spd);
+                    let actual_spd = if module.format == ModuleFormat::S3M { spd as u16 * 4 } else { spd as u16 };
+                    self.apply_portamento_down(ch, actual_spd);
                 }
             }
             if ae.tone_portamento {
@@ -1470,7 +1478,8 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 } else {
                     let tp_speed = self.state.channels[ch].last_tone_portamento_speed;
                     if tp_speed > 0 && self.state.channels[ch].portamento_target_period.is_some() {
-                        self.apply_tone_portamento(ch, tp_speed);
+                        let actual_spd = if module.format == ModuleFormat::S3M { tp_speed as u16 * 4 } else { tp_speed as u16 };
+                        self.apply_tone_portamento(ch, actual_spd);
                     }
                 }
             }
@@ -1891,7 +1900,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         let pan = self.compute_channel_panning(channel);
 
         let voice_idx = self.allocate_voice(channel);
-        let sample_offset = self.state.channels[channel].last_sample_offset as usize;
+        let sample_offset = self.calculate_sample_offset(channel, &Cell::default(), sample);
         self.voices[voice_idx].trigger(
             sample.data.clone(), sample.sample_rate as f64, sample.loop_type,
             sample.loop_start, sample.loop_end, playback_freq, self.output_sample_rate,
@@ -1947,7 +1956,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 };
 
                 let voice_idx = self.allocate_voice(channel);
-                let sample_offset = self.state.channels[channel].last_sample_offset as usize;
+                let sample_offset = self.calculate_sample_offset(channel, &cell, s);
                 self.voices[voice_idx].trigger(
                     s.data.clone(), s.sample_rate as f64, s.loop_type,
                     s.loop_start, s.loop_end, playback_freq, self.output_sample_rate,
@@ -2108,6 +2117,12 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             sample.fine_tune.saturating_add(fine_tune_offset),
         );
 
+        if !module.flags.linear_slides {
+            let period = (8363.0 * 1712.0 / playback_freq) as u16;
+            self.state.channels[channel].real_period = period;
+            self.state.channels[channel].out_period = period;
+        }
+
         let mut vol = self.compute_channel_volume(channel);
         let mut pan = self.compute_channel_panning(channel);
 
@@ -2130,29 +2145,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             }
         }
 
-        let sample_offset = match cell.effect {
-            Effect::SetSampleOffset { offset } => {
-                let off = offset as usize;
-                if sample.loop_start < sample.loop_end && off >= sample.loop_end {
-                    sample.loop_start + (off - sample.loop_start) % (sample.loop_end - sample.loop_start)
-                } else {
-                    off.min(sample.data.len().saturating_sub(1))
-                }
-            }
-            Effect::FormatSpecific(fe) => {
-                if let Some(offset) = fe.sample_offset() {
-                    let off = offset as usize;
-                    if sample.loop_start < sample.loop_end && off >= sample.loop_end {
-                        sample.loop_start + (off - sample.loop_start) % (sample.loop_end - sample.loop_start)
-                    } else {
-                        off.min(sample.data.len().saturating_sub(1))
-                    }
-                } else {
-                    self.state.channels[channel].last_sample_offset as usize
-                }
-            }
-            _ => self.state.channels[channel].last_sample_offset as usize
-        };
+        let sample_offset = self.calculate_sample_offset(channel, cell, sample);
 
         let voice_idx = self.allocate_voice(channel);
         self.voices[voice_idx].trigger(
@@ -2181,10 +2174,14 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
 
         if let Effect::SetSampleOffset { offset } = cell.effect {
-            self.state.channels[channel].last_sample_offset = offset;
+            if offset > 0 {
+                self.state.channels[channel].last_sample_offset = offset;
+            }
         } else if let Effect::FormatSpecific(fe) = cell.effect {
             if let Some(offset) = fe.sample_offset() {
-                self.state.channels[channel].last_sample_offset = offset;
+                if offset > 0 {
+                    self.state.channels[channel].last_sample_offset = offset;
+                }
             }
         }
 
@@ -2426,18 +2423,30 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             193..=207 => {
                 let speed = vol - 193;
                 ch_state.last_portamento_up_speed = speed;
-                self.apply_portamento_up(channel, speed);
+                self.apply_portamento_up(channel, speed as u16);
             }
             208..=222 => {
                 let speed = vol - 208;
                 ch_state.last_portamento_down_speed = speed;
-                self.apply_portamento_down(channel, speed);
+                self.apply_portamento_down(channel, speed as u16);
             }
             _ => {}
         }
     }
 
-    fn apply_portamento_up(&mut self, channel: usize, speed: u8) {
+    fn apply_portamento_up(&mut self, channel: usize, speed: u16) {
+        let module = match self.module.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
+        if !module.flags.linear_slides {
+            let ch = &mut self.state.channels[channel];
+            ch.real_period = ch.real_period.saturating_sub(speed).max(1);
+            ch.out_period = ch.real_period;
+            self.update_voices_from_period(channel, false);
+            return;
+        }
+
         let slide = speed as f64;
         let factor = 2.0_f64.powf(slide / (12.0 * 64.0));
         for voice in &mut self.voices {
@@ -2448,7 +2457,19 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn apply_portamento_down(&mut self, channel: usize, speed: u8) {
+    fn apply_portamento_down(&mut self, channel: usize, speed: u16) {
+        let module = match self.module.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
+        if !module.flags.linear_slides {
+            let ch = &mut self.state.channels[channel];
+            ch.real_period = ch.real_period.saturating_add(speed).min(31999);
+            ch.out_period = ch.real_period;
+            self.update_voices_from_period(channel, false);
+            return;
+        }
+
         let slide = speed as f64;
         let factor = 2.0_f64.powf(slide / (12.0 * 64.0));
         for voice in &mut self.voices {
@@ -2459,11 +2480,35 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn apply_tone_portamento(&mut self, channel: usize, speed: u8) {
+    fn apply_tone_portamento(&mut self, channel: usize, speed: u16) {
+        let module = match self.module.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
         let target = match self.state.channels[channel].portamento_target_period {
             Some(t) => t,
             None => return,
         };
+
+        if !module.flags.linear_slides {
+            let ch = &mut self.state.channels[channel];
+            let want = target as u16; // In Amiga mode, target is stored as period (scaled)
+            
+            if ch.real_period < want {
+                ch.real_period = ch.real_period.saturating_add(speed).min(want);
+            } else if ch.real_period > want {
+                ch.real_period = ch.real_period.saturating_sub(speed).max(want);
+            }
+            
+            if ch.glissando {
+                ch.out_period = relocate_ton(ch.real_period, 0, ch.fine_tune_offset, false);
+            } else {
+                ch.out_period = ch.real_period;
+            }
+            self.update_voices_from_period(channel, false);
+            return;
+        }
+
         let slide = speed as f64 / (12.0 * 64.0);
         let glissando = self.state.channels[channel].glissando;
 
@@ -2506,18 +2551,11 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             ch.channel_volume = ch.channel_volume.saturating_sub(down);
         }
         ch.row_volume = ch.channel_volume;
-        let vol = ch.channel_volume.min(64) as f32 / 64.0 * self.state.global_volume as f32 / 128.0;
+        
+        let vol_f = self.compute_channel_volume(channel);
         for voice in &mut self.voices {
             if voice.active && voice.channel == Some(channel) {
-                voice.base_volume = vol;
-                voice.channel_volume = 1.0;
-            }
-        }
-
-        let vol = ch.channel_volume as f32 / 64.0;
-        for voice in &mut self.voices {
-            if voice.active && voice.channel == Some(channel) {
-                voice.channel_volume = vol;
+                voice.base_volume = vol_f;
             }
         }
     }
@@ -3034,7 +3072,6 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
         // Handle Pattern Loop jump
         if let Some(target_row) = self.state.pattern_loop_jump_target.take() {
-            debug_log!("[LOOP] Jump to {} count={}", target_row, self.state.pattern_loop_count);
             if self.state.pattern_loop_count > 0 {
                 self.state.current_row = target_row;
                 self.state.pattern_loop_count -= 1;

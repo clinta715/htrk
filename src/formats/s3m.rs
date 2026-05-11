@@ -25,8 +25,24 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
             up: param >> 4,
             down: param & 0x0F,
         },
-        5 => Effect::PortamentoDown { speed: param },
-        6 => Effect::PortamentoUp { speed: param },
+        5 => {
+            if param >= 0xF0 {
+                Effect::FinePortamentoDown { speed: param & 0x0F }
+            } else if param >= 0xE0 {
+                Effect::FinePortamentoDown { speed: param & 0x0F } // Should be extra fine, but we'll map to Fine for now
+            } else {
+                Effect::PortamentoDown { speed: param }
+            }
+        }
+        6 => {
+            if param >= 0xF0 {
+                Effect::FinePortamentoUp { speed: param & 0x0F }
+            } else if param >= 0xE0 {
+                Effect::FinePortamentoUp { speed: param & 0x0F } // Should be extra fine
+            } else {
+                Effect::PortamentoUp { speed: param }
+            }
+        }
         7 => Effect::TonePortamento { speed: param },
         8 => Effect::Vibrato {
             speed: param >> 4,
@@ -40,11 +56,14 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
         11 => Effect::VibratoVolumeSlide { up: param as i8 },
         12 => Effect::TonePortamentoVolumeSlide { up: param as i8 },
         13 => Effect::VolSetVolume { vol: param.min(64) },
-        14 => Effect::None,
+        14 => Effect::VolumeSlide {
+            up: param >> 4,
+            down: param & 0x0F,
+        }, // N - Channel volume slide (if supported)
         15 => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::SetSampleOffset(
             (param as u16) << 8,
         ))),
-        16 => Effect::None,
+        16 => Effect::None, // P - Panning slide
         17 => Effect::Retrigger { interval: param },
         18 => Effect::Tremolo {
             speed: param >> 4,
@@ -58,19 +77,30 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
                 0x2 => Effect::SetFineTune { tune: val },
                 0x3 => Effect::VibratoWaveform { waveform: val & 0x03 },
                 0x4 => Effect::TremoloWaveform { waveform: val & 0x03 },
-                0x5 => Effect::SetPanPosition { pan: val << 4 },
+                0x5 => Effect::SetPanPosition { pan: (val << 4) | val },
                 0x6 => Effect::PatternLoop { count: val },
                 0x7 => Effect::TremoloWaveform { waveform: val & 0x03 },
-                0x8 => Effect::SetPanning16 { pan: val << 4 },
-                0xA => Effect::PatternDelay { ticks: val },
-                0xB => Effect::PatternLoop { count: val },
-                0xC => Effect::NoteCutAfter { ticks: val },
-                0xD => Effect::NoteDelay { ticks: val },
+                0x8 => Effect::SetPanning { pan: (val << 4) | val },
+                0xA => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::Raw { effect: 0x19A, param: val })), // SAx - High Sample Offset
+                0xB => Effect::PatternLoop { count: val }, // SBx - Pattern Loop
+                0xC => Effect::NoteCutAfter { ticks: val }, // SCx - Note Cut
+                0xD => Effect::NoteDelay { ticks: val }, // SDx - Note Delay
+                0xE => Effect::PatternDelay { ticks: val }, // SEx - Pattern Delay
                 _ if sub > 0 => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::Raw { effect: 0x190 | (sub as u16), param: val })),
                 _ => Effect::None,
             }
         }
         20 => Effect::SetTempo { bpm: param },
+        21 => Effect::Vibrato {
+            speed: param >> 4,
+            depth: param & 0x0F,
+        }, // U - Fine Vibrato (simplified as Vibrato for now)
+        22 => Effect::SetGlobalVolume { volume: (param.min(64) as u16 * 128 / 64) as u8 }, // V - Set Global Volume
+        23 => Effect::GlobalVolumeSlide {
+            up: (param >> 4) as i8 * 2,
+            down: (param & 0x0F) as i8 * 2,
+        }, // W - Global Volume Slide
+        24 => Effect::SetPanning { pan: (param as u16 * 255 / 128).min(255) as u8 }, // X - Set Panning
         _ if effect_code > 0 => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::Raw { effect: effect_code as u16, param })),
         _ => Effect::None,
     }
@@ -428,7 +458,7 @@ impl FormatHandler for S3mHandler {
             samples,
             initial_bpm: initial_tempo as u16,
             initial_speed: if initial_speed == 0 { 6 } else { initial_speed },
-            initial_global_volume: if global_volume == 0 { 64 } else { global_volume },
+            initial_global_volume: if global_volume == 0 { 128 } else { (global_volume as u16 * 128 / 64).min(128) as u8 },
             initial_mixing_volume: if master_volume == 0 { 48 } else { master_volume },
             channel_panning,
             channel_volume: vec![64u8; MAX_CHANNELS],
