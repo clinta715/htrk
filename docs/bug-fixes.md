@@ -1,5 +1,28 @@
 # Bug Fixes
 
+## XM Playback Timing Fixes (squademo.xm patterns 24, 36)
+**Date:** 2026-05-11
+
+### Symptom
+XM patterns using retrigger (E9x), sample offset (9xx), note delay (EDx), and fine volume slides (EAx/EBx) had incorrect timing — retriggers bled across row boundaries, pattern delay (EEx) was ignored, and EAx/EBx effects were decoded as wrong effect types.
+
+### Root Cause
+1. **Retrigger bleed**: `retrig_speed`, `retrig_cnt`, and `last_retrigger_interval` were not reset in `advance_row()`, causing retrigger state from one row to carry into the next.
+2. **XM pattern delay ignored**: The `PatternDelay` effect handler in `apply_effect_unified()` set `row_delay_active = true` only for the non-XM path; the XM branch was a no-op stub.
+3. **EAx/EBx mis-mapped**: `decode_xm_extended_effect()` mapped `0xA` to `FineVolumeSlideDown` and `0xB` to `NoteCutAfter` instead of `FineVolumeSlideUp` and `FineVolumeSlideDown` respectively.
+
+### Fix
+- **sequencer_engine.rs**: Added `retrig_speed`, `retrig_cnt` resets alongside existing `last_retrigger_interval` reset in `advance_row()` (line 3039-3041).
+- **sequencer_engine.rs**: Unified the XM and non-XM `PatternDelay` branches — both now set `row_delay_active = true` and `pattern_delay_ticks` (line 1006-1017).
+- **xm.rs**: Corrected `decode_xm_extended_effect()` mapping: `0xA` → `FineVolumeSlideUp`, `0xB` → `FineVolumeSlideDown` (line 860-861).
+
+### Verification
+- Added `advance_row_resets_retrigger_state` unit test.
+- Added `xm_pattern_delay_sets_row_delay_active` unit test.
+- Added `advance_row_resets_note_cut_tick` unit test.
+- Extended `decode_xm_ext_effect` test with EAx/EBx/ECx/EDx/EEx assertions.
+- All 189 tests pass.
+
 ## S3M Playback Accuracy Overhaul
 **Date:** 2026-05-10
 

@@ -1005,8 +1005,9 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
             Effect::PatternDelay { ticks } => {
                 if is_xm {
-                    if self.state.pattern_delay_ticks2 == 0 {
-                        self.state.pattern_delay_ticks = *ticks + 1;
+                    if !self.state.row_delay_active {
+                        self.state.pattern_delay_ticks = *ticks;
+                        self.state.row_delay_active = true;
                     }
                 } else {
                     if !self.state.row_delay_active {
@@ -3036,6 +3037,8 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             ch.note_delay_ticks = 0;
             ch.active_effects = ActiveEffects::default();
             ch.last_retrigger_interval = 0;
+            ch.retrig_speed = 0;
+            ch.retrig_cnt = 0;
             ch.note_cut_tick = None;
             ch.vol_kol = 0;
         }
@@ -4338,5 +4341,56 @@ mod tests {
         assert_eq!(engine.state.current_order, 1);
         assert_eq!(engine.state.current_row, 0);
         assert_eq!(engine.state.pattern_loop_final_pass, false);
+    }
+
+    #[test]
+    fn advance_row_resets_retrigger_state() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.state.channels[0].retrig_speed = 4;
+        engine.state.channels[0].retrig_cnt = 3;
+        engine.state.channels[0].last_retrigger_interval = 4;
+
+        engine.advance_row();
+
+        assert_eq!(engine.state.channels[0].retrig_speed, 0,
+            "retrig_speed should be reset on row advance");
+        assert_eq!(engine.state.channels[0].retrig_cnt, 0,
+            "retrig_cnt should be reset on row advance");
+        assert_eq!(engine.state.channels[0].last_retrigger_interval, 0,
+            "last_retrigger_interval should be reset on row advance");
+    }
+
+    #[test]
+    fn xm_pattern_delay_sets_row_delay_active() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = true;
+
+        let module = Arc::new(Module::default());
+        engine.load_module(module);
+        engine.play();
+
+        let cell = Cell {
+            effect: Effect::PatternDelay { ticks: 2 },
+            ..Cell::default()
+        };
+
+        engine.state.current_tick = 0;
+        engine.process_cell_unified(0, &cell);
+
+        assert!(engine.state.row_delay_active,
+            "PatternDelay should set row_delay_active for XM");
+        assert_eq!(engine.state.pattern_delay_ticks, 2,
+            "PatternDelay should store tick count");
+    }
+
+    #[test]
+    fn advance_row_resets_note_cut_tick() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.state.channels[0].note_cut_tick = Some(5);
+
+        engine.advance_row();
+
+        assert_eq!(engine.state.channels[0].note_cut_tick, None,
+            "note_cut_tick should be reset on row advance");
     }
 }

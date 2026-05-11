@@ -857,8 +857,8 @@ fn decode_xm_extended_effect(param: u8) -> Effect {
         0x7 => Effect::TremoloWaveform { waveform: val },
         0x8 => Effect::SetPanning16 { pan: val << 4 },
         0x9 => Effect::Retrigger { interval: val },
-        0xA => Effect::NoteCutAfter { ticks: val },
-        0xB => Effect::NoteDelay { ticks: val },
+        0xA => Effect::FineVolumeSlideUp { amount: val },
+        0xB => Effect::FineVolumeSlideDown { amount: val },
         0xC => Effect::NoteCutAfter { ticks: val },
         0xD => Effect::NoteDelay { ticks: val },
         0xE => Effect::PatternDelay { ticks: val },
@@ -1433,6 +1433,11 @@ mod tests {
         assert_eq!(super::decode_xm_extended_effect(0x25), Effect::PortamentoDown { speed: 0x50 });
         assert_eq!(super::decode_xm_extended_effect(0x90), Effect::Retrigger { interval: 0 });
         assert_eq!(super::decode_xm_extended_effect(0x95), Effect::Retrigger { interval: 5 });
+        assert_eq!(super::decode_xm_extended_effect(0xA3), Effect::FineVolumeSlideUp { amount: 3 });
+        assert_eq!(super::decode_xm_extended_effect(0xB7), Effect::FineVolumeSlideDown { amount: 7 });
+        assert_eq!(super::decode_xm_extended_effect(0xC5), Effect::NoteCutAfter { ticks: 5 });
+        assert_eq!(super::decode_xm_extended_effect(0xD2), Effect::NoteDelay { ticks: 2 });
+        assert_eq!(super::decode_xm_extended_effect(0xE1), Effect::PatternDelay { ticks: 1 });
     }
 
     #[test]
