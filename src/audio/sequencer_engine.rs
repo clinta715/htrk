@@ -41,7 +41,7 @@ pub struct SequencerEngine {
     pub state: SequencerState,
     pub voices: Vec<Voice>,
     next_voice: usize,
-    module: Option<Arc<Module>>,
+    pub module: Option<Arc<Module>>,
     output_sample_rate: f64,
     global_volume: f32,
     use_xm_model: bool,
@@ -2779,6 +2779,17 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
         if let Note::On(key) = note {
             self.trigger_channel_note(channel, key, remapped_key, Some(&module.samples[sample_idx]), sample_idx, &cell, &module);
+
+            if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+                let voice = self.voices.iter_mut().find(|v| v.active && v.channel == Some(channel));
+                if let Some(voice) = voice {
+                    let fade_out = module.instruments[instrument_idx].fade_out;
+                    voice.fade_out_rate = fade_out;
+                    voice.fade_out_amp = 32768i32;
+                    voice.fade_out_speed_i32 = fade_out as i32;
+                    voice.env_sustain_active = true;
+                }
+            }
         }
     }
 

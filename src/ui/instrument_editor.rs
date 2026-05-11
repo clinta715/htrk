@@ -31,6 +31,8 @@ pub enum InstrumentEditEvent {
     VibSweepChanged(u8),
     VibDepthChanged(u8),
     VibRateChanged(u8),
+    SaveInstrument,
+    LoadInstrument,
 }
 
 pub fn draw_instrument_editor(
@@ -87,6 +89,13 @@ pub fn draw_instrument_editor(
                     let mut name = inst.name.clone();
                     if ui.text_edit_singleline(&mut name).changed() {
                         event = Some(InstrumentEditEvent::NameChanged(name));
+                    }
+                    ui.separator();
+                    if ui.button("Save...").clicked() {
+                        event = Some(InstrumentEditEvent::SaveInstrument);
+                    }
+                    if ui.button("Load...").clicked() {
+                        event = Some(InstrumentEditEvent::LoadInstrument);
                     }
                 });
                 

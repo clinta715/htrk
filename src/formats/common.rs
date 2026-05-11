@@ -82,7 +82,7 @@ pub fn check_magic(data: &[u8], offset: usize, expected: &'static [u8; 4]) -> Fo
         let mut arr = [0u8; 4];
         arr.copy_from_slice(found);
         return Err(FormatError::InvalidHeader {
-            expected: std::str::from_utf8(expected).unwrap_or("????"),
+            expected: std::str::from_utf8(expected).unwrap_or("????").to_string(),
             found: arr,
         });
     }

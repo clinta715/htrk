@@ -1,9 +1,12 @@
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use eframe::egui;
 
 use crate::audio::commands::AudioCommand;
 use crate::audio::engine::{CommandSender, create_engine_and_sender};
+use crate::audio::renderer::WavRenderer;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::debug_log;
 use crate::edit::{
@@ -110,6 +113,7 @@ pub struct HtrkApp {
     show_shortcuts: bool,
     show_about: bool,
     settings_state: crate::ui::settings_window::SettingsState,
+    wav_export_state: crate::ui::wav_export_window::WavExportState,
     last_backup_time: std::time::Instant,
     module_dirty: bool,
     sample_selection: Option<(usize, usize)>,
@@ -167,6 +171,7 @@ impl Default for HtrkApp {
             show_shortcuts: false,
             show_about: false,
             settings_state: crate::ui::settings_window::SettingsState::from_config(&config),
+            wav_export_state: crate::ui::wav_export_window::WavExportState::new(44100),
             last_backup_time: std::time::Instant::now(),
             module_dirty: false,
             sample_selection: None,
@@ -1370,6 +1375,154 @@ impl HtrkApp {
         self.file_browser.open(BrowserMode::Projects);
     }
 
+    fn open_wav_export_dialog(&mut self) {
+        let module_loaded = self.module.is_some();
+        let total_orders = self.module.as_ref().map(|m| m.order_list.len()).unwrap_or(0) as u64;
+        let sample_rate = if self.current_sample_rate > 0 {
+            self.current_sample_rate
+        } else {
+            44100
+        };
+
+        let default_name = if !self.loaded_module_name.is_empty() {
+            self.loaded_module_name.clone()
+        } else {
+            "untitled".to_string()
+        };
+
+        self.wav_export_state.open(&default_name, module_loaded, Some(total_orders), sample_rate);
+        self.wav_export_state.update_estimates(Some(total_orders));
+    }
+
+    fn export_wav_with_settings(&mut self) {
+        let settings = self.wav_export_state.settings().clone();
+
+        let module = match &self.module {
+            Some(m) => m.clone(),
+            None => {
+                self.wav_export_state.finish_export(false, Some("No module loaded to export".to_string()));
+                return;
+            }
+        };
+
+        let file_path = match settings.file_path.clone() {
+            Some(path) => path,
+            None => {
+                self.wav_export_state.finish_export(false, Some("No file path selected".to_string()));
+                return;
+            }
+        };
+
+        let sample_rate = if settings.sample_rate > 0 {
+            settings.sample_rate
+        } else {
+            self.current_sample_rate
+        };
+
+        if sample_rate == 0 {
+            self.wav_export_state.finish_export(false, Some("No valid sample rate available".to_string()));
+            return;
+        }
+
+        let progress_arc = self.wav_export_state.progress_arc();
+        let state_arc = self.wav_export_state.state_arc();
+        let cancel_arc = self.wav_export_state.cancel_arc();
+
+        self.wav_export_state.start_export();
+
+        std::thread::spawn(move || {
+            let spec = hound::WavSpec {
+                channels: settings.channel_mode.channels(),
+                sample_rate,
+                bits_per_sample: settings.bit_depth.bits(),
+                sample_format: if settings.bit_depth.is_float() {
+                    hound::SampleFormat::Float
+                } else {
+                    hound::SampleFormat::Int
+                },
+            };
+
+            let result = std::fs::File::create(&file_path)
+                .and_then(|file| {
+                    let writer = hound::WavWriter::new(file, spec)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                    Ok(writer)
+                });
+
+            match result {
+                Ok(mut writer) => {
+                    let mut renderer = WavRenderer::new(module, sample_rate);
+                    renderer.set_interpolation(crate::audio::commands::InterpolationType::Linear);
+                    renderer.set_channels(settings.channel_mode == crate::ui::wav_export_window::ChannelMode::Stereo);
+
+                    let render_result = renderer.render_with_settings(
+                        &mut writer,
+                        &settings,
+                        |p| {
+                            if cancel_arc.load(Ordering::SeqCst) {
+                                return false;
+                            }
+                            let pct = (p * 100.0) as u32;
+                            progress_arc.store(pct, Ordering::SeqCst);
+                            state_arc.store(1, Ordering::SeqCst);
+                            true
+                        },
+                    );
+
+                    match render_result {
+                        Ok(()) => {
+                            if let Err(e) = writer.finalize() {
+                                state_arc.store(3, Ordering::SeqCst);
+                                eprintln!("Failed to finalize audio file: {}", e);
+                            } else {
+                                state_arc.store(2, Ordering::SeqCst);
+                                println!("Exported to: {}", file_path.display());
+                            }
+                        }
+                        Err(e) => {
+                            state_arc.store(3, Ordering::SeqCst);
+                            eprintln!("Failed to render audio: {:?}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    state_arc.store(3, Ordering::SeqCst);
+                    eprintln!("Failed to create file: {}", e);
+                }
+            }
+        });
+    }
+
+    fn update_wav_export_progress(&mut self) {
+        if !self.wav_export_state.is_exporting {
+            return;
+        }
+
+        let progress = self.wav_export_state.export_progress_atomic.load(Ordering::SeqCst);
+        let state = self.wav_export_state.export_state_atomic.load(Ordering::SeqCst);
+
+        self.wav_export_state.export_progress = (progress as f32) / 100.0;
+        self.wav_export_state.export_status = if progress > 0 {
+            format!("Rendering... {}%", progress)
+        } else {
+            "Preparing...".to_string()
+        };
+
+        if state == 2 {
+            self.wav_export_state.is_exporting = false;
+            self.wav_export_state.export_complete = true;
+            self.wav_export_state.export_status = "Export complete!".to_string();
+        } else if state == 3 {
+            self.wav_export_state.is_exporting = false;
+            self.wav_export_state.export_complete = true;
+            self.wav_export_state.export_status = "Export failed (check console)".to_string();
+        }
+    }
+
+    #[allow(dead_code)]
+    fn export_wav_file(&mut self) {
+    }
+
     fn save_config(&mut self) {
         self.config.last_dirs.clear();
         for (mode, path) in &self.file_browser.last_dirs {
@@ -1821,12 +1974,148 @@ impl HtrkApp {
                     old_map: inst.sample_map,
                 },
             ),
+            InstrumentEditEvent::SaveInstrument => {
+                return;
+            }
+            InstrumentEditEvent::LoadInstrument => {
+                return;
+            }
         };
 
         self.ensure_module_ownership();
         if let Some(ref mut module_arc) = self.module {
             if let Some(m) = Arc::get_mut(module_arc) {
                 let _ = self.undo_manager.execute(cmd, m);
+            }
+        }
+        self.sync_module_to_audio();
+    }
+
+    fn save_instrument_dialog(&mut self) {
+        let module = match &self.module {
+            Some(m) => m,
+            None => {
+                eprintln!("No module loaded");
+                return;
+            }
+        };
+        let inst_idx = self.selected_instrument;
+        let inst = match module.instruments.get(inst_idx) {
+            Some(i) => i,
+            None => {
+                eprintln!("No instrument selected");
+                return;
+            }
+        };
+        let inst_name = if inst.name.is_empty() {
+            format!("Instrument_{:02X}", inst_idx)
+        } else {
+            inst.name.clone()
+        };
+        if let Some(path) = rfd::FileDialog::new()
+            .set_title("Save Instrument")
+            .set_file_name(format!("{}.hti", inst_name))
+            .add_filter("HTRK Instruments", &["hti"])
+            .save_file()
+        {
+            self.save_instrument_to_file(inst_idx, path.to_string_lossy().as_ref());
+        }
+    }
+
+    fn save_instrument_to_file(&mut self, inst_idx: usize, path: &str) {
+        let module = match &self.module {
+            Some(m) => m,
+            None => return,
+        };
+        let inst = match module.instruments.get(inst_idx) {
+            Some(i) => i,
+            None => return,
+        };
+        let sample_indices: Vec<u8> = inst.sample_map.iter().cloned().collect();
+        let samples: Vec<_> = sample_indices.iter()
+            .filter_map(|&idx| {
+                if idx > 0 && idx as usize - 1 < module.samples.len() {
+                    Some(module.samples[idx as usize - 1].clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let data = match crate::formats::hti::save_instrument(inst, &samples) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Failed to save instrument: {:?}", e);
+                return;
+            }
+        };
+        if let Err(e) = std::fs::write(path, &data) {
+            eprintln!("Failed to write instrument file: {}", e);
+        }
+    }
+
+    fn load_instrument_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .set_title("Load Instrument")
+            .add_filter("HTRK Instruments", &["hti"])
+            .pick_file()
+        {
+            self.load_instrument_from_file(path.to_string_lossy().as_ref());
+        }
+    }
+
+    fn load_instrument_from_file(&mut self, path: &str) {
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Failed to read instrument file: {}", e);
+                return;
+            }
+        };
+        let (mut loaded_inst, loaded_samples) = match crate::formats::hti::load_instrument(&data) {
+            Ok(result) => result,
+            Err(e) => {
+                eprintln!("Failed to load instrument: {:?}", e);
+                return;
+            }
+        };
+        let inst_idx = self.selected_instrument;
+        if self.module.is_none() {
+            self.new_song();
+        }
+        self.ensure_module_ownership();
+        if let Some(ref mut module_arc) = self.module {
+            if let Some(m) = Arc::get_mut(module_arc) {
+                if inst_idx >= m.instruments.len() {
+                    m.instruments.resize(inst_idx + 1, crate::sequencer::Instrument::default());
+                }
+                let old_inst = m.instruments[inst_idx].clone();
+                let sample_map = loaded_inst.sample_map.clone();
+                let note_map = loaded_inst.note_map.clone();
+                m.instruments[inst_idx] = loaded_inst;
+                let mut available_slots: Vec<usize> = (1..m.samples.len())
+                    .filter(|&i| m.samples[i].data.is_empty())
+                    .collect();
+                let mut sample_mapping: HashMap<usize, usize> = HashMap::new();
+                for (new_idx, sample) in loaded_samples.iter().enumerate() {
+                    if let Some(&existing_idx) = available_slots.first() {
+                        m.samples[existing_idx] = sample.clone();
+                        sample_mapping.insert(new_idx + 1, existing_idx);
+                        available_slots.remove(0);
+                    } else {
+                        let new_sample_idx = m.samples.len();
+                        m.samples.push(sample.clone());
+                        sample_mapping.insert(new_idx + 1, new_sample_idx);
+                    }
+                }
+                let mut remapped_map = [0u8; 120];
+                for (note, &old_idx) in sample_map.iter().enumerate().take(120) {
+                    if let Some(&new_idx) = sample_mapping.get(&(old_idx as usize)) {
+                        remapped_map[note] = new_idx as u8;
+                    } else {
+                        remapped_map[note] = old_idx;
+                    }
+                }
+                m.instruments[inst_idx].sample_map = remapped_map;
             }
         }
         self.sync_module_to_audio();
@@ -1926,6 +2215,8 @@ impl eframe::App for HtrkApp {
 
         self.handle_keyboard_input(ctx);
 
+        self.update_wav_export_progress();
+
         let (playback_row, playback_order, playback_pattern) = {
             let playing = self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
             if playing {
@@ -2000,6 +2291,9 @@ impl eframe::App for HtrkApp {
             }
             if menu_resp.save_as {
                 self.save_as_dialog();
+            }
+            if menu_resp.export_wav {
+                self.open_wav_export_dialog();
             }
             if menu_resp.undo {
                 self.ensure_module_ownership();
@@ -2330,7 +2624,15 @@ impl eframe::App for HtrkApp {
                             &mut self.selected_instrument,
                             &self.theme,
                         ) {
-                            self.handle_instrument_edit(event);
+                            match event {
+                                crate::ui::instrument_editor::InstrumentEditEvent::SaveInstrument => {
+                                    self.save_instrument_dialog();
+                                }
+                                crate::ui::instrument_editor::InstrumentEditEvent::LoadInstrument => {
+                                    self.load_instrument_dialog();
+                                }
+                                other => self.handle_instrument_edit(other),
+                            }
                         }
                     }
                 }
@@ -2354,6 +2656,14 @@ impl eframe::App for HtrkApp {
                 }
                 crate::ui::settings_window::SettingsAction::None => {}
             }
+        }
+
+        let bpm = self.playback_state.bpm.load(std::sync::atomic::Ordering::Relaxed) as u8;
+        let speed = self.playback_state.speed.load(std::sync::atomic::Ordering::Relaxed) as u8;
+        let order_list_len = self.module.as_ref().map(|m| m.order_list.len()).unwrap_or(0);
+        
+        if crate::ui::wav_export_window::draw_wav_export(ctx, &mut self.wav_export_state, order_list_len, bpm, speed) {
+            self.export_wav_with_settings();
         }
 
         if self.show_about {

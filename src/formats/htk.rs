@@ -1,4 +1,4 @@
-use crate::errors::FormatResult;
+use crate::errors::{FormatError, FormatResult};
 use crate::sequencer::module::ModuleFormat;
 use crate::sequencer::Module;
 
@@ -17,8 +17,8 @@ pub fn save_module(module: &Module) -> Vec<u8> {
 
 pub fn load_module(data: &[u8]) -> FormatResult<Module> {
     if data.len() < 12 || &data[0..4] != HTK_MAGIC {
-        return Err(crate::errors::FormatError::InvalidHeader {
-            expected: "HTRA magic",
+        return Err(FormatError::InvalidHeader {
+            expected: "HTRA magic".to_string(),
             found: {
                 let mut arr = [0u8; 4];
                 if data.len() >= 4 {
@@ -32,8 +32,8 @@ pub fn load_module(data: &[u8]) -> FormatResult<Module> {
     let _flags = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
     
     if version > HTK_VERSION {
-        return Err(crate::errors::FormatError::InvalidHeader {
-            expected: "HTK version <= 3",
+        return Err(FormatError::InvalidHeader {
+            expected: format!("HTK version <= {}", HTK_VERSION),
             found: version.to_le_bytes(),
         });
     }

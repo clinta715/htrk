@@ -81,13 +81,13 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
                 0x6 => Effect::PatternLoop { count: val },
                 0x7 => Effect::TremoloWaveform { waveform: val & 0x03 },
                 0x8 => Effect::SetPanning { pan: (val << 4) | val },
+                0x9 => Effect::None, // S9x - not used
                 0xA => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::Raw { effect: 0x19A, param: val })), // SAx - High Sample Offset
                 0xB => Effect::PatternLoop { count: val }, // SBx - Pattern Loop
                 0xC => Effect::NoteCutAfter { ticks: val }, // SCx - Note Cut
                 0xD => Effect::NoteDelay { ticks: val }, // SDx - Note Delay
                 0xE => Effect::PatternDelay { ticks: val }, // SEx - Pattern Delay
-                _ if sub > 0 => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::Raw { effect: 0x190 | (sub as u16), param: val })),
-                _ => Effect::None,
+                _ => Effect::None, // S0x, SFx and others - not used
             }
         }
         20 => Effect::SetTempo { bpm: param },
@@ -528,7 +528,7 @@ fn check_magic(data: &[u8], offset: usize, expected: &'static [u8; 4]) -> Format
         let mut arr = [0u8; 4];
         arr.copy_from_slice(found);
         return Err(FormatError::InvalidHeader {
-            expected: std::str::from_utf8(expected).unwrap_or("????"),
+            expected: std::str::from_utf8(expected).unwrap_or("????").to_string(),
             found: arr,
         });
     }
@@ -952,7 +952,7 @@ mod tests {
 
     #[test]
     fn convert_effect_s_pattern_delay() {
-        assert_eq!(convert_s3m_effect(19, 0xA2), Effect::PatternDelay { ticks: 2 });
+        assert_eq!(convert_s3m_effect(19, 0xE2), Effect::PatternDelay { ticks: 2 });
     }
 
     #[test]

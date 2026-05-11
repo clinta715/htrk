@@ -32,15 +32,13 @@ impl FormatHandler for XmHandler {
         data.len() >= 17 && &data[0..17] == b"Extended Module: "
     }
 
-    fn load(&self, data: &[u8]) -> FormatResult<Module> {
+fn load(&self, data: &[u8]) -> FormatResult<Module> {
         if data.len() < 17 || &data[0..17] != XM_HEADER_MAGIC {
             return Err(FormatError::InvalidHeader {
-                expected: "Extended Module: ",
+                expected: "Extended Module: ".to_string(),
                 found: {
                     let mut arr = [0u8; 4];
-                    if data.len() >= 4 {
-                        arr.copy_from_slice(&data[0..4]);
-                    }
+                    if data.len() >= 4 { arr.copy_from_slice(&data[0..4]); }
                     arr
                 },
             });
@@ -48,10 +46,10 @@ impl FormatHandler for XmHandler {
 
         let mut offset = 17;
         let name = read_string(data, &mut offset, 20)?;
-        let file_type = read_u8(data, &mut offset)?;
+let file_type = read_u8(data, &mut offset)?;
         if file_type != XM_FILE_TYPE_MARKER {
             return Err(FormatError::InvalidHeader {
-                expected: "0x1A",
+                expected: "0x1A".to_string(),
                 found: [file_type, 0, 0, 0],
             });
         }

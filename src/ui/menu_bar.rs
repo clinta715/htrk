@@ -9,6 +9,7 @@ pub struct MenuResponse {
     pub import_instrument: bool,
     pub save_file: bool,
     pub save_as: bool,
+    pub export_wav: bool,
     pub undo: bool,
     pub redo: bool,
     pub cut: bool,
@@ -39,6 +40,7 @@ impl Default for MenuResponse {
             import_instrument: false,
             save_file: false,
             save_as: false,
+            export_wav: false,
             undo: false,
             redo: false,
             cut: false,
@@ -102,6 +104,10 @@ pub fn draw_menu_bar(
             }
             if ui.button("Save As...  Ctrl+Shift+S").clicked() {
                 resp.save_as = true;
+                ui.close_menu();
+            }
+            if ui.button("Export as WAV...").clicked() {
+                resp.export_wav = true;
                 ui.close_menu();
             }
             ui.separator();

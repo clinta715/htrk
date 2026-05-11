@@ -16,5 +16,6 @@ pub mod status_bar;
 pub mod theme;
 pub mod transport;
 pub mod waveform;
+pub mod wav_export_window;
 
 pub use theme::TrackerTheme;

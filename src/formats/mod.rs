@@ -1,5 +1,6 @@
 pub mod common;
 pub mod htk;
+pub mod hti;
 pub mod it;
 pub mod s3m;
 pub mod wav;
@@ -7,6 +8,8 @@ pub mod xm;
 pub mod modfile;
 
 use crate::errors::FormatResult;
+use crate::sequencer::instrument::Instrument;
+use crate::sequencer::sample::Sample;
 use crate::sequencer::{Module, ModuleFormat};
 
 #[allow(dead_code)]
@@ -50,6 +53,22 @@ pub fn detect_format(data: &[u8]) -> Option<ModuleFormat> {
     None
 }
 
+pub fn detect_instrument_format(data: &[u8]) -> Option<&'static str> {
+    if data.len() >= 4 && &data[0..4] == b"HTIN" {
+        Some("HTI")
+    } else {
+        None
+    }
+}
+
+pub fn load_instrument(data: &[u8]) -> FormatResult<(Instrument, Vec<Sample>)> {
+    hti::load_instrument(data)
+}
+
+pub fn save_instrument(instrument: &Instrument, samples: &[Sample]) -> FormatResult<Vec<u8>> {
+    hti::save_instrument(instrument, samples)
+}
+
 fn is_mod_magic(magic: &[u8]) -> bool {
     const MOD_SIGNATURES: &[&[u8]] = &[
         b"M.K.", b"M!K!", b"FLT4", b"FLT8", b"4CHN", b"6CHN", b"8CHN", b"2CHN", b"CD81",
@@ -60,7 +79,7 @@ fn is_mod_magic(magic: &[u8]) -> bool {
 
 pub fn load_module(data: &[u8]) -> FormatResult<Module> {
     let format = detect_format(data).ok_or_else(|| crate::errors::FormatError::InvalidHeader {
-        expected: "recognizable format magic",
+        expected: "recognizable format magic".to_string(),
         found: {
             let mut arr = [0u8; 4];
             if data.len() >= 4 {
@@ -118,5 +137,38 @@ mod tests {
     fn detect_unknown_format() {
         let data = vec![0xABu8; 200];
         assert_eq!(detect_format(&data), None);
+    }
+
+    #[test]
+    fn detect_hti_instrument_format() {
+        let mut data = vec![0u8; 12];
+        data[0..4].copy_from_slice(b"HTIN");
+        assert_eq!(detect_instrument_format(&data), Some("HTI"));
+    }
+
+    #[test]
+    fn detect_non_hti_format() {
+        let mut data = vec![0u8; 4];
+        data[0..4].copy_from_slice(b"XMAD");
+        assert_eq!(detect_instrument_format(&data), None);
+    }
+
+    #[test]
+    fn hti_roundtrip_instrument() {
+        use crate::sequencer::instrument::Instrument;
+        use crate::sequencer::sample::Sample;
+
+        let mut inst = Instrument::default();
+        inst.name = "Test".to_string();
+        inst.fade_out = 100;
+
+        let samples: Vec<Sample> = vec![];
+
+        let data = save_instrument(&inst, &samples).unwrap();
+        let (loaded_inst, loaded_samples) = load_instrument(&data).unwrap();
+
+        assert_eq!(loaded_inst.name, inst.name);
+        assert_eq!(loaded_inst.fade_out, inst.fade_out);
+        assert!(loaded_samples.is_empty());
     }
 }
