@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::audio::playback_state::AtomicPlaybackState;
+use crate::ui::pattern_grid::GridMetrics;
 
 use super::theme::TrackerTheme;
 
@@ -36,6 +37,7 @@ pub fn draw_channel_headers(
     rename_state: &mut ChannelRenameState,
     theme: &TrackerTheme,
     playback_state: &AtomicPlaybackState,
+    metrics: GridMetrics,
 ) -> ChannelHeadersResponse {
     let mut resp = ChannelHeadersResponse {
         toggle_mute: None,
@@ -43,10 +45,10 @@ pub fn draw_channel_headers(
         rename_channel: None,
     };
 
-    let header_height = 34.0;
+    let header_height = metrics.row_height * 2.0;
     let vu_bar_height = 4.0;
-    let row_num_width = 32.0;
-    let channel_width = 14.0 * 7.8;
+    let row_num_width = metrics.row_num_width;
+    let channel_width = metrics.channel_width;
 
     ui.horizontal(|ui| {
         ui.add_space(row_num_width);
@@ -67,7 +69,7 @@ pub fn draw_channel_headers(
                     if ui
                         .add(egui::Button::new(
                             egui::RichText::new(mute_label)
-                                .font(egui::FontId::monospace(10.0))
+                                .font(egui::FontId::monospace(metrics.font_size * 0.8))
                                 .color(mute_color),
                         ))
                         .clicked()
@@ -80,7 +82,7 @@ pub fn draw_channel_headers(
                     if ui
                         .add(egui::Button::new(
                             egui::RichText::new(solo_label)
-                                .font(egui::FontId::monospace(10.0))
+                                .font(egui::FontId::monospace(metrics.font_size * 0.8))
                                 .color(solo_color),
                         ))
                         .clicked()
@@ -94,8 +96,8 @@ pub fn draw_channel_headers(
                     if is_editing {
                         let edit_buf = rename_state.edit_buffer.clone();
                         let text_edit = egui::TextEdit::singleline(&mut rename_state.edit_buffer)
-                            .font(egui::FontId::monospace(10.0))
-                            .desired_width(40.0)
+                            .font(egui::FontId::monospace(metrics.font_size * 0.8))
+                            .desired_width(metrics.char_width * 5.0)
                             .interactive(true);
                         let te_resp = ui.add(text_edit);
                         te_resp.request_focus();
@@ -112,7 +114,7 @@ pub fn draw_channel_headers(
                         let name_resp = ui.add(
                             egui::Label::new(
                                 egui::RichText::new(&ch_name)
-                                    .font(egui::FontId::monospace(10.0))
+                                    .font(egui::FontId::monospace(metrics.font_size * 0.8))
                                     .color(theme.channel_header_fg),
                             )
                             .sense(egui::Sense::click()),

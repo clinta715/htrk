@@ -120,6 +120,8 @@ pub struct HtrkApp {
     sample_clipboard: Option<Arc<Vec<f32>>>,
     amplify_factor: f32,
     config: AppConfig,
+    last_visible_rows: usize,
+    last_visible_channels: usize,
 }
 
 impl Default for HtrkApp {
@@ -178,6 +180,8 @@ impl Default for HtrkApp {
             sample_clipboard: None,
             amplify_factor: config.default_amplify_factor,
             config,
+            last_visible_rows: VISIBLE_ROWS,
+            last_visible_channels: 16,
         }
     }
 }
@@ -473,7 +477,8 @@ impl HtrkApp {
                     }
                 }
             }
-            max_ch.max(8)
+            // Allow expansion up to what's visible, but at least 16 or current used.
+            max_ch.max(self.last_visible_channels + self.scroll_channel).max(16).min(MAX_CHANNELS)
         })
     }
 
@@ -537,8 +542,15 @@ impl HtrkApp {
         if self.cursor.row < self.scroll_row {
             self.scroll_row = self.cursor.row;
         }
-        if self.cursor.row >= self.scroll_row + VISIBLE_ROWS {
-            self.scroll_row = self.cursor.row - VISIBLE_ROWS + 1;
+        if self.cursor.row >= self.scroll_row + self.last_visible_rows {
+            self.scroll_row = self.cursor.row - self.last_visible_rows + 1;
+        }
+
+        if self.cursor.channel < self.scroll_channel {
+            self.scroll_channel = self.cursor.channel;
+        }
+        if self.cursor.channel >= self.scroll_channel + self.last_visible_channels {
+            self.scroll_channel = self.cursor.channel - self.last_visible_channels + 1;
         }
     }
 
@@ -2209,6 +2221,8 @@ fn set_effect_param(effect: &crate::sequencer::Effect, param: u8) -> crate::sequ
 
 impl eframe::App for HtrkApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.set_zoom_factor(self.config.zoom_factor);
+
         if self.stream.is_none() {
             self.init_audio();
         }
@@ -2251,8 +2265,8 @@ impl eframe::App for HtrkApp {
                             if row < self.scroll_row {
                                 self.scroll_row = row;
                             }
-                            if row >= self.scroll_row + VISIBLE_ROWS {
-                                self.scroll_row = row - VISIBLE_ROWS + 1;
+                            if row >= self.scroll_row + self.last_visible_rows {
+                                self.scroll_row = row - self.last_visible_rows + 1;
                             }
                         }
                     }
@@ -2518,7 +2532,10 @@ impl eframe::App for HtrkApp {
             match self.current_view {
                 AppView::Pattern => {
                     let num_channels = self.num_channels();
-                    let visible_channels = num_channels.min(16);
+
+                    let metrics = crate::ui::pattern_grid::GridMetrics::new(self.config.editor_font_size as f32);
+                    let visible_channels = crate::ui::pattern_grid::GridMetrics::calculate_visible_channels(ui, metrics);
+                    let visible_channels = visible_channels.min(num_channels - self.scroll_channel).max(1);
 
                     let ch_resp = crate::ui::channel_headers::draw_channel_headers(
                         ui,
@@ -2532,6 +2549,7 @@ impl eframe::App for HtrkApp {
                         &mut self.channel_rename_state,
                         &self.theme,
                         &self.playback_state,
+                        metrics,
                     );
 
                     if let Some(ch) = ch_resp.toggle_mute {
@@ -2569,8 +2587,12 @@ impl eframe::App for HtrkApp {
                                     self.scroll_row,
                                     self.scroll_channel,
                                     num_channels,
+                                    metrics,
                                     &self.theme,
                                 );
+
+                                self.last_visible_rows = grid_resp.visible_rows;
+                                self.last_visible_channels = grid_resp.visible_channels;
 
                                 if let Some(pos) = grid_resp.clicked_position {
                                     self.cursor = pos;

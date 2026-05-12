@@ -34,6 +34,7 @@ pub struct SettingsState {
     default_project_path: Option<String>,
 
     editor_font_size: u32,
+    zoom_factor: f32,
     scroll_speed: f32,
     visible_channels: usize,
     show_row_numbers: bool,
@@ -64,6 +65,7 @@ impl SettingsState {
             default_project_path: config.default_project_path.clone(),
 
             editor_font_size: config.editor_font_size,
+            zoom_factor: config.zoom_factor,
             scroll_speed: config.scroll_speed,
             visible_channels: config.visible_channels,
             show_row_numbers: config.show_row_numbers,
@@ -90,6 +92,7 @@ impl SettingsState {
         config.default_project_path = self.default_project_path.clone();
 
         config.editor_font_size = self.editor_font_size;
+        config.zoom_factor = self.zoom_factor;
         config.scroll_speed = self.scroll_speed;
         config.visible_channels = self.visible_channels;
         config.show_row_numbers = self.show_row_numbers;
@@ -255,6 +258,12 @@ fn draw_editor_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
     ui.horizontal(|ui| {
         ui.label("Font Size:");
         ui.add(egui::DragValue::new(&mut state.editor_font_size).range(8..=24).speed(1));
+    });
+    ui.add_space(4.0);
+
+    ui.horizontal(|ui| {
+        ui.label("Zoom Factor:");
+        ui.add(egui::Slider::new(&mut state.zoom_factor, 0.5..=2.5).step_by(0.1));
     });
     ui.add_space(4.0);
 

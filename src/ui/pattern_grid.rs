@@ -6,12 +6,34 @@ use crate::sequencer::pattern::Cell;
 
 use super::theme::TrackerTheme;
 
-pub const FONT_SIZE: f32 = 13.0;
-pub const ROW_HEIGHT: f32 = 17.0;
-pub const ROW_NUM_WIDTH: f32 = 32.0;
-pub const CHAR_WIDTH: f32 = 7.8;
-pub const CHANNEL_WIDTH: f32 = 14.0 * CHAR_WIDTH;
-pub const VISIBLE_ROWS: usize = 32;
+#[derive(Clone, Copy, Debug)]
+pub struct GridMetrics {
+    pub font_size: f32,
+    pub row_height: f32,
+    pub char_width: f32,
+    pub row_num_width: f32,
+    pub channel_width: f32,
+}
+
+impl GridMetrics {
+    pub fn new(font_size: f32) -> Self {
+        let char_width = font_size * 0.6; // Approximation for monospace
+        Self {
+            font_size,
+            row_height: font_size * 1.3,
+            char_width,
+            row_num_width: char_width * 4.0,
+            channel_width: char_width * 14.0,
+        }
+    }
+
+    pub fn calculate_visible_channels(ui: &egui::Ui, metrics: GridMetrics) -> usize {
+        let available_size = ui.available_size();
+        ((available_size.x - metrics.row_num_width) / metrics.channel_width).floor() as usize
+    }
+}
+
+pub const VISIBLE_ROWS: usize = 32; // Kept as default/fallback
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SubColumn {
@@ -146,9 +168,8 @@ pub enum ContextMenuAction {
 }
 
 pub struct PatternGridResponse {
-    pub _cursor_moved: bool,
-    pub _cell_edited: bool,
-    pub _selection_changed: bool,
+    pub visible_rows: usize,
+    pub visible_channels: usize,
     pub clicked_position: Option<CursorPosition>,
     pub drag_position: Option<CursorPosition>,
     pub context_menu_action: Option<ContextMenuAction>,
@@ -164,13 +185,19 @@ pub fn draw_pattern_grid(
     scroll_row: usize,
     scroll_channel: usize,
     num_channels: usize,
+    metrics: GridMetrics,
     theme: &TrackerTheme,
 ) -> PatternGridResponse {
-    let visible_channels = num_channels.min(16);
-    let visible_rows = VISIBLE_ROWS.min(pattern.num_rows);
+    let available_size = ui.available_size();
+    
+    let visible_rows = (available_size.y / metrics.row_height).floor() as usize;
+    let visible_channels = GridMetrics::calculate_visible_channels(ui, metrics);
+    
+    let visible_rows = visible_rows.min(pattern.num_rows).max(1);
+    let visible_channels = visible_channels.min(num_channels - scroll_channel).max(1);
 
-    let grid_width = ROW_NUM_WIDTH + visible_channels as f32 * CHANNEL_WIDTH;
-    let grid_height = visible_rows as f32 * ROW_HEIGHT;
+    let grid_width = metrics.row_num_width + visible_channels as f32 * metrics.channel_width;
+    let grid_height = visible_rows as f32 * metrics.row_height;
 
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(grid_width, grid_height),
@@ -181,16 +208,6 @@ pub fn draw_pattern_grid(
     let mut context_menu_action: Option<ContextMenuAction> = None;
     let mut effect_tooltip: Option<String> = None;
 
-    let _grid_response = PatternGridResponse {
-        _cursor_moved: false,
-        _cell_edited: false,
-        _selection_changed: false,
-        clicked_position: None,
-        drag_position: None,
-        context_menu_action: None,
-        effect_tooltip: None,
-    };
-
     let first_row = scroll_row;
     let last_row = (first_row + visible_rows).min(pattern.num_rows);
     let first_ch = scroll_channel;
@@ -198,7 +215,7 @@ pub fn draw_pattern_grid(
 
     for row in first_row..last_row {
         let display_row = row - first_row;
-        let y = rect.top() + display_row as f32 * ROW_HEIGHT;
+        let y = rect.top() + display_row as f32 * metrics.row_height;
         let is_highlight = row % 4 == 0;
         let is_measure = row % 16 == 0;
         let is_playback = playback_row == Some(row);
@@ -213,7 +230,7 @@ pub fn draw_pattern_grid(
             theme.bg_default
         };
         painter.rect_filled(
-            Rect::from_min_max(Pos2::new(rect.left(), y), Pos2::new(rect.right(), y + ROW_HEIGHT)),
+            Rect::from_min_max(Pos2::new(rect.left(), y), Pos2::new(rect.right(), y + metrics.row_height)),
             0.0,
             bg,
         );
@@ -226,22 +243,22 @@ pub fn draw_pattern_grid(
             theme.fg_note_empty
         };
         painter.text(
-            Pos2::new(rect.left() + 2.0, y + ROW_HEIGHT * 0.5),
+            Pos2::new(rect.left() + 2.0, y + metrics.row_height * 0.5),
             egui::Align2::LEFT_CENTER,
             format!("{:03}", row),
-            egui::FontId::monospace(FONT_SIZE),
+            egui::FontId::monospace(metrics.font_size),
             row_num_color,
         );
 
         for ch in first_ch..last_ch {
             let display_ch = ch - first_ch;
-            let x = rect.left() + ROW_NUM_WIDTH + display_ch as f32 * CHANNEL_WIDTH;
+            let x = rect.left() + metrics.row_num_width + display_ch as f32 * metrics.channel_width;
 
             let is_ch_alt = ch % 2 == 1;
             if is_ch_alt {
                 let ch_rect = Rect::from_min_max(
                     Pos2::new(x, y),
-                    Pos2::new(x + CHANNEL_WIDTH - 2.0, y + ROW_HEIGHT),
+                    Pos2::new(x + metrics.channel_width - 2.0, y + metrics.row_height),
                 );
                 painter.rect_filled(ch_rect, 0.0, theme.bg_channel_alt);
             }
@@ -250,128 +267,50 @@ pub fn draw_pattern_grid(
             if in_selection {
                 let sel_rect = Rect::from_min_max(
                     Pos2::new(x, y),
-                    Pos2::new(x + CHANNEL_WIDTH - 2.0, y + ROW_HEIGHT),
+                    Pos2::new(x + metrics.channel_width - 2.0, y + metrics.row_height),
                 );
                 painter.rect_filled(sel_rect, 0.0, theme.bg_selected);
             }
 
             let cell = pattern.cell(row, ch);
-            draw_cell(&painter, x, y, cell, theme);
+            draw_cell(&painter, x, y, cell, metrics, theme);
 
             if let Some(hover_pos) = ui.input(|i| i.pointer.hover_pos()) {
                 let cell_rect = Rect::from_min_size(
                     Pos2::new(x, y),
-                    egui::vec2(CHANNEL_WIDTH - 2.0, ROW_HEIGHT),
+                    egui::vec2(metrics.channel_width - 2.0, metrics.row_height),
                 );
                 if cell_rect.contains(hover_pos) && cell.effect != Effect::None {
                     let sub_col_x = hover_pos.x - x;
-                    let char_pos = sub_col_x / CHAR_WIDTH;
+                    let char_pos = sub_col_x / metrics.char_width;
                     if char_pos >= 10.0 {
                         effect_tooltip = Some(effect_tooltip_text(&cell.effect));
-        }
-    }
-}
-
-fn effect_tooltip_text(effect: &Effect) -> String {
-    match effect {
-        Effect::Arpeggio { note1, note2 } => format!("Arpeggio: +{} +{} semitones", note1, note2),
-        Effect::PortamentoUp { speed } => format!("Portamento Up: speed={}", speed),
-        Effect::PortamentoDown { speed } => format!("Portamento Down: speed={}", speed),
-        Effect::TonePortamento { speed } => format!("Tone Portamento: speed={}", speed),
-        Effect::Vibrato { speed, depth } => format!("Vibrato: speed={} depth={}", speed, depth),
-        Effect::TonePortamentoVolumeSlide { up } => format!("Tone Porta + Vol Slide"),
-        Effect::VibratoVolumeSlide { up } => format!("Vibrato + Vol Slide"),
-        Effect::Tremolo { speed, depth } => format!("Tremolo: speed={} depth={}", speed, depth),
-        Effect::SetPanning { pan } => {
-            let pct = (*pan as f32 / 255.0 * 100.0) as u8;
-            if *pan < 85 { format!("Pan: {} (left {}%)", pan, pct) }
-            else if *pan > 170 { format!("Pan: {} (right {}%)", pan, pct) }
-            else { format!("Pan: {} (center {}%)", pan, pct) }
-        }
-        Effect::SetSampleOffset { offset } => format!("Sample Offset: {}", offset),
-        Effect::VolumeSlide { up, down } => {
-            if *up > 0 { format!("Vol Slide Up: {}", up) }
-            else { format!("Vol Slide Down: {}", down) }
-        }
-        Effect::PositionJump { order } => format!("Position Jump: order {}", order),
-        Effect::SetVolume { volume } => format!("Set Volume: {}/64", (*volume).min(64)),
-        Effect::PatternBreak { row } => format!("Pattern Break: row {}", row),
-        Effect::ExtendedEffect { param } => {
-            let sub = (param >> 4) & 0x0F;
-            let val = param & 0x0F;
-            match sub {
-                0 => "Set Filter".to_string(),
-                1 => format!("Fine Porta Up: {}", val),
-                2 => format!("Fine Porta Down: {}", val),
-                3 => format!("Glissando: {}", if val > 0 { "On" } else { "Off" }),
-                4 => format!("Vibrato Waveform: {}", match val { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
-                5 => format!("Set Fine Tune: {}", val),
-                6 => format!("Pattern Loop: {}", if val == 0 { "Set marker".to_string() } else { format!("Loop {}x", val) }),
-                7 => format!("Tremolo Waveform: {}", match val { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
-                8 => format!("Set Panning (fine)"),
-                9 => format!("Retrigger: every {} ticks", val),
-                0xA => format!("Fine Vol Up: {}", val),
-                0xB => format!("Fine Vol Down: {}", val),
-                0xC => format!("Note Cut after {} ticks", val),
-                0xD => format!("Note Delay: {} ticks", val),
-                0xE => "Pattern Delay".to_string(),
-                _ => format!("Extended E{:X}{:02X}", sub, val),
+                    }
+                }
             }
         }
-        Effect::SetSpeed { speed } => format!("Speed: {} ticks/row", speed),
-        Effect::SetTempo { bpm } => format!("Tempo: {} BPM", bpm),
-        Effect::SetGlobalVolume { volume } => format!("Global Volume: {}", volume),
-        Effect::GlobalVolumeSlide { .. } => "Global Volume Slide".to_string(),
-        Effect::SetEnvelopePosition { tick } => format!("Envelope Position: tick {}", tick),
-        Effect::Panbrello { speed, depth } => format!("Panbrello: speed={} depth={}", speed, depth),
-        Effect::PatternDelay { ticks } => format!("Pattern Delay: {} ticks", ticks),
-        Effect::SetPanPosition { pan } => format!("Pan Position: {}", pan),
-        Effect::GlissandoControl { on } => format!("Glissando: {}", if *on { "On" } else { "Off" }),
-        Effect::VibratoWaveform { waveform } => format!("Vibrato Waveform: {}", match waveform & 3 { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
-        Effect::SetFineTune { tune } => format!("Fine Tune: {}", tune),
-        Effect::PatternLoop { count } => format!("Pattern Loop: {}", if *count == 0 { "Set marker".to_string() } else { format!("Loop {}x", count) }),
-        Effect::TremoloWaveform { waveform } => format!("Tremolo Waveform: {}", match waveform & 3 { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
-        Effect::SetPanning16 { pan } => format!("Fine Panning: {}", pan),
-        Effect::Retrigger { interval } => format!("Retrigger: every {} ticks", interval),
-        Effect::NoteCutAfter { ticks } => format!("Note Cut after {} ticks", ticks),
-        Effect::NoteDelay { ticks } => format!("Note Delay: {} ticks", ticks),
-        Effect::FinePortamentoUp { speed } => format!("Fine Porta Up: {}", speed),
-        Effect::FinePortamentoDown { speed } => format!("Fine Porta Down: {}", speed),
-        Effect::FineVolumeSlideUp { amount } => format!("Fine Vol Up: {}", amount),
-        Effect::FineVolumeSlideDown { amount } => format!("Fine Vol Down: {}", amount),
-        Effect::Tremor { ontime, offtime } => format!("Tremor: on={} off={}", ontime, offtime),
-        Effect::SetFilterCutoff { cutoff } => format!("Filter Cutoff: {}", cutoff),
-        Effect::SetFilterResonance { resonance } => format!("Filter Resonance: {}", resonance),
-        Effect::SetFilterType { filter_type } => format!("Filter Type: {}", match filter_type { 0 => "LP", 1 => "HP", 2 => "BP", _ => "Notch" }),
-        Effect::FilterCutoffSlide { amount } => format!("Filter Cutoff Slide: {}", amount),
-        _ => String::new(),
-    }
-}
-        }
     }
 
-    if let Some(cursor) = Some(cursor) {
-        let display_row = cursor.row.saturating_sub(first_row);
-        let display_ch = cursor.channel.saturating_sub(first_ch);
-        if display_row < visible_rows && display_ch < visible_channels {
-            let cursor_x = rect.left() + ROW_NUM_WIDTH + display_ch as f32 * CHANNEL_WIDTH;
-            let cursor_y = rect.top() + display_row as f32 * ROW_HEIGHT;
-            let cursor_rect = Rect::from_min_size(
-                Pos2::new(cursor_x, cursor_y),
-                egui::vec2(CHANNEL_WIDTH - 2.0, ROW_HEIGHT),
-            );
-            painter.rect_filled(cursor_rect, 0.0, theme.cursor_fill);
-            painter.rect_stroke(cursor_rect, 0.0, Stroke::new(1.0, theme.cursor_outline), egui::StrokeKind::Outside);
-        }
+    let display_row = cursor.row.saturating_sub(first_row);
+    let display_ch = cursor.channel.saturating_sub(first_ch);
+    if display_row < visible_rows && display_ch < visible_channels {
+        let cursor_x = rect.left() + metrics.row_num_width + display_ch as f32 * metrics.channel_width;
+        let cursor_y = rect.top() + display_row as f32 * metrics.row_height;
+        let cursor_rect = Rect::from_min_size(
+            Pos2::new(cursor_x, cursor_y),
+            egui::vec2(metrics.channel_width - 2.0, metrics.row_height),
+        );
+        painter.rect_filled(cursor_rect, 0.0, theme.cursor_fill);
+        painter.rect_stroke(cursor_rect, 0.0, Stroke::new(1.0, theme.cursor_outline), egui::StrokeKind::Outside);
     }
 
     if let Some(prow) = playback_row {
         if prow >= first_row && prow < last_row {
             let display_row = prow - first_row;
-            let cursor_y = rect.top() + display_row as f32 * ROW_HEIGHT;
+            let cursor_y = rect.top() + display_row as f32 * metrics.row_height;
             let line_rect = Rect::from_min_max(
                 Pos2::new(rect.left(), cursor_y),
-                Pos2::new(rect.right(), cursor_y + ROW_HEIGHT),
+                Pos2::new(rect.right(), cursor_y + metrics.row_height),
             );
             painter.rect_stroke(line_rect, 0.0, Stroke::new(1.5, theme.playback_cursor), egui::StrokeKind::Outside);
         }
@@ -384,15 +323,15 @@ fn effect_tooltip_text(effect: &Effect) -> String {
         if let Some(pos) = response.interact_pointer_pos() {
             let rel_x = pos.x - rect.left();
             let rel_y = pos.y - rect.top();
-            let display_row = (rel_y / ROW_HEIGHT) as usize;
-            let col_x = rel_x - ROW_NUM_WIDTH;
-            let display_ch = (col_x / CHANNEL_WIDTH) as usize;
+            let display_row = (rel_y / metrics.row_height) as usize;
+            let col_x = rel_x - metrics.row_num_width;
+            let display_ch = (col_x / metrics.channel_width) as usize;
 
             let row = first_row + display_row.min(visible_rows.saturating_sub(1));
             let ch = first_ch + display_ch.min(visible_channels.saturating_sub(1));
 
-            let sub_col_x = col_x - display_ch as f32 * CHANNEL_WIDTH;
-            let sub_column = position_to_sub_column(sub_col_x);
+            let sub_col_x = col_x - display_ch as f32 * metrics.channel_width;
+            let sub_column = position_to_sub_column(sub_col_x, metrics);
 
             let cursor_pos = CursorPosition {
                 row,
@@ -436,9 +375,8 @@ fn effect_tooltip_text(effect: &Effect) -> String {
     });
 
     PatternGridResponse {
-        _cursor_moved: clicked_position.is_some(),
-        _cell_edited: false,
-        _selection_changed: drag_position.is_some(),
+        visible_rows,
+        visible_channels,
         clicked_position,
         drag_position,
         context_menu_action,
@@ -446,8 +384,8 @@ fn effect_tooltip_text(effect: &Effect) -> String {
     }
 }
 
-fn position_to_sub_column(x: f32) -> SubColumn {
-    let char_pos = x / CHAR_WIDTH;
+fn position_to_sub_column(x: f32, metrics: GridMetrics) -> SubColumn {
+    let char_pos = x / metrics.char_width;
     if char_pos < 4.0 {
         SubColumn::Note
     } else if char_pos < 6.0 {
@@ -471,9 +409,9 @@ fn position_to_sub_column(x: f32) -> SubColumn {
     }
 }
 
-fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, theme: &TrackerTheme) {
-    let font = egui::FontId::monospace(FONT_SIZE);
-    let center_y = y + ROW_HEIGHT * 0.5;
+fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: GridMetrics, theme: &TrackerTheme) {
+    let font = egui::FontId::monospace(metrics.font_size);
+    let center_y = y + metrics.row_height * 0.5;
 
     let note_text = match cell.note {
         Note::On(key) => {
@@ -505,7 +443,7 @@ fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, theme: &Track
         theme.fg_note_empty
     };
     painter.text(
-        Pos2::new(x + CHAR_WIDTH * 4.0, center_y),
+        Pos2::new(x + metrics.char_width * 4.0, center_y),
         egui::Align2::LEFT_CENTER,
         ins_text,
         font.clone(),
@@ -522,7 +460,7 @@ fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, theme: &Track
         theme.fg_note_empty
     };
     painter.text(
-        Pos2::new(x + CHAR_WIDTH * 7.0, center_y),
+        Pos2::new(x + metrics.char_width * 7.0, center_y),
         egui::Align2::LEFT_CENTER,
         vol_text,
         font.clone(),
@@ -541,14 +479,14 @@ fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, theme: &Track
         theme.fg_note_empty
     };
     painter.text(
-        Pos2::new(x + CHAR_WIDTH * 10.0, center_y),
+        Pos2::new(x + metrics.char_width * 10.0, center_y),
         egui::Align2::LEFT_CENTER,
         fx_type,
         font.clone(),
         fx_type_color,
     );
     painter.text(
-        Pos2::new(x + CHAR_WIDTH * 11.0, center_y),
+        Pos2::new(x + metrics.char_width * 11.0, center_y),
         egui::Align2::LEFT_CENTER,
         fx_param,
         font,
@@ -629,5 +567,81 @@ fn format_effect(effect: &Effect) -> (String, String) {
                 },
             }
         }
+    }
+}
+
+fn effect_tooltip_text(effect: &Effect) -> String {
+    match effect {
+        Effect::Arpeggio { note1, note2 } => format!("Arpeggio: +{} +{} semitones", note1, note2),
+        Effect::PortamentoUp { speed } => format!("Portamento Up: speed={}", speed),
+        Effect::PortamentoDown { speed } => format!("Portamento Down: speed={}", speed),
+        Effect::TonePortamento { speed } => format!("Tone Portamento: speed={}", speed),
+        Effect::Vibrato { speed, depth } => format!("Vibrato: speed={} depth={}", speed, depth),
+        Effect::TonePortamentoVolumeSlide { .. } => "Tone Porta + Vol Slide".to_string(),
+        Effect::VibratoVolumeSlide { .. } => "Vibrato + Vol Slide".to_string(),
+        Effect::Tremolo { speed, depth } => format!("Tremolo: speed={} depth={}", speed, depth),
+        Effect::SetPanning { pan } => {
+            let pct = (*pan as f32 / 255.0 * 100.0) as u8;
+            if *pan < 85 { format!("Pan: {} (left {}%)", pan, pct) }
+            else if *pan > 170 { format!("Pan: {} (right {}%)", pan, pct) }
+            else { format!("Pan: {} (center {}%)", pan, pct) }
+        }
+        Effect::SetSampleOffset { offset } => format!("Sample Offset: {}", offset),
+        Effect::VolumeSlide { up, down } => {
+            if *up > 0 { format!("Vol Slide Up: {}", up) }
+            else { format!("Vol Slide Down: {}", down) }
+        }
+        Effect::PositionJump { order } => format!("Position Jump: order {}", order),
+        Effect::SetVolume { volume } => format!("Set Volume: {}/64", (*volume).min(64)),
+        Effect::PatternBreak { row } => format!("Pattern Break: row {}", row),
+        Effect::ExtendedEffect { param } => {
+            let sub = (param >> 4) & 0x0F;
+            let val = param & 0x0F;
+            match sub {
+                0 => "Set Filter".to_string(),
+                1 => format!("Fine Porta Up: {}", val),
+                2 => format!("Fine Porta Down: {}", val),
+                3 => format!("Glissando: {}", if val > 0 { "On" } else { "Off" }),
+                4 => format!("Vibrato Waveform: {}", match val { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
+                5 => format!("Set Fine Tune: {}", val),
+                6 => format!("Pattern Loop: {}", if val == 0 { "Set marker".to_string() } else { format!("Loop {}x", val) }),
+                7 => format!("Tremolo Waveform: {}", match val { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
+                8 => format!("Set Panning (fine)"),
+                9 => format!("Retrigger: every {} ticks", val),
+                0xA => format!("Fine Vol Up: {}", val),
+                0xB => format!("Fine Vol Down: {}", val),
+                0xC => format!("Note Cut after {} ticks", val),
+                0xD => format!("Note Delay: {} ticks", val),
+                0xE => "Pattern Delay".to_string(),
+                _ => format!("Extended E{:X}{:02X}", sub, val),
+            }
+        }
+        Effect::SetSpeed { speed } => format!("Speed: {} ticks/row", speed),
+        Effect::SetTempo { bpm } => format!("Tempo: {} BPM", bpm),
+        Effect::SetGlobalVolume { volume } => format!("Global Volume: {}", volume),
+        Effect::GlobalVolumeSlide { .. } => "Global Volume Slide".to_string(),
+        Effect::SetEnvelopePosition { tick } => format!("Envelope Position: tick {}", tick),
+        Effect::Panbrello { speed, depth } => format!("Panbrello: speed={} depth={}", speed, depth),
+        Effect::PatternDelay { ticks } => format!("Pattern Delay: {} ticks", ticks),
+        Effect::SetPanPosition { pan } => format!("Pan Position: {}", pan),
+        Effect::GlissandoControl { on } => format!("Glissando: {}", if *on { "On" } else { "Off" }),
+        Effect::VibratoWaveform { waveform } => format!("Vibrato Waveform: {}", match waveform & 3 { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
+        Effect::SetFineTune { tune } => format!("Fine Tune: {}", tune),
+        Effect::PatternLoop { count } => format!("Pattern Loop: {}", if *count == 0 { "Set marker".to_string() } else { format!("Loop {}x", count) }),
+        Effect::TremoloWaveform { waveform } => format!("Tremolo Waveform: {}", match waveform & 3 { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
+        Effect::SetPanning16 { pan } => format!("Fine Panning: {}", pan),
+        Effect::Retrigger { interval } => format!("Retrigger: every {} ticks", interval),
+        Effect::NoteCutAfter { ticks } => format!("Note Cut after {} ticks", ticks),
+        Effect::NoteDelay { ticks } => format!("Note Delay: {} ticks", ticks),
+        Effect::FinePortamentoUp { speed } => format!("Fine Porta Up: {}", speed),
+        Effect::FinePortamentoDown { speed } => format!("Fine Porta Down: {}", speed),
+        Effect::FineVolumeSlideUp { amount } => format!("Fine Vol Up: {}", amount),
+        Effect::FineVolumeSlideDown { amount } => format!("Fine Vol Down: {}", amount),
+        Effect::Tremor { ontime, offtime } => format!("Tremor: on={} off={}", ontime, offtime),
+        Effect::SetFilterCutoff { cutoff } => format!("Filter Cutoff: {}", cutoff),
+        Effect::SetFilterResonance { resonance } => format!("Filter Resonance: {}", resonance),
+        Effect::SetFilterType { filter_type } => format!("Filter Type: {}", match filter_type { 0 => "LP", 1 => "HP", 2 => "BP", _ => "Notch" }),
+        Effect::FilterCutoffSlide { amount } => format!("Filter Cutoff Slide: {}", amount),
+        _ => String::new(),
     }
 }

@@ -28,6 +28,8 @@ pub struct AppConfig {
 
     #[serde(default = "default_font_size")]
     pub editor_font_size: u32,
+    #[serde(default = "default_zoom")]
+    pub zoom_factor: f32,
     #[serde(default = "default_scroll_speed")]
     pub scroll_speed: f32,
     #[serde(default = "default_visible_channels")]
@@ -57,6 +59,7 @@ pub struct AppConfig {
 }
 
 fn default_font_size() -> u32 { 12 }
+fn default_zoom() -> f32 { 1.0 }
 fn default_scroll_speed() -> f32 { 1.0 }
 fn default_visible_channels() -> usize { 16 }
 fn default_true() -> bool { true }
@@ -77,6 +80,7 @@ impl Default for AppConfig {
             default_project_path: None,
 
             editor_font_size: default_font_size(),
+            zoom_factor: default_zoom(),
             scroll_speed: default_scroll_speed(),
             visible_channels: default_visible_channels(),
             show_row_numbers: true,
