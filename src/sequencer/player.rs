@@ -39,6 +39,7 @@ pub struct ChannelState {
     pub last_tremolo_depth: u8,
     pub last_volume_slide_up: u8,
     pub last_volume_slide_down: u8,
+    pub last_volume_slide_param: u8,
     pub last_sample_offset: u16,
     pub high_sample_offset: u8,
     pub last_arpeggio: (u8, u8),
@@ -57,7 +58,8 @@ pub struct ChannelState {
     pub filter_type: FilterType,
     pub last_filter_cutoff_slide: i16,
 
-    pub portamento_target_period: Option<f64>,
+    pub portamento_target_period: Option<u16>,
+    pub portamento_target_frequency: Option<f64>,
 
     pub muted: bool,
     pub solo: bool,
@@ -111,6 +113,7 @@ impl Default for ChannelState {
             last_tremolo_depth: 0,
             last_volume_slide_up: 0,
             last_volume_slide_down: 0,
+            last_volume_slide_param: 0,
             last_sample_offset: 0,
             high_sample_offset: 0,
             last_arpeggio: (0, 0),
@@ -128,6 +131,7 @@ impl Default for ChannelState {
             filter_type: FilterType::LowPass,
             last_filter_cutoff_slide: 0,
             portamento_target_period: None,
+            portamento_target_frequency: None,
             muted: false,
             solo: false,
             delayed_cell: None,

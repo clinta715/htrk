@@ -1,6 +1,6 @@
 # Agent Guidelines for htrk
 
-To prevent regressions in the sequencer and audio engine, follow these rules when modifying playback logic:
+To prevent regressions in the sequencer, audio engine, and effect processing pipeline, follow these rules when modifying playback or format logic:
 
 ## 1. Row State Isolation
 - **Mandate**: Every row starts with a clean slate for non-persistent effects.
@@ -35,3 +35,27 @@ To prevent regressions in the sequencer and audio engine, follow these rules whe
   self.sync_module_to_audio();
   ```
 - **Why**: The audio engine always holds a clone of `Arc<Module>`, so `Arc::get_mut()` returns `None` unless ownership is ensured first. After mutation, the audio engine must be updated with `sync_module_to_audio()` so it picks up the changes.
+
+## 6. Effect Architecture: Universal, Format-Specific, and Native
+
+### Layer 1 — Universal Effects
+The `Effect` enum (`src/sequencer/effect.rs`) defines the universal internal representation shared across all formats. These are format-agnostic commands (Arpeggio, VolumeSlide, TonePortamento, etc.) that every format loader decodes INTO and every format encoder decodes FROM.
+
+### Layer 2 — Format-Specific Effects
+When a legacy format has commands or quirks that cannot be cleanly represented in the universal `Effect` enum, use `Effect::FormatSpecific(FormatEffect)` with the appropriate sub-enum (`XmEffect`, `ModEffect`, `S3mEffect`, `ItEffect`). This isolates format quirks:
+- A MOD-specific effect must never interfere with XM playback and vice versa.
+- The sequencer dispatches format-specific effects only when the matching format is active.
+- Each format's loader is responsible for encoding its native commands into the correct universal OR format-specific effect.
+
+### Layer 3 — Native Effects (HTRK Superset)
+Beyond the universal and format-compatibility layers, HTRK provides a superset of native commands that users composing in HTRK (`FormatType::Htk`) can treat as the standard toolkit. These include extended filter control, fine-grained MIDI parameter automation, and other modern features that have no legacy equivalent. Native effects should:
+- Be available regardless of which legacy format is loaded (they enhance, not replace).
+- Never conflict with or override format-specific compatibility behavior.
+- Serve as the recommended command set for users whose interest is native HTRK composition rather than accurate legacy reproduction.
+
+### Format-Conditional Processing Rules
+When the sequencer processes a universal effect that needs format-specific behavior (e.g., vibrato uses period-domain math for MOD but frequency-domain for XM), use `module.flags.linear_slides` or `self.use_xm_model` to branch:
+- Each branch MUST be tested independently.
+- Changes to the non-XM path (`!linear_slides`) MUST NOT alter the XM path (`linear_slides`).
+- Changes to the XM path MUST NOT alter the non-XM path.
+- After modifying any format-conditional code, run the FULL test suite and verify both XM and MOD/S3M playback.

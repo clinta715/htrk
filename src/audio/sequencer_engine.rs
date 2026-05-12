@@ -416,10 +416,12 @@ impl SequencerEngine {
                             ch.porta_dir = 2;
                         }
                     } else {
-                        let target_freq = self.compute_portamento_target(
+                        let (target_period, target_freq) = self.compute_portamento_target(
                             channel, key, remapped_key, sample, sample_idx, &module,
                         );
-                        self.state.channels[channel].portamento_target_period = Some(target_freq);
+                        let ch = &mut self.state.channels[channel];
+                        ch.portamento_target_period = Some(target_period);
+                        ch.portamento_target_frequency = Some(target_freq);
                     }
                 } else if is_xm {
                     let inst = instrument_idx;
@@ -962,6 +964,9 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             Effect::VolumeSlide { up, down } => {
                 if *up > 0 { ch.last_volume_slide_up = *up; }
                 if *down > 0 { ch.last_volume_slide_down = *down; }
+                if !is_xm {
+                    ch.last_volume_slide_param = (*up << 4) | *down;
+                }
                 ch.active_effects.volume_slide = true;
                 if is_xm && is_row_start {
                     self.apply_volume_slide(channel);
@@ -974,6 +979,9 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 let down_val = param & 0x0F;
                 if up_val > 0 { ch.last_volume_slide_up = up_val; }
                 if down_val > 0 { ch.last_volume_slide_down = down_val; }
+                if !is_xm {
+                    ch.last_volume_slide_param = param;
+                }
                 ch.active_effects.tone_portamento = true;
                 ch.active_effects.volume_slide = true;
             }
@@ -984,6 +992,9 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 let down_val = param & 0x0F;
                 if up_val > 0 { ch.last_volume_slide_up = up_val; }
                 if down_val > 0 { ch.last_volume_slide_down = down_val; }
+                if !is_xm {
+                    ch.last_volume_slide_param = param;
+                }
                 ch.active_effects.vibrato = true;
                 ch.active_effects.volume_slide = true;
             }
@@ -1308,8 +1319,10 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                                 } else {
                                     None
                                 };
-                                let target = self.compute_portamento_target(channel, key, rk, sample, sample_idx, &module);
-                                self.state.channels[channel].portamento_target_period = Some(target);
+                                let (tp, tf) = self.compute_portamento_target(channel, key, rk, sample, sample_idx, &module);
+                                let ch = &mut self.state.channels[channel];
+                                ch.portamento_target_period = Some(tp);
+                                ch.portamento_target_frequency = Some(tf);
                             }
                         }
                     }
@@ -2486,21 +2499,22 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             Some(m) => m,
             None => return,
         };
-        let target = match self.state.channels[channel].portamento_target_period {
+        let target_period = match self.state.channels[channel].portamento_target_period {
             Some(t) => t,
             None => return,
         };
+        let target_freq = self.state.channels[channel].portamento_target_frequency;
 
         if !module.flags.linear_slides {
             let ch = &mut self.state.channels[channel];
-            let want = target as u16; // In Amiga mode, target is stored as period (scaled)
-            
+            let want = target_period;
+
             if ch.real_period < want {
                 ch.real_period = ch.real_period.saturating_add(speed).min(want);
             } else if ch.real_period > want {
                 ch.real_period = ch.real_period.saturating_sub(speed).max(want);
             }
-            
+
             if ch.glissando {
                 ch.out_period = relocate_ton(ch.real_period, 0, ch.fine_tune_offset, false);
             } else {
@@ -2510,6 +2524,11 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             return;
         }
 
+        let tf = match target_freq {
+            Some(f) => f,
+            None => return,
+        };
+
         let slide = speed as f64 / (12.0 * 64.0);
         let glissando = self.state.channels[channel].glissando;
 
@@ -2518,14 +2537,14 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 continue;
             }
             let mut current = voice.current_frequency;
-            if (current - target).abs() < 0.5 {
-                voice.current_frequency = target;
-            } else if current < target {
+            if (current - tf).abs() < 0.5 {
+                voice.current_frequency = tf;
+            } else if current < tf {
                 current = current * 2.0_f64.powf(slide);
-                if current > target { current = target; }
+                if current > tf { current = tf; }
             } else {
                 current = current / 2.0_f64.powf(slide);
-                if current < target { current = target; }
+                if current < tf { current = tf; }
             }
             if glissando {
                 current = quantize_to_semitone(current);
@@ -2538,7 +2557,11 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
     fn apply_volume_slide(&mut self, channel: usize) {
         let (up, down) = {
             let ch = &self.state.channels[channel];
-            (ch.last_volume_slide_up, ch.last_volume_slide_down)
+            if !self.use_xm_model && ch.last_volume_slide_param > 0 {
+                ((ch.last_volume_slide_param >> 4) as u8, (ch.last_volume_slide_param & 0x0F) as u8)
+            } else {
+                (ch.last_volume_slide_up, ch.last_volume_slide_down)
+            }
         };
         if up == 0 && down == 0 {
             return;
@@ -2565,6 +2588,35 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         if depth == 0 {
             return;
         }
+
+        if !self.use_xm_model {
+            let ch = &mut self.state.channels[channel];
+            let vib_tab = get_vib_tab();
+            let waveform = ch.wave_ctrl & 0x03;
+            let tmp_vib = ((ch.vib_pos >> 2) & 0x1F) as usize;
+
+            let vibrato_val: i32 = match waveform {
+                0 => vib_tab[tmp_vib] as i32,
+                1 => {
+                    let val = (tmp_vib as i32) << 3;
+                    if (ch.vib_pos as i8) < 0 { !val } else { val }
+                }
+                _ => 255,
+            };
+
+            let offset = ((vibrato_val * (depth as i32)) >> 3) as u16;
+            if (ch.vib_pos as i8) < 0 {
+                ch.real_period = ch.real_period.saturating_sub(offset).max(1);
+            } else {
+                ch.real_period = ch.real_period.saturating_add(offset).min(31999);
+            }
+            ch.out_period = ch.real_period;
+            ch.vib_pos = ch.vib_pos.wrapping_add(speed as u8);
+
+            self.update_voices_from_period(channel, false);
+            return;
+        }
+
         let depth_f = depth as f32 / 64.0;
 
         for voice in &mut self.voices {
@@ -3256,22 +3308,29 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         sample: Option<&Sample>,
         sample_idx: usize,
         module: &Module,
-    ) -> f64 {
+    ) -> (u16, f64) {
         let freq = match Note::On(remapped_key).frequency() {
             Some(f) => f,
-            None => return 0.0,
+            None => return (0, 0.0),
         };
 
-        let s = if sample_idx > 0 && sample_idx < module.samples.len() {
-            &module.samples[sample_idx]
+        let (s, playback_freq) = if sample_idx > 0 && sample_idx < module.samples.len() {
+            let s = &module.samples[sample_idx];
+            let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
+            (s, pf)
         } else {
             match sample {
-                Some(s) => s,
-                None => return freq,
+                Some(s) => {
+                    let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
+                    (s, pf)
+                }
+                None => return ((8363.0 * 1712.0 / freq) as u16, freq),
             }
         };
 
-        compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune)
+        let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
+        let period = (8363.0 * 1712.0 / pf).max(1.0) as u16;
+        (period, pf)
     }
 }
 
@@ -3398,6 +3457,7 @@ fn compute_playback_frequency(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sequencer::Instrument;
 
     #[test]
     fn compute_samples_per_tick_default() {
@@ -4392,5 +4452,207 @@ mod tests {
 
         assert_eq!(engine.state.channels[0].note_cut_tick, None,
             "note_cut_tick should be reset on row advance");
+    }
+
+    #[test]
+    fn mod_tone_portamento_slides_toward_target() {
+        use crate::sequencer::module::ModuleFlags;
+        use crate::sequencer::pattern::Pattern;
+
+        let mut engine = SequencerEngine::new(48000.0);
+        let mut sample = Sample::default();
+        sample.data = Arc::new(vec![0.0f32; 100]);
+        sample.sample_rate = 8363;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            instruments: vec![Instrument::default()],
+            samples: vec![Sample::default(), sample.clone()],
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+            ..Module::default()
+        });
+
+        engine.load_module(module.clone());
+        engine.play();
+
+        engine.state.channels[0].last_instrument = 1;
+        engine.state.channels[0].last_sample = 1;
+
+        let (target_period, target_freq) = engine.compute_portamento_target(0, 60, 60, Some(&sample), 1, &module);
+        assert!(target_period > 0, "compute_portamento_target should return a valid period");
+
+        engine.state.channels[0].real_period = 856;
+        engine.state.channels[0].out_period = 856;
+        engine.state.channels[0].want_period = target_period;
+        engine.state.channels[0].portamento_target_period = Some(target_period);
+        engine.state.channels[0].portamento_target_frequency = Some(target_freq);
+        engine.state.channels[0].last_tone_portamento_speed = 8;
+
+        let before = engine.state.channels[0].real_period;
+        engine.apply_tone_portamento(0, 8);
+        let after = engine.state.channels[0].real_period;
+
+        assert_ne!(before, after, "apply_tone_portamento should change period");
+        assert_ne!(after, 856, "apply_tone_portamento should produce a different period");
+    }
+
+    #[test]
+    fn mod_vibrato_depth_within_protracker_range() {
+        use crate::sequencer::module::ModuleFlags;
+        use crate::sequencer::pattern::Pattern;
+        use crate::sequencer::period::period_to_frequency;
+
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = false;
+
+        let mut sample = Sample::default();
+        sample.data = Arc::new(vec![0.0f32; 100]);
+        sample.sample_rate = 8363;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            samples: vec![Sample::default(), sample],
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+            ..Module::default()
+        });
+        engine.load_module(module);
+        engine.play();
+
+        let mut voice = Voice::default();
+        voice.active = true;
+        voice.channel = Some(0);
+        voice.base_frequency = 440.0;
+        voice.sample_delta = 440.0 / 48000.0;
+        voice.vibrato_waveform = VibratoWaveform::Sine;
+        voice.vibrato_phase = 0.0;
+        engine.voices[0] = voice;
+
+        engine.state.channels[0].real_period = 856;
+        engine.state.channels[0].out_period = 856;
+        engine.state.channels[0].wave_ctrl = 0;
+        engine.state.channels[0].vib_pos = 0;
+
+        let initial_period = engine.state.channels[0].real_period;
+        let initial_freq = period_to_frequency(initial_period, false, 8363);
+        let after_period = {
+            let ch = &mut engine.state.channels[0];
+            let vib_tab = get_vib_tab();
+            let waveform = ch.wave_ctrl & 0x03;
+            let tmp_vib = ((ch.vib_pos >> 2) & 0x1F) as usize;
+            let vibrato_val: i32 = match waveform {
+                0 => vib_tab[tmp_vib] as i32,
+                1 => {
+                    let val = (tmp_vib as i32) << 3;
+                    if (ch.vib_pos as i8) < 0 { !val } else { val }
+                }
+                _ => 255,
+            };
+            let offset = ((vibrato_val * 15) >> 3) as u16;
+            if (ch.vib_pos as i8) < 0 {
+                ch.real_period.saturating_sub(offset).max(1)
+            } else {
+                ch.real_period.saturating_add(offset).min(31999)
+            }
+        };
+        let after_freq = period_to_frequency(after_period, false, 8363);
+
+        let freq_mod = after_freq / initial_freq;
+        let semitones = (freq_mod.log2() * 12.0).abs();
+        assert!(semitones < 2.0,
+            "MOD vibrato depth 15 should be < 2 semitones, got {:.1}", semitones);
+    }
+
+    #[test]
+    fn mod_volume_slide_memory_uses_full_param() {
+        use crate::sequencer::module::ModuleFlags;
+        use crate::sequencer::pattern::Pattern;
+
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = false;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+            ..Module::default()
+        });
+        engine.load_module(module);
+        engine.play();
+
+        engine.state.channels[0].channel_volume = 64;
+        engine.state.channels[0].last_volume_slide_param = 0;
+        engine.state.channels[0].last_volume_slide_up = 3;
+        engine.state.channels[0].last_volume_slide_down = 0;
+
+        engine.apply_volume_slide(0);
+
+        let vol_after = engine.state.channels[0].channel_volume;
+        assert_eq!(vol_after, 64,
+            "With param=0, should slide 0 (up=0, down=0 from param), ignoring stale up=3");
+
+        engine.state.channels[0].channel_volume = 64;
+        engine.state.channels[0].last_volume_slide_param = 0x30;
+        engine.state.channels[0].last_volume_slide_up = 5;
+        engine.state.channels[0].last_volume_slide_down = 7;
+
+        engine.apply_volume_slide(0);
+
+        let vol_after_param = engine.state.channels[0].channel_volume;
+        assert_eq!(vol_after_param, 64,
+            "With param=0x30, should slide up by 3, but 64+3=67 exceeds max 64, clamped to 64");
+    }
+
+    #[test]
+    fn xm_tone_portamento_still_works() {
+        use crate::sequencer::{Instrument, Module, ModuleFormat, Note, Pattern, Sample};
+        use crate::sequencer::module::ModuleFlags;
+
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = true;
+
+        let mut sample = Sample::default();
+        sample.data = Arc::new(vec![0.0f32; 100]);
+        sample.sample_rate = 8363;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::XM,
+            instruments: vec![Instrument::default()],
+            samples: vec![Sample::default(), sample],
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags {
+                linear_slides: true,
+                use_instruments: true,
+                xm_period_model: true,
+                ..ModuleFlags::default()
+            },
+            ..Module::default()
+        });
+
+        engine.load_module(module.clone());
+        engine.play();
+
+        engine.state.channels[0].last_instrument = 1;
+        engine.state.channels[0].last_sample = 1;
+        engine.state.channels[0].real_period = 856;
+        engine.state.channels[0].want_period = 428;
+        engine.state.channels[0].porta_dir = 2;
+        engine.state.channels[0].porta_speed_period = 8;
+
+        let before = engine.state.channels[0].real_period;
+        let target_period = engine.state.channels[0].want_period;
+        engine.apply_tone_portamento_period(0, true);
+        let after = engine.state.channels[0].real_period;
+
+        assert!(after < before,
+            "XM portamento (porta_dir=2, slide up = lower period) should decrease period: {} -> {}",
+            before, after);
+        assert!(after >= target_period,
+            "XM portamento should not overshoot target period");
     }
 }
