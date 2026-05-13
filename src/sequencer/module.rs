@@ -44,6 +44,14 @@ pub enum ModuleFormat {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ModVariant {
+    #[default]
+    ProTracker,
+    NoiseTracker,
+    SoundTracker,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ModuleFlags {
     pub stereo: bool,
     pub use_instruments: bool,
@@ -56,6 +64,7 @@ pub struct ModuleFlags {
     #[allow(dead_code)]
     pub xm_envelope_model: bool,
     pub xm_period_model: bool,
+    pub mod_variant: ModVariant,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

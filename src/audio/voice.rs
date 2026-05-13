@@ -57,6 +57,9 @@ pub struct Voice {
     pub filter_resonance: f32,
     pub envelope_filter_cutoff: f32,
     pub svf: StateVariableFilter,
+    pub amiga_led_svf: StateVariableFilter,
+    pub filter_enabled: bool,
+    pub amiga_led_filter: bool,
 
     pub vibrato_phase: f32,
     pub vibrato_speed: u8,
@@ -158,6 +161,9 @@ self.filter_type = FilterType::LowPass;
         self.filter_resonance = 0.0;
         self.envelope_filter_cutoff = 1.0;
         self.svf = StateVariableFilter::default();
+        self.amiga_led_svf = StateVariableFilter::default();
+        self.filter_enabled = true;
+        self.amiga_led_filter = false;
         self.vibrato_phase = 0.0;
         self.vibrato_speed = 0;
         self.vibrato_depth = 0;
@@ -216,13 +222,13 @@ impl Default for Voice {
             tremolo_volume: 0.0,
             channel_volume: 1.0,
             global_volume: 1.0,
-            fade_out_volume: 1.0,
-            final_volume: 0.0,
-            smoothed_volume: 0.0,
+            fade_out_volume: 0.0,
+            final_volume: 1.0,
+            smoothed_volume: 1.0,
             base_panning: 0.5,
             envelope_panning: 0.0,
-            final_panning: 0.5,
-            smoothed_panning: 0.5,
+            final_panning: 0.0,
+            smoothed_panning: 0.0,
             vol_env: None,
             pan_env: None,
             pitch_env: None,
@@ -232,19 +238,22 @@ impl Default for Voice {
             filter_resonance: 0.0,
             envelope_filter_cutoff: 1.0,
             svf: StateVariableFilter::default(),
+            amiga_led_svf: StateVariableFilter::default(),
+            filter_enabled: true,
+            amiga_led_filter: false,
             vibrato_phase: 0.0,
             vibrato_speed: 0,
             vibrato_depth: 0,
-            vibrato_waveform: VibratoWaveform::default(),
+            vibrato_waveform: VibratoWaveform::Sine,
             tremolo_phase: 0.0,
             tremolo_speed: 0,
             tremolo_depth: 0,
-            tremolo_waveform: VibratoWaveform::default(),
+            tremolo_waveform: VibratoWaveform::Sine,
             panbrello_phase: 0.0,
             panbrello_speed: 0,
             panbrello_depth: 0,
             tremor_mute: false,
-            portamento_target: None,
+            portamento_target: Option::None,
             portamento_speed: 0.0,
             fading: false,
             note_off: false,
@@ -260,10 +269,10 @@ impl Default for Voice {
             auto_vib_pos: 0,
             auto_vib_amp: 0,
             auto_vib_sweep: 0,
-            env_sustain_active: true,
-            fade_out_amp: 32768i32,
+            env_sustain_active: false,
+            fade_out_amp: 0,
             fade_out_speed_i32: 0,
-            auto_vib_period_base: 0,
+auto_vib_period_base: 0,
         }
     }
 }

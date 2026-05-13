@@ -559,7 +559,9 @@ fn format_effect(effect: &Effect) -> (String, String) {
                 },
                 FormatEffect::Mod(me) => match me {
                     ModEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
-                    _ => ("m".to_string(), "??".to_string()),
+                    ModEffect::Filter(enabled) => ("E".to_string(), if *enabled { "00".to_string() } else { "01".to_string() }),
+                    ModEffect::FunkIt { speed } => ("EF".to_string(), format!("{:01X}", speed)),
+                    ModEffect::KarplusStrong { param } => ("E8".to_string(), format!("{:01X}", param)),
                 },
                 FormatEffect::S3m(se) => match se {
                     S3mEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),

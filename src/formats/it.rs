@@ -98,6 +98,7 @@ impl FormatHandler for ItHandler {
             fast_volume_slides: false,
             xm_envelope_model: false,
             xm_period_model: false,
+            ..ModuleFlags::default()
         };
 
         let message = if (special & 0x0001) != 0 && message_length > 0 && message_offset > 0 {

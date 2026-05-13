@@ -57,6 +57,8 @@ pub struct ChannelState {
     pub filter_resonance: f32,
     pub filter_type: FilterType,
     pub last_filter_cutoff_slide: i16,
+    pub filter_enabled: bool,
+    pub sample_loop_point: u32,
 
     pub portamento_target_period: Option<u16>,
     pub portamento_target_frequency: Option<f64>,
@@ -92,6 +94,9 @@ pub struct ChannelState {
     pub old_pan: u8,
     pub tremor_pos_byte: u8,
     pub note_cut_tick: Option<u8>,
+    pub funk_speed: u8,
+    pub funk_pos: u8,
+    pub karplus_param: u8,
 }
 
 impl Default for ChannelState {
@@ -130,6 +135,8 @@ impl Default for ChannelState {
             filter_resonance: 0.0,
             filter_type: FilterType::LowPass,
             last_filter_cutoff_slide: 0,
+            filter_enabled: true,
+            sample_loop_point: 0,
             portamento_target_period: None,
             portamento_target_frequency: None,
             muted: false,
@@ -159,6 +166,9 @@ impl Default for ChannelState {
             old_pan: 32,
             tremor_pos_byte: 0,
             note_cut_tick: None,
+            funk_speed: 0,
+            funk_pos: 0,
+            karplus_param: 0,
         }
     }
 }

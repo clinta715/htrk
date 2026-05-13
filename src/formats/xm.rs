@@ -329,6 +329,7 @@ let file_type = read_u8(data, &mut offset)?;
             fast_volume_slides: false,
             xm_envelope_model: true,
             xm_period_model: true,
+            ..ModuleFlags::default()
         };
 
         Ok(Module {

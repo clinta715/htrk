@@ -56,9 +56,9 @@ pub fn mix_voices_per_channel(
         let right_gain = vol * pan;
 
         let has_filter = voice.filter_cutoff < 65534.0
-            || voice.filter_resonance > 0.001
-            || voice.filter_env.is_some()
-            || voice.svf.filter_type != FilterType::LowPass;
+            && voice.filter_resonance > 0.001
+            && (voice.filter_env.is_some() || voice.svf.filter_type != FilterType::LowPass)
+            && voice.filter_enabled;
 
         let ch_idx = voice.channel.unwrap_or(MAX_CHANNELS);
 
@@ -89,8 +89,14 @@ pub fn mix_voices_per_channel(
                 s
             };
 
-            let fl = filtered * left_gain;
-            let fr = filtered * right_gain;
+            let led_filtered = if voice.amiga_led_filter {
+                voice.amiga_led_svf.process(filtered, 3100.0, 0.707, sample_rate)
+            } else {
+                filtered
+            };
+
+            let fl = led_filtered * left_gain;
+            let fr = led_filtered * right_gain;
             output_left[i] += fl;
             output_right[i] += fr;
 
@@ -204,9 +210,9 @@ pub fn mix_voices(
         let right_gain = vol * pan;
 
         let has_filter = voice.filter_cutoff < 65534.0
-            || voice.filter_resonance > 0.001
-            || voice.filter_env.is_some()
-            || voice.svf.filter_type != FilterType::LowPass;
+            && voice.filter_resonance > 0.001
+            && (voice.filter_env.is_some() || voice.svf.filter_type != FilterType::LowPass)
+            && voice.filter_enabled;
 
         for i in 0..output_left.len() {
             if voice.position < 0.0 || voice.position as usize >= sample_data.len() {
@@ -235,8 +241,14 @@ pub fn mix_voices(
                 s
             };
 
-            output_left[i] += filtered * left_gain;
-            output_right[i] += filtered * right_gain;
+            let led_filtered = if voice.amiga_led_filter {
+                voice.amiga_led_svf.process(filtered, 3100.0, 0.707, sample_rate)
+            } else {
+                filtered
+            };
+
+            output_left[i] += led_filtered * left_gain;
+            output_right[i] += led_filtered * right_gain;
 
             voice.position += voice.sample_delta * voice.direction;
 

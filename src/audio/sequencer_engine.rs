@@ -45,6 +45,7 @@ pub struct SequencerEngine {
     output_sample_rate: f64,
     global_volume: f32,
     use_xm_model: bool,
+    amiga_led_filter: bool,
 }
 
 fn quantize_to_semitone(freq: f64) -> f64 {
@@ -72,12 +73,14 @@ impl SequencerEngine {
             output_sample_rate,
             global_volume: 1.0,
             use_xm_model: false,
+            amiga_led_filter: false,
         }
     }
 
     pub fn load_module(&mut self, module: Arc<Module>) {
         self.stop();
         self.use_xm_model = module.flags.xm_period_model;
+        self.amiga_led_filter = module.format == ModuleFormat::MOD;
         self.module = Some(module);
     }
 
@@ -783,25 +786,42 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 ch.last_sample_offset = *offset;
             }
 
-            Effect::FormatSpecific(fe) => {
-                match fe {
-                    FormatEffect::Xm(XmEffect::SetSampleOffset(offset))
-                    | FormatEffect::Mod(ModEffect::SetSampleOffset(offset))
-                    | FormatEffect::S3m(S3mEffect::SetSampleOffset(offset))
-                    | FormatEffect::It(ItEffect::SetSampleOffset(offset)) => {
-                        ch.last_sample_offset = *offset;
-                    }
-                    FormatEffect::Xm(XmEffect::KeyOff { .. }) => {
-                        ch.active_effects.key_off = true;
-                    }
-                    FormatEffect::S3m(S3mEffect::Raw { effect, param }) => {
-                        if *effect == 0x19A {
-                            ch.high_sample_offset = *param;
-                        }
-                    }
-                    _ => {}
-                }
-            }
+             Effect::FormatSpecific(fe) => {
+                 match fe {
+                     FormatEffect::Xm(XmEffect::SetSampleOffset(offset))
+                     | FormatEffect::S3m(S3mEffect::SetSampleOffset(offset))
+                     | FormatEffect::It(ItEffect::SetSampleOffset(offset)) => {
+                         ch.last_sample_offset = *offset;
+                     }
+                     FormatEffect::Xm(XmEffect::KeyOff { .. }) => {
+                         ch.active_effects.key_off = true;
+                     }
+                     FormatEffect::S3m(S3mEffect::Raw { effect, param }) => {
+                         if *effect == 0x19A {
+                             ch.high_sample_offset = *param;
+                         }
+                     }
+                      FormatEffect::Mod(ModEffect::Filter(enabled)) => {
+                          ch.filter_enabled = *enabled;
+                          if self.amiga_led_filter {
+                              for voice in &mut self.voices {
+                                  if voice.active && voice.channel == Some(channel) {
+                                      voice.filter_enabled = *enabled;
+                                      voice.amiga_led_filter = *enabled;
+                                  }
+                              }
+                          }
+                      }
+                      FormatEffect::Mod(ModEffect::FunkIt { speed }) => {
+                          ch.funk_speed = *speed;
+                          ch.funk_pos = 0;
+                      }
+                      FormatEffect::Mod(ModEffect::KarplusStrong { param }) => {
+                          ch.karplus_param = *param;
+                      }
+                     _ => {}
+                 }
+             }
 
             Effect::PositionJump { order } => {
                 self.state.position_jump_order = Some(*order);

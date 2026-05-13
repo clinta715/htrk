@@ -78,7 +78,6 @@ impl FormatEffect {
     pub fn sample_offset(&self) -> Option<u16> {
         match self {
             FormatEffect::Xm(XmEffect::SetSampleOffset(offset)) => Some(*offset),
-            FormatEffect::Mod(ModEffect::SetSampleOffset(offset)) => Some(*offset),
             FormatEffect::S3m(S3mEffect::SetSampleOffset(offset)) => Some(*offset),
             FormatEffect::It(ItEffect::SetSampleOffset(offset)) => Some(*offset),
             _ => None,
@@ -101,8 +100,9 @@ pub enum XmEffect {
 /// MOD-specific effects
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ModEffect {
-    SetSampleOffset(u16),
-    Arpeggio { note1: u8, note2: u8 },
+    Filter(bool),
+    FunkIt { speed: u8 },
+    KarplusStrong { param: u8 },
     Raw { effect: u8, param: u8 },
 }
 
