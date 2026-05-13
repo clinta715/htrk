@@ -1024,6 +1024,16 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 ch.active_effects.arpeggio = true;
             }
 
+            Effect::PanningSlide { speed } => {
+                if *speed != 0 {
+                    ch.last_panning_slide = *speed;
+                }
+                ch.active_effects.panning_slide = true;
+                if is_xm && is_row_start {
+                    self.apply_panning_slide(channel);
+                }
+            }
+
             Effect::SetGlobalVolume { volume } => {
                 if is_xm {
                     self.state.global_volume = (*volume).min(64);
@@ -1561,6 +1571,12 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     }
                 }
             }
+            if ae.panning_slide {
+                if is_xm {
+                    self.apply_panning_slide(ch);
+                }
+            }
+
             if ae.panbrello && !is_xm {
                 let pb_speed = self.state.channels[ch].last_panbrello_speed;
                 let pb_depth = self.state.channels[ch].last_panbrello_depth;
@@ -2595,11 +2611,27 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             ch.channel_volume = ch.channel_volume.saturating_sub(down);
         }
         ch.row_volume = ch.channel_volume;
-        
+
         let vol_f = self.compute_channel_volume(channel);
         for voice in &mut self.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.base_volume = vol_f;
+            }
+        }
+    }
+
+    fn apply_panning_slide(&mut self, channel: usize) {
+        let ch = &mut self.state.channels[channel];
+        if ch.last_panning_slide == 0 {
+            return;
+        }
+        let delta = ch.last_panning_slide as i16;
+        let new_pan = (ch.channel_panning as i16 + delta).clamp(0, 255) as u8;
+        ch.channel_panning = new_pan;
+
+        for voice in &mut self.voices {
+            if voice.active && voice.channel == Some(channel) {
+                voice.base_panning = new_pan as f32 / 255.0;
             }
         }
     }
@@ -3478,6 +3510,8 @@ fn compute_playback_frequency(
 mod tests {
     use super::*;
     use crate::sequencer::Instrument;
+    use crate::sequencer::module::ModuleFlags;
+    use crate::sequencer::pattern::Pattern;
 
     #[test]
     fn compute_samples_per_tick_default() {
@@ -4674,5 +4708,86 @@ mod tests {
             before, after);
         assert!(after >= target_period,
             "XM portamento should not overshoot target period");
+    }
+
+    #[test]
+    fn portamento_up_memory_preserved_when_param_is_zero() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = false;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+            ..Module::default()
+        });
+        engine.load_module(module);
+        engine.play();
+
+        engine.state.channels[0].last_portamento_up_speed = 4;
+        engine.state.channels[0].active_effects.portamento_up = true;
+
+        engine.apply_effect_unified(0, &Effect::PortamentoUp { speed: 0 }, true);
+
+        assert_eq!(engine.state.channels[0].last_portamento_up_speed, 4,
+            "Zero-param portamento up should preserve last speed");
+        assert!(engine.state.channels[0].active_effects.portamento_up,
+            "Zero-param portamento up should keep active flag");
+    }
+
+    #[test]
+    fn vibrato_memory_preserved_when_param_is_zero() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = false;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+            ..Module::default()
+        });
+        engine.load_module(module);
+        engine.play();
+
+        engine.state.channels[0].last_vibrato_speed = 5;
+        engine.state.channels[0].last_vibrato_depth = 8;
+        engine.state.channels[0].active_effects.vibrato = true;
+
+        engine.apply_effect_unified(0, &Effect::Vibrato { speed: 0, depth: 0 }, true);
+
+        assert_eq!(engine.state.channels[0].last_vibrato_speed, 5,
+            "Zero-param vibrato should preserve last speed");
+        assert_eq!(engine.state.channels[0].last_vibrato_depth, 8,
+            "Zero-param vibrato should preserve last depth");
+        assert!(engine.state.channels[0].active_effects.vibrato,
+            "Zero-param vibrato should keep active flag");
+    }
+
+    #[test]
+    fn panning_slide_memory_preserved_when_param_is_zero() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = true;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::XM,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: true, ..ModuleFlags::default() },
+            ..Module::default()
+        });
+        engine.load_module(module);
+        engine.play();
+
+        engine.state.channels[0].last_panning_slide = 3;
+        engine.state.channels[0].channel_panning = 128;
+
+        engine.apply_effect_unified(0, &Effect::PanningSlide { speed: 0 }, true);
+
+        assert_eq!(engine.state.channels[0].last_panning_slide, 3,
+            "Zero-param panning slide should preserve last value");
+        assert!(engine.state.channels[0].active_effects.panning_slide,
+            "Zero-param panning slide should keep active flag");
     }
 }
