@@ -783,7 +783,9 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             }
 
             Effect::SetSampleOffset { offset } => {
-                ch.last_sample_offset = *offset;
+                if *offset > 0 {
+                    ch.last_sample_offset = *offset;
+                }
             }
 
              Effect::FormatSpecific(fe) => {
@@ -791,7 +793,9 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                      FormatEffect::Xm(XmEffect::SetSampleOffset(offset))
                      | FormatEffect::S3m(S3mEffect::SetSampleOffset(offset))
                      | FormatEffect::It(ItEffect::SetSampleOffset(offset)) => {
-                         ch.last_sample_offset = *offset;
+                         if *offset > 0 {
+                             ch.last_sample_offset = *offset;
+                         }
                      }
                      FormatEffect::Xm(XmEffect::KeyOff { .. }) => {
                          ch.active_effects.key_off = true;
@@ -1020,7 +1024,9 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             }
 
             Effect::Arpeggio { note1, note2 } => {
-                ch.last_arpeggio = (*note1, *note2);
+                if *note1 > 0 || *note2 > 0 {
+                    ch.last_arpeggio = (*note1, *note2);
+                }
                 ch.active_effects.arpeggio = true;
             }
 
@@ -1164,8 +1170,12 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             }
 
             Effect::Tremor { ontime, offtime } => {
-                ch.tremor_ontime = *ontime;
-                ch.tremor_offtime = *offtime;
+                if *ontime > 0 {
+                    ch.tremor_ontime = *ontime;
+                }
+                if *offtime > 0 {
+                    ch.tremor_offtime = *offtime;
+                }
                 ch.tremor_counter = 0;
                 if !is_xm {
                     ch.tremor_active = true;
@@ -1295,11 +1305,19 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
             Effect::GlobalVolumeSlide { up, down } => {
                 if !is_xm {
-                    let new_vol = self.state.global_volume as i16
-                        + *up as i16
-                        - (*down).unsigned_abs() as i16;
-                    self.state.global_volume = new_vol.clamp(0, 128) as u8;
-                    self.global_volume = self.state.global_volume as f32 / 128.0;
+                    if *up > 0 {
+                        self.state.last_global_volume_up = *up as u8;
+                    }
+                    if *down > 0 {
+                        self.state.last_global_volume_down = (*down).unsigned_abs() as u8;
+                    }
+                    let up_val: i16 = if *up > 0 { *up as i16 } else { self.state.last_global_volume_up as i16 };
+                    let down_val: i16 = if *down > 0 { (*down).unsigned_abs() as i16 } else { self.state.last_global_volume_down as i16 };
+                    if up_val > 0 || down_val > 0 {
+                        let new_vol = self.state.global_volume as i16 + up_val - down_val;
+                        self.state.global_volume = new_vol.clamp(0, 128) as u8;
+                        self.global_volume = self.state.global_volume as f32 / 128.0;
+                    }
                 }
             }
 

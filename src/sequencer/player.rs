@@ -16,6 +16,7 @@ pub struct ActiveEffects {
     pub tremor: bool,
     pub key_off: bool,
     pub filter_cutoff_slide: bool,
+    pub panning_slide: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +47,7 @@ pub struct ChannelState {
     pub last_retrigger_interval: u8,
     pub last_panbrello_speed: u8,
     pub last_panbrello_depth: u8,
+    pub last_panning_slide: i8,
     pub tremor_ontime: u8,
     pub tremor_offtime: u8,
     pub tremor_counter: u8,
@@ -125,6 +127,7 @@ impl Default for ChannelState {
             last_retrigger_interval: 0,
             last_panbrello_speed: 0,
             last_panbrello_depth: 0,
+            last_panning_slide: 0,
             tremor_ontime: 0,
             tremor_offtime: 0,
             tremor_counter: 0,
@@ -201,6 +204,8 @@ pub struct SequencerState {
     pub sample_counter: f64,
 
     pub global_volume: u8,
+    pub last_global_volume_up: u8,
+    pub last_global_volume_down: u8,
     pub master_volume: f32,
     pub playing: bool,
     pub paused: bool,
@@ -233,6 +238,8 @@ impl Default for SequencerState {
             samples_per_tick: 0.0,
             sample_counter: 0.0,
             global_volume: 128,
+            last_global_volume_up: 0,
+            last_global_volume_down: 0,
             master_volume: 1.0,
             playing: false,
             paused: false,
