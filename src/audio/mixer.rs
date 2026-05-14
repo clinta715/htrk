@@ -1,7 +1,6 @@
 use crate::audio::commands::InterpolationType;
 use crate::audio::resampler;
 use crate::audio::voice::Voice;
-use crate::debug_log;
 use crate::sequencer::effect::FilterType;
 use crate::sequencer::sample::LoopType;
 
@@ -20,11 +19,13 @@ pub fn mix_voices_per_channel(
     muted_channels: &[bool],
     sample_rate: f32,
 ) {
+    #[cfg(feature = "audio_debug")]
     static VD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     for voice in voices.iter_mut() {
         if !voice.active {
             continue;
         }
+        #[cfg(feature = "audio_debug")]
         let vd = VD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         #[cfg(feature = "audio_debug")]
         if vd < 5 {
@@ -75,7 +76,6 @@ pub fn mix_voices_per_channel(
                 loop_end,
                 interpolation,
                 loop_type,
-                voice.direction,
             );
 
             let filtered = if has_filter {
@@ -174,11 +174,13 @@ pub fn mix_voices(
     muted_channels: &[bool],
     sample_rate: f32,
 ) {
+    #[cfg(feature = "audio_debug")]
     static VD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     for voice in voices.iter_mut() {
         if !voice.active {
             continue;
         }
+        #[cfg(feature = "audio_debug")]
         let vd = VD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         #[cfg(feature = "audio_debug")]
         if vd < 5 {
@@ -227,7 +229,6 @@ pub fn mix_voices(
                 loop_end,
                 interpolation,
                 loop_type,
-                voice.direction,
             );
 
             let filtered = if has_filter {

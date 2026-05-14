@@ -2116,7 +2116,11 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
     fn update_voices_from_period(&mut self, channel: usize, linear: bool) {
         let period = self.state.channels[channel].out_period;
-        let freq = period_to_frequency(period, linear, 8363);
+        let freq = if linear {
+            period_to_frequency(period, true, 8363)
+        } else {
+            8363.0 * 428.0 / period as f64
+        };
         let delta = if self.output_sample_rate > 0.0 {
             freq / self.output_sample_rate
         } else {
@@ -2186,7 +2190,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         );
 
         if !module.flags.linear_slides {
-            let period = (8363.0 * 1712.0 / playback_freq) as u16;
+            let period = (8363.0 * 428.0 / playback_freq) as u16;
             self.state.channels[channel].real_period = period;
             self.state.channels[channel].out_period = period;
         }
@@ -2810,11 +2814,10 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             instrument_idx as usize, sample_idx as usize);
 
         let voice_idx = self.allocate_voice(channel);
-        let sample_offset = self.state.channels[channel].last_sample_offset as usize;
         self.voices[voice_idx].trigger(
             sample.data.clone(), sample.sample_rate as f64, sample.loop_type,
             sample.loop_start, sample.loop_end, playback_freq, self.output_sample_rate,
-            vol, pan, sample_offset, Some(instrument_idx), Some(sample_idx),
+            vol, pan, 0, Some(instrument_idx), Some(sample_idx),
             note, NewNoteAction::NoteCut, 0,
         );
         self.voices[voice_idx].channel = Some(channel);
@@ -3384,7 +3387,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             None => return (0, 0.0),
         };
 
-        let (s, playback_freq) = if sample_idx > 0 && sample_idx < module.samples.len() {
+        let (s, _playback_freq) = if sample_idx > 0 && sample_idx < module.samples.len() {
             let s = &module.samples[sample_idx];
             let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
             (s, pf)
@@ -3394,12 +3397,12 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
                     (s, pf)
                 }
-                None => return ((8363.0 * 1712.0 / freq) as u16, freq),
+                None => return ((8363.0 * 428.0 / freq) as u16, freq),
             }
         };
 
         let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
-        let period = (8363.0 * 1712.0 / pf).max(1.0) as u16;
+        let period = (8363.0 * 428.0 / pf).max(1.0) as u16;
         (period, pf)
     }
 }
@@ -4681,7 +4684,7 @@ mod tests {
 
     #[test]
     fn xm_tone_portamento_still_works() {
-        use crate::sequencer::{Instrument, Module, ModuleFormat, Note, Pattern, Sample};
+        use crate::sequencer::{Instrument, Module, ModuleFormat, Pattern, Sample};
         use crate::sequencer::module::ModuleFlags;
 
         let mut engine = SequencerEngine::new(48000.0);
