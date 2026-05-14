@@ -25,6 +25,8 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             shortcut_row(ui, "Shift + Arrow", "Extend selection");
                             shortcut_row(ui, "Alt + Up/Down", "Transpose ±1 semitone");
                             shortcut_row(ui, "Tab / Shift+Tab", "Next / prev channel");
+                            shortcut_row(ui, "Alt+Left/Right", "Skip to prev/next channel");
+                            shortcut_row(ui, "- / =", "Prev / next pattern");
                             shortcut_row(ui, "[ / ]", "Prev / next pattern");
                             shortcut_row(ui, "PgUp / PgDn", "Scroll 16 rows");
                             shortcut_row(ui, "Home / End", "Jump to first / last row");
@@ -57,22 +59,50 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             ui.add_space(8.0);
 
                             section_header(ui, "TRANSPORT");
-                            shortcut_row(ui, "Space", "Play / Stop");
+                            shortcut_row(ui, "Space", "Repeat last entry / Stop");
                             shortcut_row(ui, "F5", "Play from start");
+                            shortcut_row(ui, "F6", "Play pattern");
+                            shortcut_row(ui, "F7", "Play through order");
                             shortcut_row(ui, "F8", "Stop all");
+                            shortcut_row(ui, "F9", "Play from current pos");
                             ui.add_space(8.0);
 
                             section_header(ui, "CHANNEL");
+                            shortcut_row(ui, "F2", "Toggle record mode");
                             shortcut_row(ui, "Alt+M", "Toggle mute channel");
                             shortcut_row(ui, "Alt+S", "Toggle solo channel");
+                            shortcut_row(ui, "Alt+Left/Right", "Skip to prev/next channel");
+                            ui.add_space(8.0);
+
+                            section_header(ui, "IT-STYLE FEATURES");
+                            shortcut_row(ui, "Alt+0..9", "Set cursor skip value");
+                            shortcut_row(ui, ", (comma)", "Toggle edit mask (Instr+Vol)");
+                            shortcut_row(ui, "Space (stopped)", "Repeat last cell");
+                            shortcut_row(ui, "Alt+N", "Toggle multichannel edit");
+                            shortcut_row(ui, "Ctrl+Shift+Up/Dn", "Increase / Decrease octave");
+                            ui.add_space(4.0);
+                            section_header(ui, "BLOCK OPERATIONS");
+                            shortcut_row(ui, "Alt+C", "Copy block to clipboard");
+                            shortcut_row(ui, "Alt+P", "Paste clipboard");
+                            shortcut_row(ui, "Alt+Z", "Reverse block");
+                            shortcut_row(ui, "Alt+F", "Fill instrument");
+                            shortcut_row(ui, "Alt+I", "Interpolate volume");
+                            shortcut_row(ui, "Alt+K", "Interpolate effect");
+                            shortcut_row(ui, "Alt+R", "Randomize notes/volume");
+                            ui.add_space(4.0);
+                            section_header(ui, "PATTERN");
+                            shortcut_row(ui, "- / =", "Prev / next pattern");
                         });
 
                         columns[1].vertical(|ui| {
                             section_header(ui, "NOTE ENTRY");
-                            shortcut_row(ui, "Z S X D...", "Lower octave (C–C)");
-                            shortcut_row(ui, "Q 2 W 3...", "Upper octave (C–B)");
-                            shortcut_row(ui, ". (period)", "Note Off (===)");
-                            shortcut_row(ui, "F1 / F2", "Decrease / Increase octave");
+                            shortcut_row(ui, "Z S X D...", "Lower octave (C–B)");
+                            shortcut_row(ui, "Q 2 W 3...", "Upper octave (C–U)");
+                            shortcut_row(ui, "Ctrl+Up/Down", "Decrease / Increase octave");
+                            shortcut_row(ui, ". (period)", "Note Off on Note col");
+                            shortcut_row(ui, ". (other cols)", "Clear field value");
+                            shortcut_row(ui, "0-9 on Instr/Vol", "Decimal entry");
+                            shortcut_row(ui, "0-9 A-F on Fx", "Hex entry");
                             ui.add_space(8.0);
 
                             section_header(ui, "EFFECT COMMANDS");

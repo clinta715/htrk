@@ -13,6 +13,7 @@ pub fn draw_status_bar(
     num_channels: usize,
     cpu_pct: u8,
     current_octave: u8,
+    cursor_skip: u8,
     selected_instrument: usize,
     selected_sample: usize,
     hint: &str,
@@ -24,7 +25,7 @@ pub fn draw_status_bar(
         let fg = theme.status_fg;
         let font = egui::FontId::monospace(11.0);
 
-        ui.label(egui::RichText::new("htrk v0.3.0").font(font.clone()).color(fg));
+        ui.label(egui::RichText::new("htrk v0.4.1").font(font.clone()).color(fg));
         ui.separator();
 
         let format_str = match module {
@@ -50,8 +51,9 @@ pub fn draw_status_bar(
         ui.separator();
 
         ui.label(egui::RichText::new(format!("Oct:{}", current_octave)).font(font.clone()).color(theme.fg_note));
-        ui.label(egui::RichText::new(format!(" Ins:{:02X}", selected_instrument)).font(font.clone()).color(theme.fg_instrument));
-        ui.label(egui::RichText::new(format!(" Smp:{:02X}", selected_sample)).font(font.clone()).color(theme.fg_volume));
+        ui.label(egui::RichText::new(format!(" Skp:{}", cursor_skip)).font(font.clone()).color(theme.fg_effect));
+        ui.label(egui::RichText::new(format!(" Ins:{:02}", selected_instrument)).font(font.clone()).color(theme.fg_instrument));
+        ui.label(egui::RichText::new(format!(" Smp:{:02}", selected_sample)).font(font.clone()).color(theme.fg_volume));
 
         ui.separator();
 

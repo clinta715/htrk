@@ -38,10 +38,10 @@ pub const VISIBLE_ROWS: usize = 32; // Kept as default/fallback
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SubColumn {
     Note,
-    InstrumentHigh,
-    InstrumentLow,
-    VolumeHigh,
-    VolumeLow,
+    InstrumentTens,
+    InstrumentOnes,
+    VolumeTens,
+    VolumeOnes,
     EffectType,
     EffectParamHigh,
     EffectParamLow,
@@ -52,10 +52,10 @@ impl SubColumn {
     pub fn all() -> &'static [SubColumn] {
         &[
             SubColumn::Note,
-            SubColumn::InstrumentHigh,
-            SubColumn::InstrumentLow,
-            SubColumn::VolumeHigh,
-            SubColumn::VolumeLow,
+            SubColumn::InstrumentTens,
+            SubColumn::InstrumentOnes,
+            SubColumn::VolumeTens,
+            SubColumn::VolumeOnes,
             SubColumn::EffectType,
             SubColumn::EffectParamHigh,
             SubColumn::EffectParamLow,
@@ -64,11 +64,11 @@ impl SubColumn {
 
     pub fn next(self) -> Option<SubColumn> {
         match self {
-            SubColumn::Note => Some(SubColumn::InstrumentHigh),
-            SubColumn::InstrumentHigh => Some(SubColumn::InstrumentLow),
-            SubColumn::InstrumentLow => Some(SubColumn::VolumeHigh),
-            SubColumn::VolumeHigh => Some(SubColumn::VolumeLow),
-            SubColumn::VolumeLow => Some(SubColumn::EffectType),
+            SubColumn::Note => Some(SubColumn::InstrumentTens),
+            SubColumn::InstrumentTens => Some(SubColumn::InstrumentOnes),
+            SubColumn::InstrumentOnes => Some(SubColumn::VolumeTens),
+            SubColumn::VolumeTens => Some(SubColumn::VolumeOnes),
+            SubColumn::VolumeOnes => Some(SubColumn::EffectType),
             SubColumn::EffectType => Some(SubColumn::EffectParamHigh),
             SubColumn::EffectParamHigh => Some(SubColumn::EffectParamLow),
             SubColumn::EffectParamLow => None,
@@ -78,18 +78,22 @@ impl SubColumn {
     pub fn prev(self) -> Option<SubColumn> {
         match self {
             SubColumn::Note => None,
-            SubColumn::InstrumentHigh => Some(SubColumn::Note),
-            SubColumn::InstrumentLow => Some(SubColumn::InstrumentHigh),
-            SubColumn::VolumeHigh => Some(SubColumn::InstrumentLow),
-            SubColumn::VolumeLow => Some(SubColumn::VolumeHigh),
-            SubColumn::EffectType => Some(SubColumn::VolumeLow),
+            SubColumn::InstrumentTens => Some(SubColumn::Note),
+            SubColumn::InstrumentOnes => Some(SubColumn::InstrumentTens),
+            SubColumn::VolumeTens => Some(SubColumn::InstrumentOnes),
+            SubColumn::VolumeOnes => Some(SubColumn::VolumeTens),
+            SubColumn::EffectType => Some(SubColumn::VolumeOnes),
             SubColumn::EffectParamHigh => Some(SubColumn::EffectType),
             SubColumn::EffectParamLow => Some(SubColumn::EffectParamHigh),
         }
     }
 
     pub fn accepts_hex(self) -> bool {
-        !matches!(self, SubColumn::Note)
+        matches!(self, SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow)
+    }
+
+    pub fn accepts_decimal(self) -> bool {
+        matches!(self, SubColumn::InstrumentTens | SubColumn::InstrumentOnes | SubColumn::VolumeTens | SubColumn::VolumeOnes)
     }
 
     pub fn accepts_note(self) -> bool {
@@ -187,6 +191,8 @@ pub fn draw_pattern_grid(
     num_channels: usize,
     metrics: GridMetrics,
     theme: &TrackerTheme,
+    highlight_minor: u8,
+    highlight_major: u8,
 ) -> PatternGridResponse {
     let available_size = ui.available_size();
     
@@ -216,8 +222,10 @@ pub fn draw_pattern_grid(
     for row in first_row..last_row {
         let display_row = row - first_row;
         let y = rect.top() + display_row as f32 * metrics.row_height;
-        let is_highlight = row % 4 == 0;
-        let is_measure = row % 16 == 0;
+        let minor = highlight_minor.max(1) as usize;
+        let major = highlight_major.max(1) as usize;
+        let is_highlight = row % minor == 0;
+        let is_measure = row % major == 0;
         let is_playback = playback_row == Some(row);
 
         let bg = if is_playback {
@@ -390,15 +398,15 @@ fn position_to_sub_column(x: f32, metrics: GridMetrics) -> SubColumn {
         SubColumn::Note
     } else if char_pos < 6.0 {
         if char_pos < 5.0 {
-            SubColumn::InstrumentHigh
+            SubColumn::InstrumentTens
         } else {
-            SubColumn::InstrumentLow
+            SubColumn::InstrumentOnes
         }
     } else if char_pos < 9.0 {
         if char_pos < 8.0 {
-            SubColumn::VolumeHigh
+            SubColumn::VolumeTens
         } else {
-            SubColumn::VolumeLow
+            SubColumn::VolumeOnes
         }
     } else if char_pos < 10.0 {
         SubColumn::EffectType
@@ -434,7 +442,7 @@ fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: Grid
     painter.text(Pos2::new(x, center_y), egui::Align2::LEFT_CENTER, note_text, font.clone(), note_color);
 
     let ins_text = match cell.instrument {
-        Some(i) => format!("{:02X}", i),
+        Some(i) => format!("{:02}", i),
         None => "..".to_string(),
     };
     let ins_color = if cell.instrument.is_some() {
@@ -451,7 +459,7 @@ fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: Grid
     );
 
     let vol_text = match cell.volume {
-        Some(v) => format!("{:02X}", v),
+        Some(v) => format!("{:02}", v),
         None => "..".to_string(),
     };
     let vol_color = if cell.volume.is_some() {
@@ -511,6 +519,7 @@ fn format_effect(effect: &Effect) -> (String, String) {
         Effect::PositionJump { order } => ("B".to_string(), format!("{:02X}", order)),
         Effect::SetVolume { volume } => ("C".to_string(), format!("{:02X}", volume)),
         Effect::PatternBreak { row } => ("D".to_string(), format!("{:02X}", row)),
+        Effect::PanningSlide { speed } => (".".to_string(), format!("P{:+}", speed)),
         Effect::ExtendedEffect { param } => ("E".to_string(), format!("{:02X}", param)),
         Effect::SetSpeed { speed } => ("F".to_string(), format!("{:02X}", speed)),
         Effect::SetTempo { bpm } => ("F".to_string(), format!("{:02X}", bpm)),

@@ -56,7 +56,15 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub debug: bool,
+
+    #[serde(default = "default_row_highlight_minor")]
+    pub row_highlight_minor: u8,
+    #[serde(default = "default_row_highlight_major")]
+    pub row_highlight_major: u8,
 }
+
+fn default_row_highlight_minor() -> u8 { 4 }
+fn default_row_highlight_major() -> u8 { 16 }
 
 fn default_font_size() -> u32 { 12 }
 fn default_zoom() -> f32 { 1.0 }
@@ -95,6 +103,8 @@ impl Default for AppConfig {
 
             theme_preset: default_theme(),
             debug: false,
+            row_highlight_minor: default_row_highlight_minor(),
+            row_highlight_major: default_row_highlight_major(),
         }
     }
 }

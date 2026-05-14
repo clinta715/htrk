@@ -8,7 +8,6 @@ use crate::audio::commands::AudioCommand;
 use crate::audio::engine::{CommandSender, create_engine_and_sender};
 use crate::audio::renderer::WavRenderer;
 use crate::audio::playback_state::AtomicPlaybackState;
-use crate::debug_log;
 use crate::edit::{
     SetCellCommand, InsertRowCommand, UndoManager, SampleProperty, SetSamplePropertyCommand,
     InstrumentProperty, SetInstrumentPropertyCommand, AddEnvelopePointCommand,
@@ -23,12 +22,12 @@ use crate::ui::instrument_editor::InstrumentEditEvent;
 use crate::ui::file_browser::{FileBrowser, BrowserMode};
 use crate::formats;
 use crate::sequencer::pattern::Cell;
-use crate::sequencer::{Module, Note, MAX_CHANNELS};
+use crate::sequencer::{Effect, Module, Note, MAX_CHANNELS};
 use crate::ui::pattern_grid::{CursorPosition, Selection, SubColumn, VISIBLE_ROWS};
 use crate::ui::TrackerTheme;
 use crate::ui::theme::ThemePreset;
 
-const NOTE_KEYS_LOWER: [(egui::Key, u8); 13] = [
+const NOTE_KEYS_LOWER: [(egui::Key, u8); 12] = [
     (egui::Key::Z, 0),
     (egui::Key::S, 1),
     (egui::Key::X, 2),
@@ -41,7 +40,6 @@ const NOTE_KEYS_LOWER: [(egui::Key, u8); 13] = [
     (egui::Key::N, 9),
     (egui::Key::J, 10),
     (egui::Key::M, 11),
-    (egui::Key::Comma, 12),
 ];
 
 const NOTE_KEYS_UPPER: [(egui::Key, u8); 12] = [
@@ -94,6 +92,12 @@ pub struct HtrkApp {
     current_octave: u8,
     record_mode: bool,
     follow_playback: bool,
+    cursor_skip: u8,
+    last_entered_cell: Option<Cell>,
+    edit_mask_instrument: bool,
+    edit_mask_volume: bool,
+    multichannel_enabled: bool,
+    multichannel_channels: Vec<bool>,
     selected_order: usize,
     selected_sample: usize,
     selected_instrument: usize,
@@ -116,6 +120,7 @@ pub struct HtrkApp {
     wav_export_state: crate::ui::wav_export_window::WavExportState,
     last_backup_time: std::time::Instant,
     module_dirty: bool,
+    audio_init_failed: bool,
     sample_selection: Option<(usize, usize)>,
     sample_clipboard: Option<Arc<Vec<f32>>>,
     amplify_factor: f32,
@@ -156,6 +161,12 @@ impl Default for HtrkApp {
             current_octave: 4,
             record_mode: false,
             follow_playback: config.follow_playback_default,
+            cursor_skip: 1,
+            last_entered_cell: None,
+            edit_mask_instrument: true,
+            edit_mask_volume: true,
+            multichannel_enabled: false,
+            multichannel_channels: vec![false; MAX_CHANNELS],
             selected_order: 0,
             selected_sample: 1,
             selected_instrument: 1,
@@ -176,6 +187,7 @@ impl Default for HtrkApp {
             wav_export_state: crate::ui::wav_export_window::WavExportState::new(44100),
             last_backup_time: std::time::Instant::now(),
             module_dirty: false,
+            audio_init_failed: false,
             sample_selection: None,
             sample_clipboard: None,
             amplify_factor: config.default_amplify_factor,
@@ -192,10 +204,10 @@ impl HtrkApp {
         let host = cpal::default_host();
         self.output_device_names = host
             .output_devices()
-            .map(|iter| iter.filter_map(|d| d.name().ok()).collect())
+            .map(|iter| iter.filter_map(|d| d.description().ok().map(|desc| desc.to_string())).collect())
             .unwrap_or_default();
         if self.selected_device_name.is_none() {
-            self.selected_device_name = host.default_output_device().and_then(|d| d.name().ok());
+            self.selected_device_name = host.default_output_device().and_then(|d| d.description().ok().map(|desc| desc.to_string()));
         }
     }
 
@@ -213,7 +225,7 @@ impl HtrkApp {
         let device = if let Some(ref name) = self.selected_device_name {
             host.output_devices()
                 .ok()
-                .and_then(|mut devs| devs.find(|d| d.name().ok().as_deref() == Some(name.as_str())))
+                .and_then(|mut devs| devs.find(|d| d.description().ok().map(|desc| desc.to_string()).as_deref() == Some(name.as_str())))
         } else {
             None
         };
@@ -222,11 +234,12 @@ impl HtrkApp {
         let device = match device {
             Some(d) => {
                 #[cfg(feature = "audio_debug")]
-                debug_log!("[AUDIO] Using device: {:?}", d.name());
+                debug_log!("[AUDIO] Using device: {:?}", d.description().ok().map(|desc| desc.to_string()));
                 d
             }
             None => {
                 eprintln!("[AUDIO] No audio output device available");
+                self.audio_init_failed = true;
                 return;
             }
         };
@@ -235,6 +248,7 @@ impl HtrkApp {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("[AUDIO] Failed to get default output config: {}", e);
+                self.audio_init_failed = true;
                 return;
             }
         };
@@ -248,46 +262,58 @@ impl HtrkApp {
         self.current_sample_rate = actual_sample_rate;
         self.current_sample_format = format!("{:?}", sample_format);
         if self.selected_device_name.is_none() {
-            self.selected_device_name = device.name().ok();
+            self.selected_device_name = device.description().ok().map(|desc| desc.to_string());
         }
 
-        let state = self.playback_state.clone();
-        let (mut engine, sender) = create_engine_and_sender(state, actual_sample_rate, config.channels);
+        let mut configs_to_try = Vec::new();
+        configs_to_try.push(config.clone());
+        let alt1 = cpal::StreamConfig {
+            channels: config.channels,
+            sample_rate: config.sample_rate,
+            buffer_size: cpal::BufferSize::Default,
+        };
+        if alt1 != config {
+            configs_to_try.push(alt1);
+        }
+        for &sr in &[44100u32, 48000, 22050] {
+            if sr != config.sample_rate {
+                configs_to_try.push(cpal::StreamConfig {
+                    channels: 2,
+                    sample_rate: sr,
+                    buffer_size: cpal::BufferSize::Default,
+                });
+            }
+        }
 
-        let stream_result = match sample_format {
-            cpal::SampleFormat::F32 => device.build_output_stream(
-                &config,
-                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    engine.process_callback(data);
-                },
-                #[cfg(feature = "audio_debug")]
-                |err| debug_log!("Audio stream error: {}", err),
-                #[cfg(not(feature = "audio_debug"))]
-                |err| eprintln!("Audio stream error: {}", err),
-                None,
-            ),
-            cpal::SampleFormat::I16 => {
-                device.build_output_stream(
-                    &config,
+        let mut stream_result = Err(cpal::BuildStreamError::DeviceNotAvailable);
+        let mut sender = None;
+        for trial_config in &configs_to_try {
+            let state = self.playback_state.clone();
+            let (mut engine, trial_sender) = create_engine_and_sender(state, trial_config.sample_rate, trial_config.channels);
+
+            let trial_result = match sample_format {
+                cpal::SampleFormat::F32 => device.build_output_stream(
+                    trial_config,
+                    move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                        engine.process_callback(data);
+                    },
+                    |err| eprintln!("Audio stream error: {}", err),
+                    None,
+                ),
+                cpal::SampleFormat::I16 => device.build_output_stream(
+                    trial_config,
                     move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                        let frames = data.len() / 2;
                         let mut float_buf = vec![0.0f32; data.len()];
                         engine.process_callback(&mut float_buf);
                         for (out, inp) in data.iter_mut().zip(float_buf.iter()) {
                             *out = (*inp * 32768.0).clamp(-32768.0, 32767.0) as i16;
                         }
-                        let _ = frames;
                     },
-                    #[cfg(feature = "audio_debug")]
-                    |err| debug_log!("Audio stream error: {}", err),
-                    #[cfg(not(feature = "audio_debug"))]
                     |err| eprintln!("Audio stream error: {}", err),
                     None,
-                )
-            }
-            cpal::SampleFormat::U16 => {
-                device.build_output_stream(
-                    &config,
+                ),
+                cpal::SampleFormat::U16 => device.build_output_stream(
+                    trial_config,
                     move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
                         let mut float_buf = vec![0.0f32; data.len()];
                         engine.process_callback(&mut float_buf);
@@ -296,41 +322,50 @@ impl HtrkApp {
                             *out = (s as i32 + 32768) as u16;
                         }
                     },
-                    #[cfg(feature = "audio_debug")]
-                    |err| debug_log!("Audio stream error: {}", err),
-                    #[cfg(not(feature = "audio_debug"))]
                     |err| eprintln!("Audio stream error: {}", err),
                     None,
-                )
+                ),
+                _ => {
+                    eprintln!("Unsupported sample format: {:?}", sample_format);
+                    self.audio_init_failed = true;
+                    return;
+                }
+            };
+
+            match trial_result {
+                Ok(s) => {
+                    stream_result = Ok(s);
+                    sender = Some(trial_sender);
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("[AUDIO] Config {}ch/{}Hz failed: {}", trial_config.channels, trial_config.sample_rate, e);
+                    stream_result = Err(e);
+                }
             }
-            _ => {
-                #[cfg(feature = "audio_debug")]
-                debug_log!("Unsupported sample format: {:?}", sample_format);
-                #[cfg(not(feature = "audio_debug"))]
-                eprintln!("Unsupported sample format: {:?}", sample_format);
-                return;
-            }
-        };
+        }
 
         match stream_result {
             Ok(stream) => {
                 if let Err(e) = stream.play() {
                     eprintln!("[AUDIO] Failed to start audio stream: {}", e);
+                    self.audio_init_failed = true;
                     return;
                 }
                 #[cfg(feature = "audio_debug")]
                 debug_log!("[AUDIO] Audio stream started successfully");
+                self.audio_init_failed = false;
+                self.current_sample_rate = actual_sample_rate;
+                self.current_sample_format = format!("{:?}", sample_format);
                 self.stream = Some(stream);
-                self.command_sender = Some(sender);
+                self.command_sender = sender;
                 if let Some(ref module) = self.module {
-                    #[cfg(feature = "audio_debug")]
-                    debug_log!("[AUDIO] Loading module: {} ({} samples, {} instruments)",
-                        module.name, module.samples.len(), module.instruments.len());
                     self.send_command(AudioCommand::LoadModule(module.clone()));
                 }
             }
             Err(e) => {
                 eprintln!("[AUDIO] Failed to create audio stream: {}", e);
+                self.audio_init_failed = true;
             }
         }
     }
@@ -501,25 +536,40 @@ impl HtrkApp {
 
     fn set_cell_at_cursor(&mut self, new_cell: Cell) {
         let cursor = self.cursor;
-        let order = self.selected_order;
-        let old_cell = self.get_cell_at_cursor();
+        let channels: Vec<usize> = if self.multichannel_enabled {
+            self.multichannel_channels.iter().enumerate()
+                .filter(|(_, &active)| active)
+                .map(|(ch, _)| ch)
+                .collect()
+        } else {
+            vec![cursor.channel]
+        };
 
-        if old_cell == new_cell {
-            return;
-        }
-
-        let cmd = Box::new(SetCellCommand {
-            order,
-            row: cursor.row,
-            channel: cursor.channel,
-            old_cell,
-            new_cell,
-        });
+        let old_cells: Vec<Cell> = channels.iter().map(|&ch| {
+            let saved = self.cursor;
+            self.cursor.channel = ch;
+            let cell = self.get_cell_at_cursor();
+            self.cursor = saved;
+            cell
+        }).collect();
 
         self.ensure_module_ownership();
         if let Some(ref mut module) = self.module {
             if let Some(arc_module) = Arc::get_mut(module) {
-                let _ = self.undo_manager.execute(cmd, arc_module);
+                for (idx, &ch) in channels.iter().enumerate() {
+                    let old_cell = old_cells[idx];
+                    if old_cell == new_cell {
+                        continue;
+                    }
+                    let cmd = Box::new(SetCellCommand {
+                        order: self.selected_order,
+                        row: cursor.row,
+                        channel: ch,
+                        old_cell,
+                        new_cell: new_cell.clone(),
+                    });
+                    let _ = self.undo_manager.execute(cmd, arc_module);
+                }
             }
         }
         self.sync_module_to_audio();
@@ -634,10 +684,16 @@ impl HtrkApp {
             ctx.input(|i| {
                 for event in &i.events {
                     if let egui::Event::Key { key, pressed: true, .. } = event {
-                        if *key == egui::Key::S {
-                            self.save_as_dialog();
-                        } else if *key == egui::Key::I {
-                            self.file_browser.open(BrowserMode::Instruments);
+                        match key {
+                            egui::Key::S => self.save_as_dialog(),
+                            egui::Key::I => self.file_browser.open(BrowserMode::Instruments),
+                            egui::Key::ArrowUp => {
+                                if self.current_octave < 9 { self.current_octave += 1; }
+                            }
+                            egui::Key::ArrowDown => {
+                                if self.current_octave > 0 { self.current_octave -= 1; }
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -682,7 +738,15 @@ impl HtrkApp {
                             }
                         }
                         egui::Key::ArrowRight => {
-                            if modifiers.shift {
+                            if modifiers.alt {
+                                self.selection = None;
+                                let num_ch = self.num_channels();
+                                if self.cursor.channel < num_ch - 1 {
+                                    self.cursor.channel += 1;
+                                    self.cursor.sub_column = SubColumn::Note;
+                                    self.ensure_cursor_visible();
+                                }
+                            } else if modifiers.shift {
                                 self.extend_selection_right();
                             } else {
                                 self.selection = None;
@@ -690,7 +754,14 @@ impl HtrkApp {
                             }
                         }
                         egui::Key::ArrowLeft => {
-                            if modifiers.shift {
+                            if modifiers.alt {
+                                self.selection = None;
+                                if self.cursor.channel > 0 {
+                                    self.cursor.channel -= 1;
+                                    self.cursor.sub_column = SubColumn::Note;
+                                    self.ensure_cursor_visible();
+                                }
+                            } else if modifiers.shift {
                                 self.extend_selection_left();
                             } else {
                                 self.selection = None;
@@ -724,6 +795,13 @@ impl HtrkApp {
                                     channel: ch,
                                     solo: self.solo_channels[ch],
                                 });
+                            }
+                        }
+                        egui::Key::N if modifiers.alt => {
+                            let ch = self.cursor.channel;
+                            if ch < self.multichannel_channels.len() {
+                                self.multichannel_channels[ch] = !self.multichannel_channels[ch];
+                                self.multichannel_enabled = self.multichannel_channels.iter().any(|&v| v);
                             }
                         }
                         egui::Key::PageUp => {
@@ -793,8 +871,9 @@ impl HtrkApp {
                             let playing = self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
                             if playing {
                                 self.send_command(AudioCommand::Stop);
-                            } else {
-                                self.send_command(AudioCommand::Play);
+                            } else if let Some(last_cell) = self.last_entered_cell.clone() {
+                                self.set_cell_at_cursor(last_cell);
+                                self.advance_cursor_down(self.cursor_skip as usize);
                             }
                         }
                         egui::Key::F1 => {
@@ -838,6 +917,54 @@ impl HtrkApp {
                         egui::Key::CloseBracket => {
                             self.skip_to_next_pattern();
                         }
+                        egui::Key::Comma => {
+                            self.edit_mask_instrument = !self.edit_mask_instrument;
+                            self.edit_mask_volume = self.edit_mask_instrument;
+                        }
+                        egui::Key::Num0 if modifiers.alt => { self.cursor_skip = 0; }
+                        egui::Key::Num1 if modifiers.alt => { self.cursor_skip = 1; }
+                        egui::Key::Num2 if modifiers.alt => { self.cursor_skip = 2; }
+                        egui::Key::Num3 if modifiers.alt => { self.cursor_skip = 3; }
+                        egui::Key::Num4 if modifiers.alt => { self.cursor_skip = 4; }
+                        egui::Key::Num5 if modifiers.alt => { self.cursor_skip = 5; }
+                        egui::Key::Num6 if modifiers.alt => { self.cursor_skip = 6; }
+                        egui::Key::Num7 if modifiers.alt => { self.cursor_skip = 7; }
+                        egui::Key::Num8 if modifiers.alt => { self.cursor_skip = 8; }
+                        egui::Key::Num9 if modifiers.alt => { self.cursor_skip = 9; }
+                        egui::Key::Minus if !modifiers.alt => { self.skip_to_prev_pattern(); }
+                        egui::Key::Equals if !modifiers.alt => { self.skip_to_next_pattern(); }
+                        egui::Key::C if modifiers.alt => { self.copy_selection(); }
+                        egui::Key::P if modifiers.alt => { self.paste_at_cursor(); }
+                        egui::Key::Z if modifiers.alt => {
+                            let sel = self.selection;
+                            if sel.is_some() {
+                                self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::Reverse);
+                            }
+                        }
+                        egui::Key::F if modifiers.alt => {
+                            let sel = self.selection;
+                            if sel.is_some() {
+                                self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::FillInstrument);
+                            }
+                        }
+                        egui::Key::I if modifiers.alt => {
+                            let sel = self.selection;
+                            if sel.is_some() {
+                                self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::InterpolateVolume);
+                            }
+                        }
+                        egui::Key::K if modifiers.alt => {
+                            let sel = self.selection;
+                            if sel.is_some() {
+                                self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::InterpolateEffect);
+                            }
+                        }
+                        egui::Key::R if modifiers.alt => {
+                            let sel = self.selection;
+                            if sel.is_some() {
+                                self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::Randomize);
+                            }
+                        }
                         _ => {}
                     },
                     egui::Event::Text(text) => {
@@ -861,27 +988,25 @@ impl HtrkApp {
         if self.cursor.sub_column.accepts_note() {
             for (key, tone) in NOTE_KEYS_LOWER.iter() {
                 let key_char = key.name();
-                if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_lowercase()) {
-                    let note = if *tone == 12 {
-                        Note::On((self.current_octave as u8 + 1) * 12)
-                    } else {
-                        Note::On(self.current_octave as u8 * 12 + tone)
-                    };
+                if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
+                    let note = Note::On(self.current_octave as u8 * 12 + tone);
                     let mut new_cell = self.get_cell_at_cursor();
                     new_cell.note = note;
                     self.set_cell_at_cursor(new_cell);
-                    self.advance_cursor_down(1);
+                    self.last_entered_cell = Some(new_cell);
+                    self.advance_cursor_down(self.cursor_skip as usize);
                     return;
                 }
             }
             for (key, tone) in NOTE_KEYS_UPPER.iter() {
                 let key_char = key.name();
-                if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_lowercase()) {
+                if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
                     let note = Note::On((self.current_octave as u8 + 1) * 12 + tone);
                     let mut new_cell = self.get_cell_at_cursor();
                     new_cell.note = note;
                     self.set_cell_at_cursor(new_cell);
-                    self.advance_cursor_down(1);
+                    self.last_entered_cell = Some(new_cell);
+                    self.advance_cursor_down(self.cursor_skip as usize);
                     return;
                 }
             }
@@ -889,34 +1014,60 @@ impl HtrkApp {
                 let mut new_cell = self.get_cell_at_cursor();
                 new_cell.note = Note::Off;
                 self.set_cell_at_cursor(new_cell);
-                self.advance_cursor_down(1);
+                self.last_entered_cell = Some(new_cell);
+                self.advance_cursor_down(self.cursor_skip as usize);
+                return;
+            }
+        }
+
+        if self.cursor.sub_column.accepts_decimal() {
+            if let Some(d) = ch.to_digit(10) {
+                let d = d as u8;
+                let mut cell = self.get_cell_at_cursor();
+
+                match self.cursor.sub_column {
+                    SubColumn::InstrumentTens => {
+                        let current = cell.instrument.unwrap_or(0);
+                        cell.instrument = Some(d * 10 + (current % 10));
+                    }
+                    SubColumn::InstrumentOnes => {
+                        let current = cell.instrument.unwrap_or(0);
+                        cell.instrument = Some((current / 10 * 10) + d);
+                    }
+                    SubColumn::VolumeTens => {
+                        let current = cell.volume.unwrap_or(0);
+                        let val = d * 10 + (current % 10);
+                        cell.volume = Some(val.min(64));
+                    }
+                    SubColumn::VolumeOnes => {
+                        let current = cell.volume.unwrap_or(0);
+                        let val = (current / 10 * 10) + d;
+                        cell.volume = Some(val.min(64));
+                    }
+                    SubColumn::Note
+                    | SubColumn::EffectType
+                    | SubColumn::EffectParamHigh
+                    | SubColumn::EffectParamLow => return,
+                }
+
+                self.set_cell_at_cursor(cell);
+
+                if let Some(next) = self.cursor.sub_column.next() {
+                    self.cursor.sub_column = next;
+                } else {
+                    self.cursor.sub_column = SubColumn::Note;
+                    self.advance_cursor_down(self.cursor_skip as usize);
+                }
                 return;
             }
         }
 
         if self.cursor.sub_column.accepts_hex() {
-            let digit = ch.to_ascii_uppercase().to_digit(16);
-            if let Some(d) = digit {
+            if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
                 let d = d as u8;
                 let mut cell = self.get_cell_at_cursor();
 
                 match self.cursor.sub_column {
-                    SubColumn::InstrumentHigh => {
-                        let current = cell.instrument.unwrap_or(0);
-                        cell.instrument = Some((d << 4) | (current & 0x0F));
-                    }
-                    SubColumn::InstrumentLow => {
-                        let current = cell.instrument.unwrap_or(0);
-                        cell.instrument = Some((current & 0xF0) | d);
-                    }
-                    SubColumn::VolumeHigh => {
-                        let current = cell.volume.unwrap_or(0);
-                        cell.volume = Some((d << 4) | (current & 0x0F));
-                    }
-                    SubColumn::VolumeLow => {
-                        let current = cell.volume.unwrap_or(0);
-                        cell.volume = Some((current & 0xF0) | d);
-                    }
                     SubColumn::EffectType => {
                         cell.effect = hex_to_effect(d);
                     }
@@ -930,7 +1081,7 @@ impl HtrkApp {
                         let new_param = (param & 0xF0) | d;
                         cell.effect = set_effect_param(&cell.effect, new_param);
                     }
-                    SubColumn::Note => return,
+                    _ => return,
                 }
 
                 self.set_cell_at_cursor(cell);
@@ -939,9 +1090,26 @@ impl HtrkApp {
                     self.cursor.sub_column = next;
                 } else {
                     self.cursor.sub_column = SubColumn::Note;
-                    self.advance_cursor_down(1);
+                    self.advance_cursor_down(self.cursor_skip as usize);
                 }
             }
+        }
+
+        if ch == '.' && !self.cursor.sub_column.accepts_note() {
+            let mut cell = self.get_cell_at_cursor();
+            match self.cursor.sub_column {
+                SubColumn::InstrumentTens | SubColumn::InstrumentOnes => {
+                    cell.instrument = None;
+                }
+                SubColumn::VolumeTens | SubColumn::VolumeOnes => {
+                    cell.volume = None;
+                }
+                SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => {
+                    cell.effect = Effect::None;
+                }
+                SubColumn::Note => {}
+            }
+            self.set_cell_at_cursor(cell);
         }
     }
 
@@ -1691,9 +1859,8 @@ impl HtrkApp {
                     Some(c) => c.clone(),
                     None => return,
                 };
-                let mut data = (*sample.data).clone();
+                let data = (*sample.data).clone();
                 let pos = pos.min(data.len());
-                // Insert clipboard data at position
                 let mut new_data = Vec::with_capacity(data.len() + clip.len());
                 new_data.extend_from_slice(&data[..pos]);
                 new_data.extend_from_slice(&clip);
@@ -2083,7 +2250,7 @@ impl HtrkApp {
                 return;
             }
         };
-        let (mut loaded_inst, loaded_samples) = match crate::formats::hti::load_instrument(&data) {
+        let (loaded_inst, loaded_samples) = match crate::formats::hti::load_instrument(&data) {
             Ok(result) => result,
             Err(e) => {
                 eprintln!("Failed to load instrument: {:?}", e);
@@ -2100,9 +2267,7 @@ impl HtrkApp {
                 if inst_idx >= m.instruments.len() {
                     m.instruments.resize(inst_idx + 1, crate::sequencer::Instrument::default());
                 }
-                let old_inst = m.instruments[inst_idx].clone();
                 let sample_map = loaded_inst.sample_map.clone();
-                let note_map = loaded_inst.note_map.clone();
                 m.instruments[inst_idx] = loaded_inst;
                 let mut available_slots: Vec<usize> = (1..m.samples.len())
                     .filter(|&i| m.samples[i].data.is_empty())
@@ -2223,7 +2388,7 @@ impl eframe::App for HtrkApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_zoom_factor(self.config.zoom_factor);
 
-        if self.stream.is_none() {
+        if self.stream.is_none() && !self.audio_init_failed {
             self.init_audio();
         }
 
@@ -2415,6 +2580,7 @@ impl eframe::App for HtrkApp {
                     self.num_channels(),
                     cpu,
                     self.current_octave,
+                    self.cursor_skip,
                     self.selected_instrument,
                     self.selected_sample,
                     &hint,
@@ -2589,6 +2755,8 @@ impl eframe::App for HtrkApp {
                                     num_channels,
                                     metrics,
                                     &self.theme,
+                                    self.config.row_highlight_minor,
+                                    self.config.row_highlight_major,
                                 );
 
                                 self.last_visible_rows = grid_resp.visible_rows;
@@ -2680,11 +2848,7 @@ impl eframe::App for HtrkApp {
             }
         }
 
-        let bpm = self.playback_state.bpm.load(std::sync::atomic::Ordering::Relaxed) as u8;
-        let speed = self.playback_state.speed.load(std::sync::atomic::Ordering::Relaxed) as u8;
-        let order_list_len = self.module.as_ref().map(|m| m.order_list.len()).unwrap_or(0);
-        
-        if crate::ui::wav_export_window::draw_wav_export(ctx, &mut self.wav_export_state, order_list_len, bpm, speed) {
+        if crate::ui::wav_export_window::draw_wav_export(ctx, &mut self.wav_export_state) {
             self.export_wav_with_settings();
         }
 
