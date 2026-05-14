@@ -2032,6 +2032,11 @@ impl HtrkApp {
                 property: InstrumentProperty::FilterType(t),
                 old_property: InstrumentProperty::FilterType(inst.filter_type),
             }),
+            InstrumentEditEvent::FilterRandomCutoffChanged(c) => Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::FilterRandomCutoff(c),
+                old_property: InstrumentProperty::FilterRandomCutoff(inst.filter_random_cutoff),
+            }),
             InstrumentEditEvent::EnvelopePointMoved(env_type, idx, t, v) => {
                 let env = match env_type {
                     EnvelopeType::Volume => &inst.volume_envelope,

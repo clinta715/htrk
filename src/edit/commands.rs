@@ -394,6 +394,7 @@ pub enum InstrumentProperty {
     FilterCutoff(u16),
     FilterResonance(u8),
     FilterType(crate::sequencer::effect::FilterType),
+    FilterRandomCutoff(u8),
     VibType(u8),
     VibSweep(u8),
     VibDepth(u8),
@@ -426,6 +427,7 @@ impl EditCommand for SetInstrumentPropertyCommand {
             InstrumentProperty::FilterCutoff(c) => inst.filter_cutoff = *c,
             InstrumentProperty::FilterResonance(r) => inst.filter_resonance = *r,
             InstrumentProperty::FilterType(t) => inst.filter_type = *t,
+            InstrumentProperty::FilterRandomCutoff(c) => inst.filter_random_cutoff = *c,
             InstrumentProperty::VibType(v) => inst.vib_type = *v,
             InstrumentProperty::VibSweep(v) => inst.vib_sweep = *v,
             InstrumentProperty::VibDepth(v) => inst.vib_depth = *v,
@@ -453,6 +455,7 @@ impl EditCommand for SetInstrumentPropertyCommand {
             InstrumentProperty::FilterCutoff(c) => inst.filter_cutoff = *c,
             InstrumentProperty::FilterResonance(r) => inst.filter_resonance = *r,
             InstrumentProperty::FilterType(t) => inst.filter_type = *t,
+            InstrumentProperty::FilterRandomCutoff(c) => inst.filter_random_cutoff = *c,
             InstrumentProperty::VibType(v) => inst.vib_type = *v,
             InstrumentProperty::VibSweep(v) => inst.vib_sweep = *v,
             InstrumentProperty::VibDepth(v) => inst.vib_depth = *v,
@@ -519,6 +522,17 @@ impl EditCommand for AddEnvelopePointCommand {
             EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
             EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
         };
+        if envelope.is_none() {
+            *envelope = Some(crate::sequencer::instrument::Envelope {
+                points: Vec::new(),
+                sustain_point: None,
+                loop_start: None,
+                loop_end: None,
+                flags: crate::sequencer::instrument::EnvelopeFlags {
+                    enabled: true, sustain: false, loop_: false, carry: false,
+                },
+            });
+        }
         if let Some(env) = envelope {
             env.points.push(self.point);
             env.points.sort_by_key(|p| p.tick);
