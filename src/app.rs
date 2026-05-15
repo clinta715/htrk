@@ -91,7 +91,7 @@ pub struct HtrkApp {
     scroll_channel: usize,
 
     current_octave: u8,
-    record_mode: bool,
+    edit_mode: bool,
     follow_playback: bool,
     cursor_skip: u8,
     last_entered_cell: Option<Cell>,
@@ -161,7 +161,7 @@ impl Default for HtrkApp {
             scroll_row: 0,
             scroll_channel: 0,
             current_octave: 4,
-            record_mode: false,
+            edit_mode: true,
             follow_playback: config.follow_playback_default,
             cursor_skip: 1,
             last_entered_cell: None,
@@ -661,7 +661,7 @@ impl HtrkApp {
                 for event in &i.events {
                     if let egui::Event::Key { key, pressed: true, .. } = event {
                         match key {
-                            egui::Key::Z => {
+                            egui::Key::Z if self.edit_mode => {
                                 self.ensure_module_ownership();
                                 if let Some(ref mut module) = self.module {
                                     if let Some(arc_module) = Arc::get_mut(module) {
@@ -671,7 +671,7 @@ impl HtrkApp {
                                 self.sync_module_to_audio();
                                 handled = true;
                             }
-                            egui::Key::Y => {
+                            egui::Key::Y if self.edit_mode => {
                                 self.ensure_module_ownership();
                                 if let Some(ref mut module) = self.module {
                                     if let Some(arc_module) = Arc::get_mut(module) {
@@ -685,12 +685,12 @@ impl HtrkApp {
                                 self.copy_selection();
                                 handled = true;
                             }
-                            egui::Key::X => {
+                            egui::Key::X if self.edit_mode => {
                                 self.copy_selection();
                                 self.delete_selection();
                                 handled = true;
                             }
-                            egui::Key::V => {
+                            egui::Key::V if self.edit_mode => {
                                 self.paste_at_cursor();
                                 handled = true;
                             }
@@ -768,7 +768,7 @@ impl HtrkApp {
                                 }
                             } else if modifiers.shift {
                                 self.extend_selection_down();
-                            } else if modifiers.alt {
+                            } else if modifiers.alt && self.edit_mode {
                                 self.transpose_selection(-1);
                             } else {
                                 self.selection = None;
@@ -782,7 +782,7 @@ impl HtrkApp {
                                 }
                             } else if modifiers.shift {
                                 self.extend_selection_up();
-                            } else if modifiers.alt {
+                            } else if modifiers.alt && self.edit_mode {
                                 self.transpose_selection(1);
                             } else {
                                 self.selection = None;
@@ -876,63 +876,72 @@ impl HtrkApp {
                                 self.ensure_cursor_visible();
                             }
                         }
-                        egui::Key::Backspace => {
+                        egui::Key::Backspace if self.edit_mode => {
                             self.clear_cell_at_cursor();
                         }
-                        egui::Key::Delete if !modifiers.alt => {
-                            self.clear_cell_at_cursor();
-                            self.advance_cursor_down(1);
-                        }
-                        egui::Key::Insert => {
-                            self.ensure_module_ownership();
-                            if let Some(ref mut module) = self.module {
-                                if let Some(arc_module) = Arc::get_mut(module) {
-                                    let pat_idx = *arc_module.order_list.get(self.selected_order).unwrap_or(&0) as usize;
-                                    if pat_idx < arc_module.patterns.len() {
-                                        let cmd = Box::new(InsertRowCommand {
-                                            pattern_index: pat_idx,
-                                            row: self.cursor.row,
-                                            _channel: None,
-                                        });
-                                        let _ = self.undo_manager.execute(cmd, arc_module);
+                        egui::Key::Delete if self.edit_mode => {
+                            if modifiers.alt {
+                                let selected_order = self.selected_order;
+                                let row = self.cursor.row;
+                                let can_delete = self.current_pattern().map_or(false, |p| p.num_rows > 1);
+                                if can_delete {
+                                    let deleted_data: Vec<Cell> = self.current_pattern()
+                                        .map(|p| p.data[row].to_vec())
+                                        .unwrap_or_default();
+                                    let pat_idx = self.module.as_ref()
+                                        .and_then(|m| m.order_list.get(selected_order).copied())
+                                        .unwrap_or(0) as usize;
+                                    self.ensure_module_ownership();
+                                    if let Some(ref mut module) = self.module {
+                                        if let Some(arc_module) = Arc::get_mut(module) {
+                                            let cmd = Box::new(crate::edit::DeleteRowCommand {
+                                                pattern_index: pat_idx,
+                                                row,
+                                                _channel: None,
+                                                deleted_data,
+                                            });
+                                            let _ = self.undo_manager.execute(cmd, arc_module);
+                                        }
                                     }
+                                    self.sync_module_to_audio();
                                 }
+                            } else {
+                                self.clear_cell_at_cursor();
+                                self.advance_cursor_down(1);
                             }
-                            self.sync_module_to_audio();
                         }
-                        egui::Key::Delete if modifiers.alt => {
+                        egui::Key::Insert if self.edit_mode => {
+                            let selected_order = self.selected_order;
+                            let row = self.cursor.row;
                             self.ensure_module_ownership();
                             if let Some(ref mut module) = self.module {
+                                let pat_idx = *module.order_list.get(selected_order).unwrap_or(&0) as usize;
                                 if let Some(arc_module) = Arc::get_mut(module) {
-                                    let pat_idx = *arc_module.order_list.get(self.selected_order).unwrap_or(&0) as usize;
-                                    if pat_idx < arc_module.patterns.len() && arc_module.patterns[pat_idx].num_rows > 1 {
-                                        let row_data = arc_module.patterns[pat_idx].data[self.cursor.row].to_vec();
-                                        let cmd = Box::new(crate::edit::DeleteRowCommand {
-                                            pattern_index: pat_idx,
-                                            row: self.cursor.row,
-                                            _channel: None,
-                                            deleted_data: row_data,
-                                        });
-                                        let _ = self.undo_manager.execute(cmd, arc_module);
-                                    }
+                                    let cmd = Box::new(InsertRowCommand {
+                                        pattern_index: pat_idx,
+                                        row,
+                                        _channel: None,
+                                    });
+                                    let _ = self.undo_manager.execute(cmd, arc_module);
                                 }
                             }
                             self.sync_module_to_audio();
                         }
                         egui::Key::Space => {
-                            let playing = self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
-                            if playing {
+                            if self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
                                 self.send_command(AudioCommand::Stop);
-                            } else if let Some(last_cell) = self.last_entered_cell.clone() {
-                                self.set_cell_at_cursor(last_cell);
-                                self.advance_cursor_down(self.cursor_skip as usize);
+                            } else if self.edit_mode {
+                                if let Some(last_cell) = self.last_entered_cell.clone() {
+                                    self.set_cell_at_cursor(last_cell);
+                                    self.advance_cursor_down(self.cursor_skip as usize);
+                                }
                             }
                         }
                         egui::Key::F1 => {
                             self.show_shortcuts = !self.show_shortcuts;
                         }
                         egui::Key::F2 => {
-                            self.record_mode = !self.record_mode;
+                            self.edit_mode = !self.edit_mode;
                         }
                         egui::Key::F5 => {
                             self.send_command(AudioCommand::Play);
@@ -985,35 +994,30 @@ impl HtrkApp {
                         egui::Key::Num9 if modifiers.alt => { self.cursor_skip = 9; }
                         egui::Key::Minus if !modifiers.alt => { self.skip_to_prev_pattern(); }
                         egui::Key::Equals if !modifiers.alt => { self.skip_to_next_pattern(); }
-                        egui::Key::C if modifiers.alt => { self.copy_selection(); }
-                        egui::Key::P if modifiers.alt => { self.paste_at_cursor(); }
-                        egui::Key::Z if modifiers.alt => {
-                            let sel = self.selection;
-                            if sel.is_some() {
+                        egui::Key::C if modifiers.alt && self.edit_mode => { self.copy_selection(); }
+                        egui::Key::P if modifiers.alt && self.edit_mode => { self.paste_at_cursor(); }
+                        egui::Key::Z if modifiers.alt && self.edit_mode => {
+                            if self.selection.is_some() {
                                 self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::Reverse);
                             }
                         }
-                        egui::Key::F if modifiers.alt => {
-                            let sel = self.selection;
-                            if sel.is_some() {
+                        egui::Key::F if modifiers.alt && self.edit_mode => {
+                            if self.selection.is_some() {
                                 self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::FillInstrument);
                             }
                         }
-                        egui::Key::I if modifiers.alt => {
-                            let sel = self.selection;
-                            if sel.is_some() {
+                        egui::Key::I if modifiers.alt && self.edit_mode => {
+                            if self.selection.is_some() {
                                 self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::InterpolateVolume);
                             }
                         }
-                        egui::Key::K if modifiers.alt => {
-                            let sel = self.selection;
-                            if sel.is_some() {
+                        egui::Key::K if modifiers.alt && self.edit_mode => {
+                            if self.selection.is_some() {
                                 self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::InterpolateEffect);
                             }
                         }
-                        egui::Key::R if modifiers.alt => {
-                            let sel = self.selection;
-                            if sel.is_some() {
+                        egui::Key::R if modifiers.alt && self.edit_mode => {
+                            if self.selection.is_some() {
                                 self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::Randomize);
                             }
                         }
@@ -1054,12 +1058,14 @@ impl HtrkApp {
                 if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
                     let note_key = self.current_octave as u8 * 12 + tone;
                     self.preview_note(note_key);
-                    let note = Note::On(note_key);
-                    let mut new_cell = self.get_cell_at_cursor();
-                    new_cell.note = note;
-                    self.set_cell_at_cursor(new_cell);
-                    self.last_entered_cell = Some(new_cell);
-                    self.advance_cursor_down(self.cursor_skip as usize);
+                    if self.edit_mode {
+                        let note = Note::On(note_key);
+                        let mut new_cell = self.get_cell_at_cursor();
+                        new_cell.note = note;
+                        self.set_cell_at_cursor(new_cell);
+                        self.last_entered_cell = Some(new_cell);
+                        self.advance_cursor_down(self.cursor_skip as usize);
+                    }
                     return;
                 }
             }
@@ -1068,16 +1074,18 @@ impl HtrkApp {
                 if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
                     let note_key = (self.current_octave as u8 + 1) * 12 + tone;
                     self.preview_note(note_key);
-                    let note = Note::On(note_key);
-                    let mut new_cell = self.get_cell_at_cursor();
-                    new_cell.note = note;
-                    self.set_cell_at_cursor(new_cell);
-                    self.last_entered_cell = Some(new_cell);
-                    self.advance_cursor_down(self.cursor_skip as usize);
+                    if self.edit_mode {
+                        let note = Note::On(note_key);
+                        let mut new_cell = self.get_cell_at_cursor();
+                        new_cell.note = note;
+                        self.set_cell_at_cursor(new_cell);
+                        self.last_entered_cell = Some(new_cell);
+                        self.advance_cursor_down(self.cursor_skip as usize);
+                    }
                     return;
                 }
             }
-            if ch == '.' {
+            if ch == '.' && self.edit_mode {
                 let mut new_cell = self.get_cell_at_cursor();
                 new_cell.note = Note::Off;
                 self.set_cell_at_cursor(new_cell);
@@ -1085,6 +1093,10 @@ impl HtrkApp {
                 self.advance_cursor_down(self.cursor_skip as usize);
                 return;
             }
+        }
+
+        if !self.edit_mode {
+            return;
         }
 
         if self.cursor.sub_column.accepts_decimal() {
@@ -1321,6 +1333,9 @@ impl HtrkApp {
     }
 
     fn handle_context_menu_action(&mut self, action: crate::ui::pattern_grid::ContextMenuAction) {
+        if !self.edit_mode {
+            return;
+        }
         let sel = match &self.selection {
             Some(s) => s.clone(),
             None => return,
@@ -2681,6 +2696,7 @@ impl eframe::App for HtrkApp {
                     self.cursor_skip,
                     self.selected_instrument,
                     self.selected_sample,
+                    self.edit_mode,
                     &hint,
                     &self.theme,
                 );

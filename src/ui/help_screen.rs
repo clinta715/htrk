@@ -70,7 +70,7 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             ui.add_space(8.0);
 
                             section_header(ui, "CHANNEL");
-                            shortcut_row(ui, "F2", "Toggle record mode");
+                            shortcut_row(ui, "F2", "Toggle edit mode (EDT / VIEW)");
                             shortcut_row(ui, "Alt+M", "Toggle mute channel");
                             shortcut_row(ui, "Alt+S", "Toggle solo channel");
                             ui.add_space(8.0);

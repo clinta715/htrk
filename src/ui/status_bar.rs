@@ -1,12 +1,12 @@
 use eframe::egui;
 
-use crate::sequencer::{Module, ModuleFormat};
+use crate::sequencer::ModuleFormat;
 
 use super::theme::TrackerTheme;
 
 pub fn draw_status_bar(
     ui: &mut egui::Ui,
-    module: Option<&Module>,
+    module: Option<&crate::sequencer::Module>,
     current_pattern: usize,
     cursor_row: usize,
     total_rows: usize,
@@ -16,6 +16,7 @@ pub fn draw_status_bar(
     cursor_skip: u8,
     selected_instrument: usize,
     selected_sample: usize,
+    edit_mode: bool,
     hint: &str,
     theme: &TrackerTheme,
 ) {
@@ -25,7 +26,12 @@ pub fn draw_status_bar(
         let fg = theme.status_fg;
         let font = egui::FontId::monospace(11.0);
 
-        ui.label(egui::RichText::new("htrk v0.4.1").font(font.clone()).color(fg));
+        ui.label(egui::RichText::new("htrk v0.6.0").font(font.clone()).color(fg));
+        ui.separator();
+
+        let mode_color = if edit_mode { theme.fg_note } else { egui::Color32::from_rgb(200, 160, 80) };
+        let mode_text = if edit_mode { "EDT" } else { "VIEW" };
+        ui.label(egui::RichText::new(mode_text).font(font.clone()).color(mode_color).strong());
         ui.separator();
 
         let format_str = match module {

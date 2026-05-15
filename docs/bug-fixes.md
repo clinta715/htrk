@@ -195,3 +195,31 @@ In pattern 8, row 30 of `cry4bass.mod`, a sample would start looping/retriggerin
 - Build: `cargo build` passes cleanly.
 - Tests: All 229 unit tests pass.
 - The `BulkSetCellsCommand` and expanded `effect_param_value`/`set_effect_param_value` functions have bounds-safe implementations.
+
+## v0.6.0 — Edit/View Mode Toggle
+
+**Date:** 2026-05-15
+
+### Feature
+Added an Edit/View mode toggle (inspired by FastTracker 2 and Impulse Tracker). In View mode, users can navigate, play audio previews, and inspect pattern data — but all keyboard/text input that would modify pattern data is blocked. In Edit mode, everything works as normal.
+
+### Implementation
+- **Toggle key:** F2
+- **State:** `edit_mode: bool` field (default `true`), replaces former dead `record_mode` field
+- **Visual indicator:** Status bar shows `EDT` (green) or `VIEW` (amber). Uses `theme.fg_note` for edit mode and a hardcoded amber for view mode.
+- **Blocked in view mode:**
+  - Note entry (qwerty keyboard), decimal/hex entry, period clear — audio preview still plays
+  - Backspace (clear cell), Delete (clear + advance)
+  - Insert (insert row), Alt+Delete (delete row)
+  - Space when stopped (repeat last cell)
+  - Ctrl+Z/Y (undo/redo), Ctrl+X/V (cut/paste)
+  - Alt+Up/Down (transpose), Alt+block ops (C/P/Z/F/I/K/R)
+  - Context menu actions (FillInstrument, Interpolate, Reverse, Randomize)
+- **Still works in view mode:**
+  - Cursor movement, selection, copy (Ctrl+C), file ops, transport, follow_playback
+  - Audio preview (qwerty note keys play sounds without writing data)
+  - Settings, import, help/about
+
+### Verification
+- Build: `cargo build` passes cleanly, zero warnings.
+- Tests: All 229 unit tests pass.
