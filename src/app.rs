@@ -828,6 +828,7 @@ impl HtrkApp {
                                 self.cursor.channel += 1;
                                 self.cursor.channel = self.cursor.channel.min(self.num_channels_checked() - 1);
                             }
+                            self.ensure_cursor_visible();
                         }
                         egui::Key::M if modifiers.alt => {
                             let ch = self.cursor.channel;
@@ -867,7 +868,7 @@ impl HtrkApp {
                         egui::Key::Home => {
                             self.selection = None;
                             self.cursor.row = 0;
-                            self.scroll_row = 0;
+                            self.ensure_cursor_visible();
                         }
                         egui::Key::End => {
                             self.selection = None;
@@ -1482,7 +1483,7 @@ impl HtrkApp {
             self.selected_order - 1
         };
         self.cursor.row = 0;
-        self.scroll_row = 0;
+        self.ensure_cursor_visible();
         self.selection = None;
         if self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
             self.send_command(AudioCommand::PlayFrom { order: self.selected_order as u16, row: 0 });
@@ -1500,7 +1501,7 @@ impl HtrkApp {
             self.selected_order + 1
         };
         self.cursor.row = 0;
-        self.scroll_row = 0;
+        self.ensure_cursor_visible();
         self.selection = None;
         if self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
             self.send_command(AudioCommand::PlayFrom { order: self.selected_order as u16, row: 0 });
@@ -2527,7 +2528,7 @@ impl eframe::App for HtrkApp {
                     if order < module.order_list.len() {
                         self.selected_order = order;
                         self.cursor.row = 0;
-                        self.scroll_row = 0;
+                        self.ensure_cursor_visible();
                     }
                 }
             }
@@ -2723,7 +2724,7 @@ impl eframe::App for HtrkApp {
                     if let Some(idx) = order_resp.selected_order {
                         self.selected_order = idx;
                         self.cursor.row = 0;
-                        self.scroll_row = 0;
+                        self.ensure_cursor_visible();
                     }
                     let mut changed = false;
                     self.ensure_module_ownership();
