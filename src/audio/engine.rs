@@ -88,7 +88,7 @@ pub fn create_engine_and_sender(
                 buffer_right: vec![0.0; BUFFER_SIZE],
                 return_level: 0.0,
                 pre_fader: false,
-                effect: None,
+                effect: Some(Box::new(crate::audio::sendfx::ReverbEffect::new(sample_rate as f32))),
             },
         ],
     };

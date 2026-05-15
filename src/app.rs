@@ -200,7 +200,7 @@ impl Default for HtrkApp {
             last_visible_rows: VISIBLE_ROWS,
             last_visible_channels: 16,
             send_levels: [[0.0f32; 2]; 64],
-            send_bus_params: [[0.5, 1.0, 1.0, 0.4, 0.3], [0.0, 1.0, 1.0, 0.0, 0.0]],
+            send_bus_params: [[0.5, 1.0, 1.0, 0.4, 0.3], [0.0, 0.7, 0.5, 0.6, 0.5]],
         }
     }
 }
