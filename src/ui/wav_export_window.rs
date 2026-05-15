@@ -141,6 +141,7 @@ pub struct WavExportState {
     pub export_complete: bool,
     pub export_progress_atomic: Arc<AtomicU32>,
     pub export_state_atomic: Arc<AtomicU32>,
+    pub default_directory: Option<PathBuf>,
 }
 
 impl WavExportState {
@@ -168,6 +169,7 @@ impl WavExportState {
             export_complete: false,
             export_progress_atomic: Arc::new(AtomicU32::new(0)),
             export_state_atomic: Arc::new(AtomicU32::new(0)),
+            default_directory: None,
         }
     }
 
@@ -286,14 +288,16 @@ pub fn draw_wav_export(
 
                     ui.label("");
                     if ui.button("Browse...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
+                        let mut dialog = rfd::FileDialog::new()
                             .set_title("Save Audio File")
                             .set_file_name(state.settings.file_path.as_ref().and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string())).unwrap_or_default())
                             .add_filter("WAV Files", &["wav"])
                             .add_filter("AIFF Files", &["aiff", "aif"])
-                            .add_filter("FLAC Files", &["flac"])
-                            .save_file()
-                        {
+                            .add_filter("FLAC Files", &["flac"]);
+                        if let Some(ref dir) = state.default_directory {
+                            dialog = dialog.set_directory(dir);
+                        }
+                        if let Some(path) = dialog.save_file() {
                             state.settings.file_path = Some(path);
                         }
                     }

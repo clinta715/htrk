@@ -32,9 +32,9 @@ pub struct SettingsState {
 
     default_sample_paths: Vec<String>,
     default_mod_path: Option<String>,
-    default_xm_path: Option<String>,
     default_instrument_path: Option<String>,
     default_project_path: Option<String>,
+    default_wav_path: Option<String>,
 
     editor_font_size: u32,
     zoom_factor: f32,
@@ -75,9 +75,9 @@ impl SettingsState {
 
             default_sample_paths: config.default_sample_paths.clone(),
             default_mod_path: config.default_mod_path.clone(),
-            default_xm_path: config.default_xm_path.clone(),
             default_instrument_path: config.default_instrument_path.clone(),
             default_project_path: config.default_project_path.clone(),
+            default_wav_path: config.default_wav_path.clone(),
 
             editor_font_size: config.editor_font_size,
             zoom_factor: config.zoom_factor,
@@ -114,9 +114,9 @@ impl SettingsState {
     pub fn apply_to_config(&self, config: &mut AppConfig) {
         config.default_sample_paths = self.default_sample_paths.clone();
         config.default_mod_path = self.default_mod_path.clone();
-        config.default_xm_path = self.default_xm_path.clone();
         config.default_instrument_path = self.default_instrument_path.clone();
         config.default_project_path = self.default_project_path.clone();
+        config.default_wav_path = self.default_wav_path.clone();
 
         config.editor_font_size = self.editor_font_size;
         config.zoom_factor = self.zoom_factor;
@@ -275,8 +275,8 @@ fn draw_paths_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
     ui.add_space(2.0);
 
     path_row(ui, "Module Path", &mut state.default_mod_path);
-    path_row(ui, "XM Export Path", &mut state.default_xm_path);
     path_row(ui, "Instrument Path", &mut state.default_instrument_path);
+    path_row(ui, "WAV Export Path", &mut state.default_wav_path);
     path_row(ui, "Project Path", &mut state.default_project_path);
 }
 

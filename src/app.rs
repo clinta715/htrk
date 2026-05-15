@@ -1643,6 +1643,11 @@ impl HtrkApp {
             "untitled".to_string()
         };
 
+        self.wav_export_state.default_directory = self.config.default_wav_path.as_ref().map(|p| {
+            let pb = std::path::PathBuf::from(p);
+            if pb.is_dir() { pb } else { std::path::PathBuf::new() }
+        }).filter(|p| p.as_os_str().is_empty().then(|| false).unwrap_or(true));
+
         self.wav_export_state.open(&default_name, module_loaded, Some(total_orders), sample_rate);
         self.wav_export_state.update_estimates(Some(total_orders));
     }

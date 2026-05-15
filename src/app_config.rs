@@ -20,9 +20,9 @@ pub struct AppConfig {
     #[serde(default)]
     pub default_mod_path: Option<String>,
     #[serde(default)]
-    pub default_xm_path: Option<String>,
-    #[serde(default)]
     pub default_instrument_path: Option<String>,
+    #[serde(default)]
+    pub default_wav_path: Option<String>,
     #[serde(default)]
     pub default_project_path: Option<String>,
 
@@ -94,8 +94,8 @@ impl Default for AppConfig {
 
             default_sample_paths: Vec::new(),
             default_mod_path: None,
-            default_xm_path: None,
             default_instrument_path: None,
+            default_wav_path: None,
             default_project_path: None,
 
             editor_font_size: default_font_size(),
