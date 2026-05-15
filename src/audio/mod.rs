@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod engine;
 pub mod filter;
+pub mod sendfx;
 pub mod mixer;
 pub mod playback_state;
 pub mod renderer;

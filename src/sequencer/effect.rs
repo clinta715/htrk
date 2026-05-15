@@ -59,6 +59,8 @@ pub enum Effect {
     SetFilterType { filter_type: u8 },
     FilterCutoffSlide { amount: i16 },
 
+    SetSendLevel { send_index: u8, level: u8 },
+
     FormatSpecific(FormatEffect),
 }
 
@@ -213,6 +215,7 @@ pub fn effect_param_value(effect: &Effect) -> Option<u8> {
         Effect::SetFilterResonance { resonance } => Some(*resonance),
         Effect::SetFilterType { filter_type } => Some(*filter_type),
         Effect::FilterCutoffSlide { amount } => Some(amount.unsigned_abs() as u8),
+        Effect::SetSendLevel { send_index, level } => Some((*send_index << 4) | level),
         Effect::None | Effect::FormatSpecific(_) => None,
     }
 }
@@ -263,6 +266,7 @@ pub fn set_effect_param_value(mut cell: Cell, val: u8) -> Cell {
         Effect::SetFilterResonance { resonance } => *resonance = val,
         Effect::SetFilterType { filter_type } => *filter_type = val,
         Effect::FilterCutoffSlide { amount } => *amount = val as i16,
+        Effect::SetSendLevel { send_index, level } => { *send_index = val >> 4; *level = val & 0x0F; }
         _ => {}
     }
     cell

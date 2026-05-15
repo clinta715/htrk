@@ -142,6 +142,7 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             effect_row(ui, "L", "Envelope Position (XX)");
                             effect_row(ui, "P", "Panning Slide (XX)");
                             effect_row(ui, "R", "Filter Resonance (XX)");
+                            effect_row(ui, "S", "Set Send Level (XY: bus, level)");
                             effect_row(ui, "X", "Filter Type (XX)");
                             effect_row(ui, "Y", "Panbrello (XY)");
                             effect_row(ui, "Z", "Filter Cutoff (XX)");

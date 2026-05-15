@@ -99,6 +99,8 @@ pub struct ChannelState {
     pub funk_speed: u8,
     pub funk_pos: u8,
     pub karplus_param: u8,
+
+    pub send_levels: [f32; 2],
 }
 
 impl Default for ChannelState {
@@ -172,6 +174,7 @@ impl Default for ChannelState {
             funk_speed: 0,
             funk_pos: 0,
             karplus_param: 0,
+            send_levels: [0.0; 2],
         }
     }
 }

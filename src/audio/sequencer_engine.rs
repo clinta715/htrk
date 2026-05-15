@@ -1428,6 +1428,14 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     }
                 }
             }
+
+            Effect::SetSendLevel { send_index, level } => {
+                let idx = *send_index as usize;
+                if idx < 2 {
+                    let level_f = (*level as f32) / 15.0;
+                    self.state.channels[channel].send_levels[idx] = level_f;
+                }
+            }
         }
     }
 

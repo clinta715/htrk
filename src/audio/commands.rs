@@ -42,4 +42,8 @@ pub enum AudioCommand {
         volume: f32,
         panning: f32,
     },
+
+    SetSendLevel { channel: usize, send_index: usize, level: f32 },
+    SetSendReturnLevel { send_index: usize, level: f32 },
+    SetSendFxParam { send_index: usize, param: u32, value: f32 },
 }

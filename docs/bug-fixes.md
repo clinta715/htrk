@@ -223,3 +223,34 @@ Added an Edit/View mode toggle (inspired by FastTracker 2 and Impulse Tracker). 
 ### Verification
 - Build: `cargo build` passes cleanly, zero warnings.
 - Tests: All 229 unit tests pass.
+
+## v0.6.0 — Send/Return Effects System (Delay Bus)
+
+**Date:** 2026-05-15
+
+### Feature
+Added a send/return effects system with two send buses and a stereo delay effect, controlled via the pattern grid.
+
+### Architecture
+- **Effect command:** `S` in the effect type column. Format: `SAB` where `A` = send bus index (0/1), `B` = send level (0-F, mapped to 0-100%).
+- **Persistence:** Send levels persist across rows (like channel volume — set once, stays until new `S` command).
+- **Signal flow:** After voice mixing, each channel's `ch_mix` buffer is tapped at the configured send level and accumulated into per-send bus buffers. Each bus is processed through its effect chain (stereo delay), then mixed back into the master output at the bus's return level.
+- **Delay effect:** Stereo delay with tempo-synced timing, feedback, and lowpass damping filter. Initialized as the default effect for send bus A. Send bus B has no effect by default.
+- **Thread safety:** `SendEffect` trait requires `Send` bound. Audio commands flow through the existing lock-free ringbuffer.
+
+### Files added/modified
+| File | Change |
+|------|--------|
+| `src/sequencer/effect.rs` | Added `SetSendLevel { send_index: u8, level: u8 }` variant |
+| `src/sequencer/player.rs` | Added `send_levels: [f32; 2]` to `ChannelState` |
+| `src/audio/commands.rs` | Added `SetSendLevel`, `SetSendReturnLevel`, `SetSendFxParam` |
+| `src/audio/sendfx.rs` | New — `SendEffect` trait + `DelayEffect` implementation |
+| `src/audio/mod.rs` | Added `pub mod sendfx` |
+| `src/audio/engine.rs` | Added `SendBus` struct, initialization, buffer sizing, post-mix send processing loop, command handlers |
+| `src/audio/sequencer_engine.rs` | Added `SetSendLevel` handler in `apply_effect_unified` |
+| `src/ui/pattern_grid.rs` | Added `S` to `format_effect` display and tooltip |
+| `src/ui/help_screen.rs` | Added `S — Set Send Level` to effect command list |
+
+### Verification
+- Build: `cargo build` passes cleanly, zero warnings.
+- Tests: All 229 unit tests pass.

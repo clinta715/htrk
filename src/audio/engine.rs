@@ -31,6 +31,15 @@ pub struct AudioEngine {
     mix_right: Vec<f32>,
     ch_mix_left: [Vec<f32>; MAX_CHANNELS],
     ch_mix_right: [Vec<f32>; MAX_CHANNELS],
+    send_buses: Vec<SendBus>,
+}
+
+struct SendBus {
+    buffer_left: Vec<f32>,
+    buffer_right: Vec<f32>,
+    return_level: f32,
+    pre_fader: bool,
+    effect: Option<Box<dyn crate::audio::sendfx::SendEffect>>,
 }
 
 pub struct CommandSender {
@@ -66,6 +75,22 @@ pub fn create_engine_and_sender(
         mix_right: vec![0.0; BUFFER_SIZE],
         ch_mix_left: std::array::from_fn(|_| vec![0.0; BUFFER_SIZE]),
         ch_mix_right: std::array::from_fn(|_| vec![0.0; BUFFER_SIZE]),
+        send_buses: vec![
+            SendBus {
+                buffer_left: vec![0.0; BUFFER_SIZE],
+                buffer_right: vec![0.0; BUFFER_SIZE],
+                return_level: 0.5,
+                pre_fader: false,
+                effect: Some(Box::new(crate::audio::sendfx::DelayEffect::new(sample_rate as f32))),
+            },
+            SendBus {
+                buffer_left: vec![0.0; BUFFER_SIZE],
+                buffer_right: vec![0.0; BUFFER_SIZE],
+                return_level: 0.0,
+                pre_fader: false,
+                effect: None,
+            },
+        ],
     };
 
     let sender = CommandSender { tx };
@@ -96,6 +121,10 @@ impl AudioEngine {
             for ch in 0..MAX_CHANNELS {
                 self.ch_mix_left[ch].resize(frame_count, 0.0);
                 self.ch_mix_right[ch].resize(frame_count, 0.0);
+            }
+            for bus in &mut self.send_buses {
+                bus.buffer_left.resize(frame_count, 0.0);
+                bus.buffer_right.resize(frame_count, 0.0);
             }
         }
 
@@ -178,6 +207,45 @@ impl AudioEngine {
                 let peak_l = self.mix_left[..frame_count].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
                 let peak_r = self.mix_right[..frame_count].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
                 debug_log!("[PEAK] #{}: L={:.6} R={:.6}", n, peak_l, peak_r);
+            }
+        }
+
+        // ── Send bus processing ──
+        if !self.send_buses.is_empty() {
+            let bpm = self.sequencer.state.bpm;
+            let sample_rate = self.output_sample_rate as f32;
+            let channels = &self.sequencer.state.channels;
+
+            for bus in self.send_buses.iter_mut() {
+                bus.buffer_left[..frame_count].fill(0.0);
+                bus.buffer_right[..frame_count].fill(0.0);
+            }
+
+            // Tap channels into send buses (post-fader: from ch_mix)
+            for ch in 0..channels.len() {
+            for (si, bus) in self.send_buses.iter_mut().enumerate() {
+                    let level = channels[ch].send_levels[si];
+                    if level <= 0.0 { continue; }
+                    if bus.pre_fader { continue; }
+                    for i in 0..frame_count {
+                        bus.buffer_left[i] += self.ch_mix_left[ch][i] * level;
+                        bus.buffer_right[i] += self.ch_mix_right[ch][i] * level;
+                    }
+                }
+            }
+
+            // Process each bus through its effect and mix back
+            for bus in &mut self.send_buses {
+                if let Some(ref mut fx) = bus.effect {
+                    fx.process(&mut bus.buffer_left[..frame_count], &mut bus.buffer_right[..frame_count], bpm, sample_rate);
+                }
+                if bus.return_level > 0.0 {
+                    let rl = bus.return_level;
+                    for i in 0..frame_count {
+                        self.mix_left[i] += bus.buffer_left[i] * rl;
+                        self.mix_right[i] += bus.buffer_right[i] * rl;
+                    }
+                }
             }
         }
 
@@ -307,6 +375,23 @@ impl AudioEngine {
                 }
                 AudioCommand::TriggerPreviewNote { sample_index, note_key, volume, panning } => {
                     self.trigger_preview_note(sample_index, note_key, volume, panning);
+                }
+                AudioCommand::SetSendLevel { channel, send_index, level } => {
+                    if channel < self.sequencer.state.channels.len() && send_index < self.send_buses.len() {
+                        self.sequencer.state.channels[channel].send_levels[send_index] = level;
+                    }
+                }
+                AudioCommand::SetSendReturnLevel { send_index, level } => {
+                    if send_index < self.send_buses.len() {
+                        self.send_buses[send_index].return_level = level;
+                    }
+                }
+                AudioCommand::SetSendFxParam { send_index, param, value } => {
+                    if send_index < self.send_buses.len() {
+                        if let Some(ref mut fx) = self.send_buses[send_index].effect {
+                            fx.set_param(param, value);
+                        }
+                    }
                 }
             }
         }
