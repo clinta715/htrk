@@ -15,7 +15,7 @@ const S3M_MAX_CHANNELS: usize = 32;
 
 fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
     match effect_code {
-        1 => Effect::SetSpeed { speed: param },
+        1 => Effect::SetTempo { bpm: param },
         2 => Effect::PositionJump { order: param },
         3 => {
             let row = (param >> 4) * 10 + (param & 0x0F);
@@ -90,7 +90,7 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
                 _ => Effect::None, // S0x, SFx and others - not used
             }
         }
-        20 => Effect::SetTempo { bpm: param },
+        20 => Effect::SetSpeed { speed: param },
         21 => Effect::Vibrato {
             speed: param >> 4,
             depth: param & 0x0F,
@@ -109,7 +109,7 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
 fn effect_to_s3m(effect: &Effect) -> (u8, u8) {
     match effect {
         Effect::None => (0, 0),
-        Effect::SetSpeed { speed } => (1, *speed),
+        Effect::SetSpeed { speed } => (20, *speed),
         Effect::PositionJump { order } => (2, *order),
         Effect::PatternBreak { row } => (3, ((row / 10) << 4) | (row % 10)),
         Effect::VolumeSlide { up, down } => (4, (*up << 4) | *down),
@@ -123,10 +123,10 @@ fn effect_to_s3m(effect: &Effect) -> (u8, u8) {
         Effect::TonePortamentoVolumeSlide { up } => (12, *up as u8),
         Effect::VolSetVolume { vol } => (13, *vol),
         Effect::SetVolume { volume } => (13, (*volume).min(64)),
-        Effect::SetSampleOffset { offset } => (15, *offset as u8),
+        Effect::SetSampleOffset { offset } => (15, (*offset >> 8) as u8),
         Effect::Retrigger { interval } => (17, *interval),
         Effect::Tremolo { speed, depth } => (18, (*speed << 4) | *depth),
-        Effect::SetTempo { bpm } => (20, *bpm),
+        Effect::SetTempo { bpm } => (1, *bpm),
         Effect::NoteCutAfter { ticks } => (19, 0xC0 | *ticks),
         Effect::NoteDelay { ticks } => (19, 0xD0 | *ticks),
         Effect::SetPanPosition { pan } => (19, 0x50 | (pan >> 4)),
@@ -893,7 +893,7 @@ mod tests {
 
     #[test]
     fn convert_effect_set_speed() {
-        assert_eq!(convert_s3m_effect(1, 6), Effect::SetSpeed { speed: 6 });
+        assert_eq!(convert_s3m_effect(20, 6), Effect::SetSpeed { speed: 6 });
     }
 
     #[test]
@@ -937,7 +937,7 @@ mod tests {
 
     #[test]
     fn convert_effect_set_tempo() {
-        assert_eq!(convert_s3m_effect(20, 140), Effect::SetTempo { bpm: 140 });
+        assert_eq!(convert_s3m_effect(1, 140), Effect::SetTempo { bpm: 140 });
     }
 
     #[test]
@@ -1216,7 +1216,7 @@ mod tests {
         packed.push(0x40);
         packed.push(1);
         packed.push(0x80);
-        packed.push(20);
+        packed.push(1);
         packed.push(140);
         packed.push(0);
 
