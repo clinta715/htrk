@@ -62,6 +62,7 @@ pub enum AppView {
     Pattern,
     Sample,
     Instrument,
+    SendFx,
 }
 
 pub struct HtrkApp {
@@ -130,7 +131,6 @@ pub struct HtrkApp {
     last_visible_channels: usize,
     send_levels: [[f32; 2]; 64],
     send_bus_params: [[f32; 5]; 2],
-    show_sendfx_editor: bool,
 }
 
 impl Default for HtrkApp {
@@ -201,7 +201,6 @@ impl Default for HtrkApp {
             last_visible_channels: 16,
             send_levels: [[0.0f32; 2]; 64],
             send_bus_params: [[0.5, 1.0, 1.0, 0.4, 0.3], [0.0, 1.0, 1.0, 0.0, 0.0]],
-            show_sendfx_editor: false,
         }
     }
 }
@@ -2642,9 +2641,6 @@ impl eframe::App for HtrkApp {
                 self.settings_state = crate::ui::settings_window::SettingsState::from_config(&self.config);
                 self.settings_state.open = true;
             }
-            if menu_resp.show_sendfx_editor {
-                self.show_sendfx_editor = true;
-            }
         });
 
         if let Some(device_name) = self.pending_device_switch.take() {
@@ -2813,9 +2809,10 @@ impl eframe::App for HtrkApp {
             }
 
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.current_view, AppView::Pattern, "Pattern");
-                ui.selectable_value(&mut self.current_view, AppView::Sample, "Sample");
-                ui.selectable_value(&mut self.current_view, AppView::Instrument, "Instrument");
+            ui.selectable_value(&mut self.current_view, AppView::Pattern, "Pattern");
+            ui.selectable_value(&mut self.current_view, AppView::Sample, "Sample");
+            ui.selectable_value(&mut self.current_view, AppView::Instrument, "Instrument");
+            ui.selectable_value(&mut self.current_view, AppView::SendFx, "Send FX");
             });
             ui.separator();
 
@@ -2961,6 +2958,13 @@ impl eframe::App for HtrkApp {
                         }
                     }
                 }
+                AppView::SendFx => {
+                    crate::ui::sendfx_editor::draw_sendfx_view(
+                        ui,
+                        &mut self.command_sender,
+                        &mut self.send_bus_params,
+                    );
+                }
             }
         });
 
@@ -3038,15 +3042,6 @@ impl eframe::App for HtrkApp {
                         ui.add_space(8.0);
                     });
                 });
-        }
-
-        if self.show_sendfx_editor {
-            crate::ui::sendfx_editor::draw_sendfx_editor(
-                ctx,
-                &mut self.show_sendfx_editor,
-                &mut self.command_sender,
-                &mut self.send_bus_params,
-            );
         }
 
         if self.file_browser.show {
