@@ -383,7 +383,7 @@ impl SequencerEngine {
 
     let is_note_delay = matches!(cell.effect, Effect::NoteDelay { ticks } if ticks > 0);
 
-    let has_volume_effect = is_xm && cell.volume_effect.is_some();
+    let has_volume_effect = cell.volume_effect.is_some();
 
     if is_note_delay {
         self.state.channels[channel].delayed_cell = Some(*cell);
@@ -452,7 +452,7 @@ impl SequencerEngine {
         self.apply_effect_unified(channel, &cell.effect, true);
     }
 
-    // Apply volume_effect on tick 0 (XM only)
+    // Apply volume_effect on tick 0
     if has_volume_effect {
         if let Some(vol_eff) = cell.volume_effect {
             self.apply_effect_unified(channel, &vol_eff, true);

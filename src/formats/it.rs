@@ -39,7 +39,7 @@ impl FormatHandler for ItHandler {
         let sample_count = read_u16_le(data, &mut offset)? as usize;
         let pattern_count = read_u16_le(data, &mut offset)? as usize;
         let tracker_version = read_u16_le(data, &mut offset)?;
-        let _compatible_version = read_u16_le(data, &mut offset)?;
+        let compatible_version = read_u16_le(data, &mut offset)?;
         let flags = read_u16_le(data, &mut offset)?;
         let special = read_u16_le(data, &mut offset)?;
 
@@ -47,7 +47,7 @@ impl FormatHandler for ItHandler {
         let mix_volume = read_u8(data, &mut offset)?;
         let initial_speed = read_u8(data, &mut offset)?;
         let initial_tempo = read_u8(data, &mut offset)?;
-        let _panning_separation = read_u8(data, &mut offset)?;
+        let panning_separation = read_u8(data, &mut offset)?;
         let _pitch_wheel_depth = read_u8(data, &mut offset)?;
         let message_length = read_u16_le(data, &mut offset)? as usize;
         let message_offset = read_u32_le(data, &mut offset)? as usize;
@@ -161,7 +161,11 @@ impl FormatHandler for ItHandler {
             initial_mixing_volume: mix_volume,
             channel_panning,
             channel_volume,
-            flags: module_flags,
+            flags: ModuleFlags {
+                compatible_tracker_version: compatible_version,
+                panning_separation,
+                ..module_flags
+            },
         })
     }
 }
@@ -671,11 +675,40 @@ fn parse_it_pattern(data: &[u8], offset: usize) -> FormatResult<Pattern> {
         let m = last_mask[ch];
         let note = if (m & 0x01) != 0 { decode_it_note(last_note[ch]) } else { Note::None };
         let inst = if (m & 0x02) != 0 && last_inst[ch] > 0 { Some(last_inst[ch]) } else { None };
-        let vol = if (m & 0x04) != 0 { Some(last_vol[ch]) } else { None };
+        let (vol, vol_effect) = if (m & 0x04) != 0 {
+            decode_it_volume(last_vol[ch])
+        } else {
+            (None, None)
+        };
         let fx = if (m & 0x08) != 0 { decode_it_effect(last_fx[ch], last_fxp[ch]) } else { Effect::None };
-        pattern.data[row][ch] = Cell { note, instrument: inst, volume: vol, volume_effect: None, effect: fx };
+        pattern.data[row][ch] = Cell { note, instrument: inst, volume: vol, volume_effect: vol_effect, effect: fx };
     }
     Ok(pattern)
+}
+
+fn decode_it_volume(vol: u8) -> (Option<u8>, Option<Effect>) {
+    match vol {
+        0..=64 => (Some(vol), None),
+        65..=74 => (None, Some(Effect::FineVolumeSlideUp { amount: vol - 64 })),
+        75..=84 => (None, Some(Effect::FineVolumeSlideDown { amount: vol - 74 })),
+        85..=94 => (None, Some(Effect::VolumeSlide { up: vol - 84, down: 0 })),
+        95..=104 => (None, Some(Effect::VolumeSlide { up: 0, down: vol - 94 })),
+        105..=114 => (None, Some(Effect::PortamentoDown { speed: vol - 104 })),
+        115..=124 => (None, Some(Effect::PortamentoUp { speed: vol - 114 })),
+        125 => (None, Some(Effect::TonePortamento { speed: 0 })),
+        126 => (None, Some(Effect::TonePortamentoVolumeSlide { up: 0 })),
+        127 => (None, Some(Effect::VibratoVolumeSlide { up: 0 })),
+        128 => (None, Some(Effect::Vibrato { speed: 0, depth: 0 })),
+        129..=192 => {
+            let pan = vol - 128;
+            (None, Some(Effect::SetPanning { pan: (pan as u16 * 255 / 64) as u8 }))
+        }
+        193..=202 => (None, Some(Effect::PanningSlide { speed: -((vol - 192) as i8) })),
+        203..=212 => (None, Some(Effect::PanningSlide { speed: ((vol - 202) as i8) })),
+        213..=224 => (None, Some(Effect::TonePortamento { speed: vol - 212 })),
+        225..=246 => (None, Some(Effect::Vibrato { speed: vol - 224, depth: 0 })),
+        _ => (None, None),
+    }
 }
 
 fn decode_it_note(raw: u8) -> Note {
@@ -728,7 +761,7 @@ fn decode_it_effect(fx: u8, p: u8) -> Effect {
         }
         15 => if p < 32 { Effect::SetSpeed { speed: p } } else { Effect::SetTempo { bpm: p } },
         16 => Effect::SetGlobalVolume { volume: p },
-        17 => Effect::GlobalVolumeSlide { up: (p >> 4) as i8, down: -((p & 0x0F) as i8) },
+        17 => Effect::GlobalVolumeSlide { up: (p >> 4) as i8, down: (p & 0x0F) as i8 },
         18 => Effect::SetEnvelopePosition { tick: p as u16 },
         19 => Effect::Panbrello { speed: p >> 4, depth: p & 0x0F },
         20 => {

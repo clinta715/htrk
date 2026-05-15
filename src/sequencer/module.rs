@@ -65,6 +65,10 @@ pub struct ModuleFlags {
     pub xm_envelope_model: bool,
     pub xm_period_model: bool,
     pub mod_variant: ModVariant,
+    /// Compatible With Tracker version (IT format). 0 if not IT.
+    pub compatible_tracker_version: u16,
+    /// Stereo panning separation 0-128. 128 = full separation.
+    pub panning_separation: u8,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
