@@ -28,6 +28,7 @@ pub struct MenuResponse {
     pub show_shortcuts: bool,
     pub show_about: bool,
     pub show_settings: bool,
+    pub show_sendfx_editor: bool,
 }
 
 impl Default for MenuResponse {
@@ -58,6 +59,7 @@ impl Default for MenuResponse {
             show_shortcuts: false,
             show_about: false,
             show_settings: false,
+            show_sendfx_editor: false,
         }
     }
 }
@@ -222,6 +224,10 @@ pub fn draw_menu_bar(
         ui.menu_button("Help", |ui| {
             if ui.button("Keyboard Shortcuts   F3").clicked() {
                 resp.show_shortcuts = true;
+                ui.close_menu();
+            }
+            if ui.button("Send FX Editor").clicked() {
+                resp.show_sendfx_editor = true;
                 ui.close_menu();
             }
             if ui.button("About htrk").clicked() {

@@ -11,6 +11,7 @@ pub mod pattern_grid;
 pub mod sample_editor;
 pub mod sample_map;
 pub mod sample_palette;
+pub mod sendfx_editor;
 pub mod settings_window;
 pub mod status_bar;
 pub mod theme;

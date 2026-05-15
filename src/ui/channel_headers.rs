@@ -9,6 +9,7 @@ pub struct ChannelHeadersResponse {
     pub toggle_mute: Option<usize>,
     pub toggle_solo: Option<usize>,
     pub rename_channel: Option<(usize, String)>,
+    pub send_changed: Option<(usize, usize, f32)>,
 }
 
 pub struct ChannelRenameState {
@@ -34,6 +35,7 @@ pub fn draw_channel_headers(
     solo_channels: &[bool],
     channel_names: &[String],
     channel_panning: &[u8],
+    send_levels: &[[f32; 2]],
     rename_state: &mut ChannelRenameState,
     theme: &TrackerTheme,
     playback_state: &AtomicPlaybackState,
@@ -43,9 +45,12 @@ pub fn draw_channel_headers(
         toggle_mute: None,
         toggle_solo: None,
         rename_channel: None,
+        send_changed: None,
     };
 
     let header_height = metrics.row_height * 2.0;
+    let send_bar_h = 3.0;
+    let send_bar_gap = 1.0;
     let vu_bar_height = 4.0;
     let row_num_width = metrics.row_num_width;
     let channel_width = metrics.channel_width;
@@ -165,6 +170,44 @@ pub fn draw_channel_headers(
                     egui::Color32::from_rgb(180, 180, 200)
                 };
                 pan_painter.circle_filled(egui::pos2(dot_x, pan_rect.center().y), dot_r, dot_color);
+
+                // ── Send level bars ──
+                for si in 0..2 {
+                    let send_y = pan_rect.bottom() + 2.0 + (si as f32) * (send_bar_h + send_bar_gap);
+                    let (bar_rect, bar_resp) = ui.allocate_exact_size(
+                        egui::vec2(vu_width, send_bar_h),
+                        egui::Sense::click_and_drag(),
+                    );
+                    let bar_painter = ui.painter_at(bar_rect);
+                    // Force position explicitly below the pan dot area
+                    let bar_rect = egui::Rect::from_min_max(
+                        egui::pos2(pan_rect.left(), send_y),
+                        egui::pos2(pan_rect.right(), send_y + send_bar_h),
+                    );
+                    let bar_color = if si == 0 {
+                        egui::Color32::from_rgb(60, 100, 200)
+                    } else {
+                        egui::Color32::from_rgb(180, 80, 160)
+                    };
+                    bar_painter.rect_filled(bar_rect, 0.0, egui::Color32::from_rgb(20, 20, 30));
+                    if let Some(lvl) = send_levels.get(ch).map(|sl| sl[si]) {
+                        if lvl > 0.0 {
+                            let fill_w = (lvl * vu_width).min(vu_width);
+                            let fill_rect = egui::Rect::from_min_max(
+                                egui::pos2(bar_rect.left(), bar_rect.top()),
+                                egui::pos2(bar_rect.left() + fill_w, bar_rect.bottom()),
+                            );
+                            bar_painter.rect_filled(fill_rect, 0.0, bar_color);
+                        }
+                    }
+                    if bar_resp.dragged() {
+                        if let Some(pos) = bar_resp.interact_pointer_pos() {
+                            let rel_x = (pos.x - bar_rect.left()).clamp(0.0, vu_width);
+                            let new_level = (rel_x / vu_width).clamp(0.0, 1.0);
+                            resp.send_changed = Some((ch, si, new_level));
+                        }
+                    }
+                }
             });
         }
     });

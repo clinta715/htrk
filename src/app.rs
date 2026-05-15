@@ -128,6 +128,9 @@ pub struct HtrkApp {
     config: AppConfig,
     last_visible_rows: usize,
     last_visible_channels: usize,
+    send_levels: [[f32; 2]; 64],
+    send_bus_params: [[f32; 5]; 2],
+    show_sendfx_editor: bool,
 }
 
 impl Default for HtrkApp {
@@ -196,6 +199,9 @@ impl Default for HtrkApp {
             config,
             last_visible_rows: VISIBLE_ROWS,
             last_visible_channels: 16,
+            send_levels: [[0.0f32; 2]; 64],
+            send_bus_params: [[0.5, 1.0, 1.0, 0.4, 0.3], [0.0, 1.0, 1.0, 0.0, 0.0]],
+            show_sendfx_editor: false,
         }
     }
 }
@@ -2636,6 +2642,9 @@ impl eframe::App for HtrkApp {
                 self.settings_state = crate::ui::settings_window::SettingsState::from_config(&self.config);
                 self.settings_state.open = true;
             }
+            if menu_resp.show_sendfx_editor {
+                self.show_sendfx_editor = true;
+            }
         });
 
         if let Some(device_name) = self.pending_device_switch.take() {
@@ -2827,6 +2836,7 @@ impl eframe::App for HtrkApp {
                         &self.solo_channels,
                         &self.channel_names,
                         &self.module.as_ref().map(|m| m.channel_panning.clone()).unwrap_or_default(),
+                        &self.send_levels,
                         &mut self.channel_rename_state,
                         &self.theme,
                         &self.playback_state,
@@ -2846,6 +2856,16 @@ impl eframe::App for HtrkApp {
                             channel: ch,
                             solo: self.solo_channels[ch],
                         });
+                    }
+                    if let Some((ch, si, level)) = ch_resp.send_changed {
+                        if ch < self.send_levels.len() && si < 2 {
+                            self.send_levels[ch][si] = level;
+                            self.send_command(crate::audio::commands::AudioCommand::SetSendLevel {
+                                channel: ch,
+                                send_index: si,
+                                level,
+                            });
+                        }
                     }
                     if let Some((ch, name)) = ch_resp.rename_channel {
                         if ch < self.channel_names.len() {
@@ -3018,6 +3038,15 @@ impl eframe::App for HtrkApp {
                         ui.add_space(8.0);
                     });
                 });
+        }
+
+        if self.show_sendfx_editor {
+            crate::ui::sendfx_editor::draw_sendfx_editor(
+                ctx,
+                &mut self.show_sendfx_editor,
+                &mut self.command_sender,
+                &mut self.send_bus_params,
+            );
         }
 
         if self.file_browser.show {
