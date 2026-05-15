@@ -28,7 +28,9 @@ pub fn draw_note_map(
         let cell_size = 20.0;
         let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
-        egui::ScrollArea::horizontal().show(ui, |ui| {
+        egui::ScrollArea::horizontal()
+            .id_salt("note_map_scroll")
+            .show(ui, |ui| {
             ui.vertical(|ui| {
                 // Header row
                 ui.horizontal(|ui| {

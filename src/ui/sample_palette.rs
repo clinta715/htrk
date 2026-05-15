@@ -23,6 +23,7 @@ pub fn draw_inline_sample_palette(
         });
 
         egui::ScrollArea::vertical()
+            .id_salt("inline_sample_palette_scroll")
             .max_height(INLINE_PALETTE_HEIGHT)
             .auto_shrink([false, false])
             .show(ui, |ui| {
