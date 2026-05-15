@@ -49,7 +49,6 @@ mod tests {
         let cutoff = 200.0;
         let resonance = 0.7;
         let mut low_energy = 0.0f32;
-        let mut high_energy = 0.0f32;
         for i in 0..4800 {
             let lo = (2.0 * PI * 50.0 * i as f32 / sr).sin();
             let hi = (2.0 * PI * 8000.0 * i as f32 / sr).sin();

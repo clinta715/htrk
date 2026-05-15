@@ -1,4 +1,4 @@
-use htrk::sequencer::{Module, ModuleFormat, Pattern, Instrument, Sample, Note, Effect, Cell};
+use htrk::sequencer::{Module, ModuleFormat, Pattern, Instrument, Sample, Note, Effect};
 use htrk::formats;
 use std::sync::Arc;
 

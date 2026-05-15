@@ -248,9 +248,6 @@ impl WavExportState {
 pub fn draw_wav_export(
     ctx: &egui::Context,
     state: &mut WavExportState,
-    order_list_len: usize,
-    bpm: u8,
-    speed: u8,
 ) -> bool {
     if !state.open {
         return false;
@@ -303,7 +300,7 @@ pub fn draw_wav_export(
                     ui.end_row();
 
                     ui.label("Format:");
-                    egui::ComboBox::from_id_source("format")
+                    egui::ComboBox::new("format", "")
                         .selected_text(state.settings.format.label())
                         .show_ui(ui, |ui| {
                             for fmt in AudioFormat::all() {
@@ -313,7 +310,7 @@ pub fn draw_wav_export(
                     ui.end_row();
 
                     ui.label("Sample Rate:");
-                    egui::ComboBox::from_id_source("sample_rate")
+                    egui::ComboBox::new("sample_rate", "")
                         .selected_text(format!("{} Hz", state.settings.sample_rate))
                         .show_ui(ui, |ui| {
                             for rate in &state.sample_rate_options {
@@ -324,7 +321,7 @@ pub fn draw_wav_export(
                     ui.end_row();
 
                     ui.label("Bit Depth:");
-                    egui::ComboBox::from_id_source("bit_depth")
+                    egui::ComboBox::new("bit_depth", "")
                         .selected_text(state.settings.bit_depth.label())
                         .show_ui(ui, |ui| {
                             for depth in BitDepth::all() {
@@ -334,7 +331,7 @@ pub fn draw_wav_export(
                     ui.end_row();
 
                     ui.label("Channels:");
-                    egui::ComboBox::from_id_source("channels")
+                    egui::ComboBox::new("channels", "")
                         .selected_text(state.settings.channel_mode.label())
                         .show_ui(ui, |ui| {
                             ui.selectable_value(&mut state.settings.channel_mode, ChannelMode::Mono, "Mono");

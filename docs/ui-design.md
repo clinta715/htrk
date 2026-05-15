@@ -146,7 +146,8 @@ Total: 13 characters per channel + 1 separator = 14 chars
 
 ### Sub-Column Navigation
 
-The cursor can be positioned within a cell at 8 sub-column positions:
+The cursor can be positioned within a cell at 8 sub-column positions.
+Use `Ctrl+Left/Right` to step through sub-columns; use `Left/Right` to move between channels.
 
 ```
 Position: Note | InsH | InsL | VolH | VolL | FxTyp | FxParH | FxParL
@@ -469,22 +470,23 @@ fn draw_envelope_editor(
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Move cursor up/down one row |
-| `←` / `→` | Move cursor left/right one sub-column |
-| `Tab` | Move cursor to next channel |
-| `Shift+Tab` | Move cursor to previous channel |
+| `←` / `→` | Move cursor left/right one channel |
+| `Ctrl+←` / `Ctrl+→` | Step through sub-columns within cell |
+| `Tab` / `Shift+Tab` | Next / prev channel |
+| `Shift+↑/↓` | Extend selection vertically |
+| `Shift+←/→` | Extend selection by channel |
+| `Alt+↑/↓` | Transpose ±1 semitone |
 | `PgUp` / `PgDn` | Scroll pattern up/down by 16 rows |
-| `Home` | Jump to row 0 |
-| `End` | Jump to last row |
-| `Ctrl+Home` | Jump to first channel |
-| `Ctrl+End` | Jump to last channel |
-| `Ctrl+↑` / `Ctrl+↓` | Scroll visible channels left/right |
+| `Home` / `End` | Jump to first / last row |
+| `-` / `=` | Prev / next pattern |
+| `[` / `]` | Prev / next pattern |
 
 ### Pattern Editor — Note Entry
 
 Lower keyboard row (octave N):
 ```
-  Z  S  X  D  C  V  G  B  H  N  J  M  ,
-  C  C# D  D# E  F  F# G  G# A  A# B  C+1
+  Z  S  X  D  C  V  G  B  H  N  J  M
+  C  C# D  D# E  F  F# G  G# A  A# B
 ```
 
 Upper keyboard row (octave N+1):
@@ -495,53 +497,44 @@ Upper keyboard row (octave N+1):
 
 | Key | Action |
 |-----|--------|
-| `Z` - `,` (lower row) | Play note in current octave |
-| `Q` - `U` (upper row) | Play note in current octave + 1 |
-| Note keys | Enter note AND advance cursor to next row |
-| `1` - `9`, `0` | Enter hex digit in volume/effect columns |
-| `A` - `F` | Enter hex digit in volume/effect columns |
-| `Delete` / `Backspace` | Clear current cell |
-| `.` (period) | Enter note-off (^^^) |
-| `Ctrl+.` | Enter note-cut (===) |
-
-### Pattern Editor — Octave
-
-| Key | Action |
-|-----|--------|
-| `Ctrl+Z` | Octave down |
-| `Ctrl+X` | Octave up |
-| `Numpad *` | Octave down |
-| `Numpad /` | Octave up |
-| `Ctrl+1`-`Ctrl+9` | Set octave directly |
+| Qwerty keys (Note column) | Enter note AND advance cursor, with audio preview |
+| `Ctrl+↑` / `Ctrl+↓` | Decrease / Increase octave |
+| `Ctrl+Shift+↑` / `↓` | Increase / Decrease octave (alternative) |
+| `.` (period) on Note col | Enter note-off (^^^) |
+| `.` (other columns) | Clear field value |
+| `0-9` on Instr/Vol cols | Decimal entry (auto-advance) |
+| `0-9 A-F` on Effect cols | Hex entry (auto-advance) |
+| `Backspace` | Clear cell at cursor |
+| `Delete` | Clear cell + advance cursor |
 
 ### Pattern Editor — Editing
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+C` | Copy selection |
-| `Ctrl+X` | Cut selection |
-| `Ctrl+V` | Paste at cursor |
-| `Ctrl+Z` | Undo |
-| `Ctrl+Y` | Redo |
-| `Insert` | Insert empty row |
-| `Ctrl+Insert` | Insert row across all channels |
-| `Ctrl+Delete` | Delete row across all channels |
-| `Shift+↑/↓` | Extend selection up/down |
-| `Shift+←/→` | Extend selection left/right |
+| `Ctrl+Z` / `Y` | Undo / Redo |
+| `Ctrl+X` / `C` / `V` | Cut / Copy / Paste selection |
 | `Ctrl+A` | Select all |
 | `Escape` | Clear selection |
+| `Insert` | Insert empty row at cursor |
+| `Alt+Delete` | Delete row at cursor |
+| `Shift+Delete` | Clear entire track |
+| `Alt+C` / `Alt+P` | Block copy / paste |
+| `Alt+Z` | Reverse block |
+| `Alt+F` | Fill instrument |
+| `Alt+I` / `Alt+K` | Interpolate volume / effect |
+| `Alt+R` | Randomize notes/volume |
 
 ### Transport
 
 | Key | Action |
 |-----|--------|
-| `F5` | Play from beginning |
-| `F6` | Play from current position |
-| `F7` | Play from current pattern start |
-| `F8` | Stop |
-| `Space` | Play/Stop toggle |
-| `Ctrl+Space` | Play from current row |
-| `F9` | Pause/Resume |
+| `F5` | Play from start |
+| `F6` | Play pattern |
+| `F7` | Play through order |
+| `F8` | Stop all |
+| `F9` | Play from current position |
+| `Space` (playing) | Stop |
+| `Space` (stopped) | Repeat last cell entry |
 
 ### Song Order List
 
@@ -691,11 +684,13 @@ Instrument
       ├─ Import from Sample
       └─ Split by Key Zones...
 
-Settings
-  ├─ Audio Device...
-  ├─ MIDI Device...
-  ├─ Keybindings...
-  └─ About htrk
+Settings (F10)
+  ├─ Paths tab     — default directories for samples, modules, instruments, projects
+  ├─ Editor tab    — font size, zoom, scroll speed, visible channels, row highlights
+  ├─ Audio tab     — output device, interpolation, limiter mode, preferred sample rate
+  ├─ Backup tab    — auto-backup interval & directory
+  ├─ Theme tab     — visual theme (Dark Modern, Dark Retro, Light, etc.)
+  └─ Advanced tab  — debug logging toggle
 ```
 
 ## Font Configuration

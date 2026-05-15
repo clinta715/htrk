@@ -28,6 +28,7 @@ pub enum Effect {
     Panbrello { speed: u8, depth: u8 },
     PatternDelay { ticks: u8 },
     SetPanPosition { pan: u8 },
+    PanningSlide { speed: i8 },
 
     GlissandoControl { on: bool },
     VibratoWaveform { waveform: u8 },
@@ -193,6 +194,7 @@ pub fn effect_param_value(effect: &Effect) -> Option<u8> {
         Effect::SetFilterCutoff { cutoff } => Some((*cutoff >> 8) as u8),
         Effect::SetFilterResonance { resonance } => Some(*resonance),
         Effect::SetFilterType { filter_type } => Some(*filter_type),
+        Effect::PanningSlide { speed } => Some(speed.unsigned_abs()),
         _ => None,
     }
 }
@@ -212,6 +214,7 @@ pub fn set_effect_param_value(mut cell: Cell, val: u8) -> Cell {
         Effect::SetPanning { pan } => *pan = val,
         Effect::ExtendedEffect { param } => *param = val,
         Effect::PatternBreak { row } => *row = val,
+        Effect::PanningSlide { speed } => *speed = val as i8,
         _ => {}
     }
     cell

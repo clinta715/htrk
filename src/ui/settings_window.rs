@@ -12,14 +12,17 @@ enum SettingsTab {
     Audio,
     Backup,
     Theme,
+    Advanced,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SettingsAction {
     None,
     Save,
     Apply,
     Cancel,
+    SelectDevice(String),
+    RefreshDevices,
 }
 
 #[derive(Clone)]
@@ -41,15 +44,27 @@ pub struct SettingsState {
     show_hex_row_numbers: bool,
     snap_to_grid: bool,
     follow_playback_default: bool,
+    editor_highlight_minor: u8,
+    editor_highlight_major: u8,
 
     default_amplify_factor: f32,
+
+    default_interpolation: String,
+    limiter_mode: String,
+    output_device_names: Vec<String>,
+    selected_device_name: Option<String>,
+    preferred_sample_rate: Option<u32>,
 
     auto_backup_interval_secs: u64,
     backup_directory: Option<String>,
 
     theme_preset: String,
 
+    debug_enabled: bool,
+
     new_sample_path: String,
+
+    pending_refresh_devices: bool,
 }
 
 impl SettingsState {
@@ -72,15 +87,27 @@ impl SettingsState {
             show_hex_row_numbers: config.show_hex_row_numbers,
             snap_to_grid: config.snap_to_grid,
             follow_playback_default: config.follow_playback_default,
+            editor_highlight_minor: config.row_highlight_minor,
+            editor_highlight_major: config.row_highlight_major,
 
             default_amplify_factor: config.default_amplify_factor,
+
+            default_interpolation: config.default_interpolation.clone(),
+            limiter_mode: config.limiter_mode.clone(),
+            output_device_names: Vec::new(),
+            selected_device_name: None,
+            preferred_sample_rate: config.preferred_sample_rate,
 
             auto_backup_interval_secs: config.auto_backup_interval_secs,
             backup_directory: config.backup_directory.clone(),
 
             theme_preset: config.theme_preset.clone(),
 
+            debug_enabled: config.debug,
+
             new_sample_path: String::new(),
+
+            pending_refresh_devices: false,
         }
     }
 
@@ -99,24 +126,48 @@ impl SettingsState {
         config.show_hex_row_numbers = self.show_hex_row_numbers;
         config.snap_to_grid = self.snap_to_grid;
         config.follow_playback_default = self.follow_playback_default;
+        config.row_highlight_minor = self.editor_highlight_minor;
+        config.row_highlight_major = self.editor_highlight_major;
 
         config.default_amplify_factor = self.default_amplify_factor;
+
+        config.default_interpolation = self.default_interpolation.clone();
+        config.limiter_mode = self.limiter_mode.clone();
+        if let Some(ref name) = self.selected_device_name {
+            config.output_device_name = Some(name.clone());
+        }
+        config.preferred_sample_rate = self.preferred_sample_rate;
 
         config.auto_backup_interval_secs = self.auto_backup_interval_secs;
         config.backup_directory = self.backup_directory.clone();
 
         config.theme_preset = self.theme_preset.clone();
+
+        config.debug = self.debug_enabled;
     }
 }
 
-pub fn draw_settings_window(ctx: &egui::Context, state: &mut SettingsState) -> SettingsAction {
+pub fn draw_settings_window(
+    ctx: &egui::Context,
+    state: &mut SettingsState,
+    output_device_names: &[String],
+    selected_device_name: Option<&str>,
+) -> SettingsAction {
+    state.output_device_names = output_device_names.to_vec();
+    state.selected_device_name = selected_device_name.map(|s| s.to_string());
+
+    if state.pending_refresh_devices {
+        state.pending_refresh_devices = false;
+        return SettingsAction::RefreshDevices;
+    }
+
     let mut action = SettingsAction::None;
     let mut is_open = state.open;
     egui::Window::new("Settings")
         .open(&mut is_open)
         .resizable(true)
         .default_width(520.0)
-        .default_height(480.0)
+        .default_height(520.0)
         .min_width(400.0)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -126,6 +177,7 @@ pub fn draw_settings_window(ctx: &egui::Context, state: &mut SettingsState) -> S
                     (SettingsTab::Audio, "Audio"),
                     (SettingsTab::Backup, "Backup"),
                     (SettingsTab::Theme, "Theme"),
+                    (SettingsTab::Advanced, "Advanced"),
                 ];
                 for (tab, label) in tabs {
                     if ui.selectable_label(state.tab == tab, label).clicked() {
@@ -143,6 +195,7 @@ pub fn draw_settings_window(ctx: &egui::Context, state: &mut SettingsState) -> S
                     SettingsTab::Audio => draw_audio_tab(ui, state),
                     SettingsTab::Backup => draw_backup_tab(ui, state),
                     SettingsTab::Theme => draw_theme_tab(ui, state),
+                    SettingsTab::Advanced => draw_advanced_tab(ui, state),
                 });
 
             ui.separator();
@@ -293,6 +346,17 @@ fn draw_editor_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
     ui.checkbox(&mut state.show_hex_row_numbers, "Hex Row Numbers");
     ui.checkbox(&mut state.snap_to_grid, "Snap Selection to Grid");
     ui.checkbox(&mut state.follow_playback_default, "Follow Playback (default)");
+
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label("Minor Row Highlight:");
+        ui.add(egui::DragValue::new(&mut state.editor_highlight_minor).range(1..=32).speed(1));
+    });
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label("Major Row Highlight:");
+        ui.add(egui::DragValue::new(&mut state.editor_highlight_major).range(1..=32).speed(1));
+    });
 }
 
 fn draw_audio_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
@@ -304,6 +368,83 @@ fn draw_audio_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
         ui.label("Default Amplify Factor:");
         ui.add(egui::Slider::new(&mut state.default_amplify_factor, 0.1..=10.0).step_by(0.1));
     });
+
+    ui.add_space(8.0);
+    section_header(ui, "Output Device");
+    ui.add_space(4.0);
+
+    let current_device = state.selected_device_name.clone().unwrap_or_default();
+    egui::ComboBox::from_id_salt("settings_output_device")
+        .selected_text(if current_device.is_empty() { "Default".to_string() } else { current_device.clone() })
+        .show_ui(ui, |ui| {
+            for name in &state.output_device_names {
+                let is_selected = state.selected_device_name.as_deref() == Some(name.as_str());
+                if ui.selectable_label(is_selected, name).clicked() {
+                    state.selected_device_name = Some(name.clone());
+                }
+            }
+        });
+    if ui.button("Refresh Devices").clicked() {
+        state.pending_refresh_devices = true;
+    }
+
+    ui.add_space(8.0);
+    section_header(ui, "Default Interpolation");
+    ui.add_space(4.0);
+
+    let interp_options = ["Nearest", "Linear", "Cubic"];
+    egui::ComboBox::from_id_salt("settings_interpolation")
+        .selected_text(&state.default_interpolation)
+        .show_ui(ui, |ui| {
+            for &opt in &interp_options {
+                let is_selected = state.default_interpolation == opt;
+                if ui.selectable_label(is_selected, opt).clicked() {
+                    state.default_interpolation = opt.to_string();
+                }
+            }
+        });
+
+    ui.add_space(8.0);
+    section_header(ui, "Limiter Mode");
+    ui.add_space(4.0);
+
+    let limiter_options = ["HardClip", "SoftKnee", "SoftKneeSmooth"];
+    egui::ComboBox::from_id_salt("settings_limiter")
+        .selected_text(&state.limiter_mode)
+        .show_ui(ui, |ui| {
+            for &opt in &limiter_options {
+                let is_selected = state.limiter_mode == opt;
+                if ui.selectable_label(is_selected, opt).clicked() {
+                    state.limiter_mode = opt.to_string();
+                }
+            }
+        });
+
+    ui.add_space(8.0);
+    section_header(ui, "Preferred Sample Rate");
+    ui.add_space(4.0);
+
+    let rate_options = [
+        ("Auto (device default)", None),
+        ("22050 Hz", Some(22050u32)),
+        ("44100 Hz", Some(44100)),
+        ("48000 Hz", Some(48000)),
+        ("96000 Hz", Some(96000)),
+    ];
+    let current_rate_label = rate_options.iter()
+        .find(|(_, v)| *v == state.preferred_sample_rate)
+        .map(|(l, _)| *l)
+        .unwrap_or("Auto (device default)");
+    egui::ComboBox::from_id_salt("settings_sample_rate")
+        .selected_text(current_rate_label)
+        .show_ui(ui, |ui| {
+            for (label, value) in &rate_options {
+                let is_selected = *value == state.preferred_sample_rate;
+                if ui.selectable_label(is_selected, *label).clicked() {
+                    state.preferred_sample_rate = *value;
+                }
+            }
+        });
 }
 
 fn draw_backup_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
@@ -366,6 +507,21 @@ fn draw_theme_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
         if ui.selectable_label(is_selected, preset.name()).clicked() {
             state.theme_preset = preset.config_key().to_string();
         }
+    }
+}
+
+fn draw_advanced_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
+    ui.add_space(4.0);
+    section_header(ui, "Debugging");
+    ui.add_space(4.0);
+
+    ui.checkbox(&mut state.debug_enabled, "Enable debug logging (performance impact)");
+    if state.debug_enabled {
+        ui.label(
+            egui::RichText::new("Debug logs are written to the config directory. May cause audio stuttering.")
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+        );
     }
 }
 

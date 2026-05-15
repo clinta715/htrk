@@ -198,7 +198,7 @@ impl FormatHandler for S3mHandler {
                 num_channels = num_channels.max((channel_settings[i] & 0x1F) as usize + 1);
             }
         }
-        let num_channels = if num_channels == 0 { 4 } else { num_channels };
+        let _num_channels = if num_channels == 0 { 4 } else { num_channels };
 
         let mut offset = S3M_HEADER_SIZE;
 
@@ -1125,7 +1125,7 @@ mod tests {
             buf[60 + i] = 0xFF;
         }
 
-        let order_offset = buf.len();
+        let _order_offset = buf.len();
         buf.push(0);
 
         let sample_para_offset = buf.len();
@@ -1133,7 +1133,7 @@ mod tests {
         let pattern_para_offset = buf.len();
         buf.extend_from_slice(&[0u8, 0]);
 
-        let pan_offset = buf.len();
+        let _pan_offset = buf.len();
         for _ in 0..32 {
             buf.push(0x80);
         }

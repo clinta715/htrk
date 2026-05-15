@@ -2,17 +2,19 @@ use std::sync::Arc;
 
 use ringbuf::{traits::*, HeapRb, HeapCons, HeapProd};
 
-use crate::audio::commands::{AudioCommand, InterpolationType};
+use crate::audio::commands::{AudioCommand, InterpolationType, LimiterMode};
 use crate::audio::mixer;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::audio::playback_state::MAX_CHANNELS;
 use crate::audio::sequencer_engine::SequencerEngine;
-use crate::debug_log;
 use crate::sequencer::module::Module;
 use crate::sequencer::module::COMMAND_BUFFER_SIZE;
+use crate::sequencer::instrument::NewNoteAction;
+use crate::sequencer::note::Note;
 
 const OUTPUT_SAMPLE_RATE: u32 = 48000;
 const BUFFER_SIZE: usize = 256;
+pub(crate) const PREVIEW_VOICE_INDEX: usize = 255;
 
 pub struct AudioEngine {
     sequencer: SequencerEngine,
@@ -21,6 +23,8 @@ pub struct AudioEngine {
     playback_state: Arc<AtomicPlaybackState>,
     master_volume: f32,
     interpolation: InterpolationType,
+    limiter_mode: LimiterMode,
+    limiter_gain: f32,
     output_sample_rate: f64,
     output_channels: u16,
     mix_left: Vec<f32>,
@@ -54,6 +58,8 @@ pub fn create_engine_and_sender(
         playback_state,
         master_volume: 0.5,
         interpolation: InterpolationType::Linear,
+        limiter_mode: LimiterMode::HardClip,
+        limiter_gain: 1.0,
         output_sample_rate: sample_rate as f64,
         output_channels: channels.max(1),
         mix_left: vec![0.0; BUFFER_SIZE],
@@ -175,10 +181,27 @@ impl AudioEngine {
             }
         }
 
-        mixer::buffer_wide_limit(
-            &mut self.mix_left[..frame_count],
-            &mut self.mix_right[..frame_count],
-        );
+        match self.limiter_mode {
+            LimiterMode::HardClip => {
+                mixer::buffer_wide_limit(
+                    &mut self.mix_left[..frame_count],
+                    &mut self.mix_right[..frame_count],
+                );
+            }
+            LimiterMode::SoftKnee => {
+                mixer::soft_knee_limit(
+                    &mut self.mix_left[..frame_count],
+                    &mut self.mix_right[..frame_count],
+                );
+            }
+            LimiterMode::SoftKneeSmooth => {
+                mixer::soft_knee_limit_smoothed(
+                    &mut self.mix_left[..frame_count],
+                    &mut self.mix_right[..frame_count],
+                    &mut self.limiter_gain,
+                );
+            }
+        }
 
         self.capture_monitoring(frame_count);
 
@@ -251,9 +274,6 @@ impl AudioEngine {
                 AudioCommand::SetMasterVolume(vol) => {
                     self.master_volume = vol.clamp(0.0, 2.0);
                 }
-                AudioCommand::SetInterpolation(interp) => {
-                    self.interpolation = interp;
-                }
                 AudioCommand::PlayFrom { order, row } => {
                     self.sequencer.play_from(order, row);
                 }
@@ -265,9 +285,6 @@ impl AudioEngine {
                 AudioCommand::SetSpeed(speed) => {
                     self.sequencer.state.speed = speed;
                 }
-                AudioCommand::SetGlobalVolume(vol) => {
-                    self.sequencer.state.global_volume = vol;
-                }
                 AudioCommand::SetChannelMuted { channel, muted } => {
                     if channel < self.sequencer.state.channels.len() {
                         self.sequencer.state.channels[channel].muted = muted;
@@ -278,14 +295,18 @@ impl AudioEngine {
                         self.sequencer.state.channels[channel].solo = solo;
                     }
                 }
-                AudioCommand::SetPatternCell { order, row, channel, cell } => {
-                    let _ = (order, row, channel, cell);
-                }
-                AudioCommand::SeekTo { order, row } => {
-                    self.sequencer.play_from(order, row);
-                }
                 AudioCommand::SetPlayMode(mode) => {
                     self.sequencer.state.play_mode = mode;
+                }
+                AudioCommand::SetInterpolation(interp) => {
+                    self.interpolation = interp;
+                }
+                AudioCommand::SetLimiterMode(mode) => {
+                    self.limiter_mode = mode;
+                    self.limiter_gain = 1.0;
+                }
+                AudioCommand::TriggerPreviewNote { sample_index, note_key, volume, panning } => {
+                    self.trigger_preview_note(sample_index, note_key, volume, panning);
                 }
             }
         }
@@ -426,6 +447,46 @@ impl AudioEngine {
             0,
         );
     }
+
+    pub fn trigger_preview_note(&mut self, sample_index: usize, note_key: u8, volume: f32, panning: f32) {
+        let module = match &self.module {
+            Some(m) => m,
+            None => return,
+        };
+        if sample_index >= module.samples.len() {
+            return;
+        }
+        let sample = &module.samples[sample_index];
+        let note = Note::On(note_key);
+        let freq = match note.frequency() {
+            Some(f) => f,
+            None => return,
+        };
+        let playback_freq = compute_playback_frequency(
+            freq,
+            sample.sample_rate,
+            sample.relative_note,
+            sample.fine_tune,
+        );
+        let voice = &mut self.sequencer.voices[PREVIEW_VOICE_INDEX];
+        voice.trigger(
+            sample.data.clone(),
+            sample.sample_rate as f64,
+            sample.loop_type,
+            sample.loop_start,
+            sample.loop_end,
+            playback_freq,
+            self.output_sample_rate,
+            volume,
+            panning,
+            0,
+            None,
+            None,
+            note,
+            NewNoteAction::NoteCut,
+            0,
+        );
+    }
 }
 
 #[allow(dead_code)]
@@ -475,7 +536,7 @@ mod tests {
     #[test]
     fn create_engine_and_sender_works() {
         let state = Arc::new(AtomicPlaybackState::default());
-        let (mut engine, _sender) = create_engine_and_sender(state.clone(), 48000, 2);
+        let (engine, _sender) = create_engine_and_sender(state.clone(), 48000, 2);
         assert_eq!(engine.sequencer.voices.len(), MAX_VOICES);
         assert!(engine.module.is_none());
     }

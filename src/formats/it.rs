@@ -750,7 +750,7 @@ fn decode_it_effect(fx: u8, p: u8) -> Effect {
         22 => Effect::Vibrato { speed: 0, depth: p },
         23 => {
             let hi = p >> 4;
-            let lo = p & 0x0F;
+            let _lo = p & 0x0F;
             match hi {
                 1 => Effect::SetSampleOffset { offset: (p as u16) << 8 },
                 _ => Effect::SetPanning { pan: p },

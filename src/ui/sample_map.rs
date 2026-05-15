@@ -24,7 +24,7 @@ pub fn draw_sample_map(
         let grid_width = cell_size * 12.0;
         let grid_height = cell_size * 10.0;
 
-        let (rect, mut response) = ui.allocate_exact_size(
+        let (rect, response) = ui.allocate_exact_size(
             egui::vec2(grid_width, grid_height),
             egui::Sense::click_and_drag()
         );
@@ -110,7 +110,7 @@ pub fn draw_sample_map(
                 let notes_name = format!("{}{}", notes[note_idx % 12], note_idx / 12);
                 format!("{}: Sample {:02X} - {}", notes_name, sample_idx, sname)
             };
-            response = response.on_hover_text(tooltip_text);
+            let _ = response.on_hover_text(tooltip_text);
         }
 
         for i in 0..=12 {

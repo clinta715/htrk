@@ -1,4 +1,4 @@
-# htrk — Design Documentation
+# htrk v0.5.0 — Design Documentation
 
 A modern Impulse Tracker / ScreamTracker clone built in Rust with egui.
 

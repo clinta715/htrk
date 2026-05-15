@@ -175,7 +175,6 @@ pub fn draw_waveform(
         }
 
         if response.drag_stopped() {
-            selecting = false;
             ui.data_mut(|d| d.insert_temp::<bool>(sel_id, false));
             if let Some((ref s, ref e)) = *selection {
                 if s == e { *selection = None; }

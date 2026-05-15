@@ -4,7 +4,6 @@ pub const MAX_FRQ: u32 = 32000;
 pub const MAX_NOTES: usize = 10 * 12 * 16 + 16; // 1936
 
 const VIBTAB_SIZE: usize = 32;
-const LOGTAB_SIZE: usize = 768;
 const VIB_SINE_SIZE: usize = 256;
 
 // --- Period tables (lazy-initialized) ---
@@ -13,7 +12,6 @@ use std::sync::OnceLock;
 
 static AMIGA_PERIODS: OnceLock<[u16; MAX_NOTES]> = OnceLock::new();
 static LINEAR_PERIODS: OnceLock<[u16; MAX_NOTES]> = OnceLock::new();
-static LOG_TAB: OnceLock<[i32; LOGTAB_SIZE]> = OnceLock::new();
 
 const FT2_AMIGA_PERIODS: [u16; MAX_NOTES] = [
 	29024,28912,28800,28704,28608,28496,28384,28288,28192,28096,28000,27888,27776,27680,27584,27488,
@@ -150,18 +148,6 @@ fn get_linear_periods() -> &'static [u16; MAX_NOTES] {
         while i < MAX_NOTES {
             let period = 7744i32 - (i as i32) * 4;
             table[i] = period.clamp(0, 65535) as u16;
-            i += 1;
-        }
-        table
-    })
-}
-
-fn get_log_tab() -> &'static [i32; LOGTAB_SIZE] {
-    LOG_TAB.get_or_init(|| {
-        let mut table = [0i32; LOGTAB_SIZE];
-        let mut i = 0;
-        while i < LOGTAB_SIZE {
-            table[i] = (16777216.0 * 2.0_f64.powf(i as f64 / 768.0)).round() as i32;
             i += 1;
         }
         table

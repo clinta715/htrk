@@ -61,6 +61,15 @@ pub struct AppConfig {
     pub row_highlight_minor: u8,
     #[serde(default = "default_row_highlight_major")]
     pub row_highlight_major: u8,
+
+    #[serde(default = "default_interpolation")]
+    pub default_interpolation: String,
+    #[serde(default = "default_limiter")]
+    pub limiter_mode: String,
+    #[serde(default)]
+    pub output_device_name: Option<String>,
+    #[serde(default)]
+    pub preferred_sample_rate: Option<u32>,
 }
 
 fn default_row_highlight_minor() -> u8 { 4 }
@@ -73,6 +82,8 @@ fn default_visible_channels() -> usize { 16 }
 fn default_true() -> bool { true }
 fn default_amplify() -> f32 { 2.0 }
 fn default_theme() -> String { "DarkModern".to_string() }
+fn default_interpolation() -> String { "Linear".to_string() }
+fn default_limiter() -> String { "HardClip".to_string() }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -105,6 +116,10 @@ impl Default for AppConfig {
             debug: false,
             row_highlight_minor: default_row_highlight_minor(),
             row_highlight_major: default_row_highlight_major(),
+            default_interpolation: default_interpolation(),
+            limiter_mode: default_limiter(),
+            output_device_name: None,
+            preferred_sample_rate: None,
         }
     }
 }

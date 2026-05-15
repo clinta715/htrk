@@ -74,6 +74,7 @@ pub struct HtrkApp {
     current_sample_rate: u32,
     current_sample_format: String,
     pending_device_switch: Option<String>,
+    pending_reinit: bool,
 
     module: Option<Arc<Module>>,
     loaded_module_name: String,
@@ -144,6 +145,7 @@ impl Default for HtrkApp {
             current_sample_rate: 0,
             current_sample_format: String::new(),
             pending_device_switch: None,
+            pending_reinit: false,
             module: None,
             loaded_module_name: String::new(),
             file_path: None,
@@ -218,6 +220,14 @@ impl HtrkApp {
         if self.output_device_names.is_empty() {
             self.refresh_output_devices();
         }
+        // Initialize selected device from persisted config if not set
+        if self.selected_device_name.is_none() {
+            if let Some(ref name) = self.config.output_device_name {
+                if self.output_device_names.iter().any(|d| d == name) {
+                    self.selected_device_name = Some(name.clone());
+                }
+            }
+        }
 
         use cpal::traits::{HostTrait, DeviceTrait, StreamTrait};
 
@@ -266,6 +276,16 @@ impl HtrkApp {
         }
 
         let mut configs_to_try = Vec::new();
+
+        // If user has a preferred sample rate, try it first
+        if let Some(pref_sr) = self.config.preferred_sample_rate {
+            configs_to_try.push(cpal::StreamConfig {
+                channels: config.channels,
+                sample_rate: pref_sr,
+                buffer_size: cpal::BufferSize::Default,
+            });
+        }
+
         configs_to_try.push(config.clone());
         let alt1 = cpal::StreamConfig {
             channels: config.channels,
@@ -276,7 +296,7 @@ impl HtrkApp {
             configs_to_try.push(alt1);
         }
         for &sr in &[44100u32, 48000, 22050] {
-            if sr != config.sample_rate {
+            if Some(sr) != self.config.preferred_sample_rate && sr != config.sample_rate {
                 configs_to_try.push(cpal::StreamConfig {
                     channels: 2,
                     sample_rate: sr,
@@ -362,6 +382,8 @@ impl HtrkApp {
                 if let Some(ref module) = self.module {
                     self.send_command(AudioCommand::LoadModule(module.clone()));
                 }
+                // Apply persisted audio settings to the new engine
+                self.apply_audio_settings_to_engine();
             }
             Err(e) => {
                 eprintln!("[AUDIO] Failed to create audio stream: {}", e);
@@ -407,6 +429,22 @@ impl HtrkApp {
         }
     }
 
+    fn apply_audio_settings_to_engine(&mut self) {
+        let interp = match self.config.default_interpolation.as_str() {
+            "Nearest" => crate::audio::commands::InterpolationType::Nearest,
+            "Cubic" => crate::audio::commands::InterpolationType::Cubic,
+            _ => crate::audio::commands::InterpolationType::Linear,
+        };
+        self.send_command(crate::audio::commands::AudioCommand::SetInterpolation(interp));
+
+        let limiter = match self.config.limiter_mode.as_str() {
+            "SoftKnee" => crate::audio::commands::LimiterMode::SoftKnee,
+            "SoftKneeSmooth" => crate::audio::commands::LimiterMode::SoftKneeSmooth,
+            _ => crate::audio::commands::LimiterMode::HardClip,
+        };
+        self.send_command(crate::audio::commands::AudioCommand::SetLimiterMode(limiter));
+    }
+
     fn apply_config_to_live_state(&mut self) {
         self.follow_playback = self.config.follow_playback_default;
         self.amplify_factor = self.config.default_amplify_factor;
@@ -415,6 +453,12 @@ impl HtrkApp {
             self.theme = TrackerTheme::from_preset(preset);
         }
         self.file_browser.restore_last_dirs(&self.config);
+
+        self.apply_audio_settings_to_engine();
+
+        // Apply debug logging
+        let config_dir = crate::app_config::AppConfig::config_dir();
+        crate::debug_log::init(self.config.debug, config_dir);
     }
 
     fn load_file(&mut self, path: &str) {
@@ -668,6 +712,14 @@ impl HtrkApp {
                             }
                             egui::Key::I => {
                                 self.file_browser.open(BrowserMode::Samples);
+                                handled = true;
+                            }
+                            egui::Key::ArrowRight => {
+                                self.step_sub_column_forward();
+                                handled = true;
+                            }
+                            egui::Key::ArrowLeft => {
+                                self.step_sub_column_backward();
                                 handled = true;
                             }
                             _ => {}
@@ -980,6 +1032,17 @@ impl HtrkApp {
         });
     }
 
+    fn preview_note(&mut self, note_key: u8) {
+        let vol = 0.75;
+        let sample_idx = self.selected_sample;
+        self.send_command(crate::audio::commands::AudioCommand::TriggerPreviewNote {
+            sample_index: sample_idx,
+            note_key,
+            volume: vol,
+            panning: 0.5,
+        });
+    }
+
     fn handle_text_input(&mut self, ch: char) {
         if self.current_pattern().is_none() {
             return;
@@ -989,7 +1052,9 @@ impl HtrkApp {
             for (key, tone) in NOTE_KEYS_LOWER.iter() {
                 let key_char = key.name();
                 if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
-                    let note = Note::On(self.current_octave as u8 * 12 + tone);
+                    let note_key = self.current_octave as u8 * 12 + tone;
+                    self.preview_note(note_key);
+                    let note = Note::On(note_key);
                     let mut new_cell = self.get_cell_at_cursor();
                     new_cell.note = note;
                     self.set_cell_at_cursor(new_cell);
@@ -1001,7 +1066,9 @@ impl HtrkApp {
             for (key, tone) in NOTE_KEYS_UPPER.iter() {
                 let key_char = key.name();
                 if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
-                    let note = Note::On((self.current_octave as u8 + 1) * 12 + tone);
+                    let note_key = (self.current_octave as u8 + 1) * 12 + tone;
+                    self.preview_note(note_key);
+                    let note = Note::On(note_key);
                     let mut new_cell = self.get_cell_at_cursor();
                     new_cell.note = note;
                     self.set_cell_at_cursor(new_cell);
@@ -1114,26 +1181,32 @@ impl HtrkApp {
     }
 
     fn move_cursor_right(&mut self) {
-        if let Some(next) = self.cursor.sub_column.next() {
-            self.cursor.sub_column = next;
-        } else {
-            let num_ch = self.num_channels();
-            if self.cursor.channel < num_ch - 1 {
-                self.cursor.channel += 1;
-                self.cursor.sub_column = SubColumn::Note;
-            }
+        let num_ch = self.num_channels();
+        if self.cursor.channel < num_ch - 1 {
+            self.cursor.channel += 1;
+            self.cursor.sub_column = SubColumn::Note;
         }
         self.ensure_cursor_visible();
     }
 
     fn move_cursor_left(&mut self) {
-        if let Some(prev) = self.cursor.sub_column.prev() {
-            self.cursor.sub_column = prev;
-        } else if self.cursor.channel > 0 {
+        if self.cursor.channel > 0 {
             self.cursor.channel -= 1;
-            self.cursor.sub_column = SubColumn::EffectParamLow;
+            self.cursor.sub_column = SubColumn::Note;
         }
         self.ensure_cursor_visible();
+    }
+
+    fn step_sub_column_forward(&mut self) {
+        if let Some(next) = self.cursor.sub_column.next() {
+            self.cursor.sub_column = next;
+        }
+    }
+
+    fn step_sub_column_backward(&mut self) {
+        if let Some(prev) = self.cursor.sub_column.prev() {
+            self.cursor.sub_column = prev;
+        }
     }
 
     fn extend_selection_down(&mut self) {
@@ -1608,6 +1681,10 @@ impl HtrkApp {
         let state_arc = self.wav_export_state.state_arc();
         let cancel_arc = self.wav_export_state.cancel_arc();
 
+        // Extract config values before the move closure
+        let interp_str = self.config.default_interpolation.clone();
+        let limiter_str = self.config.limiter_mode.clone();
+
         self.wav_export_state.start_export();
 
         std::thread::spawn(move || {
@@ -1632,7 +1709,18 @@ impl HtrkApp {
             match result {
                 Ok(mut writer) => {
                     let mut renderer = WavRenderer::new(module, sample_rate);
-                    renderer.set_interpolation(crate::audio::commands::InterpolationType::Linear);
+                    let interp = match interp_str.as_str() {
+                        "Nearest" => crate::audio::commands::InterpolationType::Nearest,
+                        "Cubic" => crate::audio::commands::InterpolationType::Cubic,
+                        _ => crate::audio::commands::InterpolationType::Linear,
+                    };
+                    renderer.set_interpolation(interp);
+                    let limiter = match limiter_str.as_str() {
+                        "SoftKnee" => crate::audio::commands::LimiterMode::SoftKnee,
+                        "SoftKneeSmooth" => crate::audio::commands::LimiterMode::SoftKneeSmooth,
+                        _ => crate::audio::commands::LimiterMode::HardClip,
+                    };
+                    renderer.set_limiter_mode(limiter);
                     renderer.set_channels(settings.channel_mode == crate::ui::wav_export_window::ChannelMode::Stereo);
 
                     let render_result = renderer.render_with_settings(
@@ -2453,8 +2541,6 @@ impl eframe::App for HtrkApp {
                 self.follow_playback,
                 self.theme_preset,
                 &self.theme,
-                &self.output_device_names,
-                self.selected_device_name.as_deref(),
                 self.current_sample_rate,
                 &self.current_sample_format,
             );
@@ -2519,12 +2605,6 @@ impl eframe::App for HtrkApp {
                 self.config.theme_preset = preset.config_key().to_string();
                 self.config.save();
             }
-            if menu_resp.refresh_devices {
-                self.refresh_output_devices();
-            }
-            if let Some(device_name) = menu_resp.select_device {
-                self.pending_device_switch = Some(device_name);
-            }
             if menu_resp.show_shortcuts {
                 self.show_shortcuts = true;
             }
@@ -2539,6 +2619,14 @@ impl eframe::App for HtrkApp {
 
         if let Some(device_name) = self.pending_device_switch.take() {
             self.switch_output_device(device_name);
+        }
+        if self.pending_reinit {
+            self.pending_reinit = false;
+            if self.stream.is_some() {
+                self.stream = None;
+                self.command_sender = None;
+                self.init_audio();
+            }
         }
 
         egui::TopBottomPanel::top("transport_bar").show(ctx, |ui| {
@@ -2839,15 +2927,27 @@ impl eframe::App for HtrkApp {
         }
 
         if self.settings_state.open {
-            let action = crate::ui::settings_window::draw_settings_window(ctx, &mut self.settings_state);
+            let action = crate::ui::settings_window::draw_settings_window(
+                ctx,
+                &mut self.settings_state,
+                &self.output_device_names,
+                self.selected_device_name.as_deref(),
+            );
             match action {
                 crate::ui::settings_window::SettingsAction::Save | crate::ui::settings_window::SettingsAction::Apply => {
                     self.settings_state.apply_to_config(&mut self.config);
                     self.config.save();
                     self.apply_config_to_live_state();
+                    self.pending_reinit = true;
                 }
                 crate::ui::settings_window::SettingsAction::Cancel => {
                     self.settings_state = crate::ui::settings_window::SettingsState::from_config(&self.config);
+                }
+                crate::ui::settings_window::SettingsAction::RefreshDevices => {
+                    self.refresh_output_devices();
+                }
+                crate::ui::settings_window::SettingsAction::SelectDevice(name) => {
+                    self.pending_device_switch = Some(name);
                 }
                 crate::ui::settings_window::SettingsAction::None => {}
             }
@@ -2865,7 +2965,7 @@ impl eframe::App for HtrkApp {
                 .default_width(350.0)
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
-                        ui.heading("htrk v0.3.0");
+                        ui.heading("htrk v0.5.0");
                         ui.add_space(8.0);
                         ui.label("A modern tracker / music sequencer");
                         ui.add_space(4.0);

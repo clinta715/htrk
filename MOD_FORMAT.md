@@ -115,7 +115,7 @@ Finetune adjusts these values. There are 16 finetune settings (tuning 0-7 and -1
 | A   | Volume Slide      | Adjust volume up/down                         |
 | B   | Position Jump     | Jump to song position                          |
 | C   | Set Volume        | Set channel volume (0-64)                     |
-| D   | Pattern Break     | Break to next pattern at row                  |
+| D   | Pattern Break     | Break to next pattern at row (BCD: D13 → row 13) |
 | E   | Extended          | Sub-commands E0-EF                            |
 | F   | Set Speed         | Set speed (1-31) or BPM (32-255)              |
 

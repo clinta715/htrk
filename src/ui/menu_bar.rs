@@ -24,8 +24,7 @@ pub struct MenuResponse {
     pub delete_column: bool,
     pub follow_playback: bool,
     pub theme_changed: Option<ThemePreset>,
-    pub refresh_devices: bool,
-    pub select_device: Option<String>,
+
     pub show_shortcuts: bool,
     pub show_about: bool,
     pub show_settings: bool,
@@ -55,8 +54,7 @@ impl Default for MenuResponse {
             delete_column: false,
             follow_playback: false,
             theme_changed: None,
-            refresh_devices: false,
-            select_device: None,
+
             show_shortcuts: false,
             show_about: false,
             show_settings: false,
@@ -72,8 +70,6 @@ pub fn draw_menu_bar(
     follow_playback: bool,
     current_theme: ThemePreset,
     _theme: &TrackerTheme,
-    output_device_names: &[String],
-    selected_device_name: Option<&str>,
     sample_rate: u32,
     sample_format: &str,
 ) -> MenuResponse {
@@ -220,24 +216,7 @@ pub fn draw_menu_bar(
 
         ui.menu_button("Audio", |ui| {
             ui.label(format!("Rate: {} Hz  Format: {}", sample_rate, sample_format));
-            ui.separator();
-            for name in output_device_names {
-                let is_current = selected_device_name == Some(name.as_str());
-                let label = if is_current {
-                    format!("> {}", name)
-                } else {
-                    format!("  {}", name)
-                };
-                if ui.button(&label).clicked() {
-                    resp.select_device = Some(name.clone());
-                    ui.close_menu();
-                }
-            }
-            ui.separator();
-            if ui.button("Refresh Devices").clicked() {
-                resp.refresh_devices = true;
-                ui.close_menu();
-            }
+            ui.label("Device selection is in Settings (F10)");
         });
 
         ui.menu_button("Help", |ui| {

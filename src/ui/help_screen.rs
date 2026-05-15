@@ -21,11 +21,13 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                     ui.columns(2, |columns| {
                         columns[0].vertical(|ui| {
                             section_header(ui, "NAVIGATION");
-                            shortcut_row(ui, "Arrow Keys", "Move cursor");
-                            shortcut_row(ui, "Shift + Arrow", "Extend selection");
-                            shortcut_row(ui, "Alt + Up/Down", "Transpose ±1 semitone");
+                            shortcut_row(ui, "Up/Down", "Move cursor between rows");
+                            shortcut_row(ui, "Left/Right", "Move cursor between channels");
+                            shortcut_row(ui, "Ctrl+Left/Right", "Step through sub-columns");
+                            shortcut_row(ui, "Shift+Up/Down", "Extend selection vertically");
+                            shortcut_row(ui, "Shift+Left/Right", "Extend selection by channel");
+                            shortcut_row(ui, "Alt+Up/Down", "Transpose ±1 semitone");
                             shortcut_row(ui, "Tab / Shift+Tab", "Next / prev channel");
-                            shortcut_row(ui, "Alt+Left/Right", "Skip to prev/next channel");
                             shortcut_row(ui, "- / =", "Prev / next pattern");
                             shortcut_row(ui, "[ / ]", "Prev / next pattern");
                             shortcut_row(ui, "PgUp / PgDn", "Scroll 16 rows");
@@ -71,7 +73,6 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             shortcut_row(ui, "F2", "Toggle record mode");
                             shortcut_row(ui, "Alt+M", "Toggle mute channel");
                             shortcut_row(ui, "Alt+S", "Toggle solo channel");
-                            shortcut_row(ui, "Alt+Left/Right", "Skip to prev/next channel");
                             ui.add_space(8.0);
 
                             section_header(ui, "IT-STYLE FEATURES");
@@ -103,6 +104,18 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             shortcut_row(ui, ". (other cols)", "Clear field value");
                             shortcut_row(ui, "0-9 on Instr/Vol", "Decimal entry");
                             shortcut_row(ui, "0-9 A-F on Fx", "Hex entry");
+                            ui.add_space(4.0);
+                            section_header(ui, "AUDIO PREVIEW");
+                            shortcut_row(ui, "Qwerty keys (Note col)", "Play selected sample at pitch");
+                            ui.add_space(8.0);
+
+                            section_header(ui, "SETTINGS (F10)");
+                            shortcut_row(ui, "Paths", "Default sample/directory paths");
+                            shortcut_row(ui, "Editor", "Font, zoom, highlights, etc.");
+                            shortcut_row(ui, "Audio", "Device, interpolation, limiter, sample rate");
+                            shortcut_row(ui, "Backup", "Auto-backup interval & directory");
+                            shortcut_row(ui, "Theme", "Visual theme selection");
+                            shortcut_row(ui, "Advanced", "Debug logging toggle");
                             ui.add_space(8.0);
 
                             section_header(ui, "EFFECT COMMANDS");
@@ -125,7 +138,7 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                     ui.add_space(10.0);
                     ui.separator();
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new("HTRK - A Modern Music Tracker").italics().color(egui::Color32::GRAY));
+                    ui.label(egui::RichText::new("htrk v0.5.0 — A Modern Music Tracker").italics().color(egui::Color32::GRAY));
                 });
         });
 }

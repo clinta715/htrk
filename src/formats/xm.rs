@@ -762,13 +762,11 @@ fn decode_xm_volume_column(vol: u8) -> Effect {
         let pan_val = ((vol - 0xC0) as u16 * 255 / 15) as u8;
         return Effect::SetPanning { pan: pan_val };
     }
-    if vol >= 0xD0 && vol <= 0xEF {
-        // 0xD0-0xDF = pan slide left, 0xE0-0xEF = pan slide right
-        // No Effect variant exists for continuous pan slides;
-        // handled via vol_kol in the XM sequencer path
-        return Effect::None;
-    }
-    if vol >= 0xF0 {
+    if vol >= 0xD0 && vol <= 0xDF {
+        return Effect::PanningSlide { speed: -((vol - 0xD0) as i8) };
+    } else if vol >= 0xE0 && vol <= 0xEF {
+        return Effect::PanningSlide { speed: (vol - 0xE0) as i8 };
+    } else if vol >= 0xF0 {
         return Effect::TonePortamento { speed: vol - 0xF0 };
     }
 
@@ -829,9 +827,10 @@ fn decode_xm_effect(fx: u8, param: u8, has_param: bool) -> Effect {
             up: (param >> 4) as i8,
             down: -((param & 0x0F) as i8),
         },
+        0x12 => Effect::FormatSpecific(FormatEffect::Xm(XmEffect::KeyOff { fade_rate: param })),
+        0x13 => Effect::SetEnvelopePosition { tick: param as u16 },
         0x14 => Effect::NoteCutAfter { ticks: param },
         0x15 => Effect::NoteDelay { ticks: param },
-        0x12 => Effect::FormatSpecific(FormatEffect::Xm(XmEffect::KeyOff { fade_rate: param })),
         0x19 => Effect::Panbrello {
             speed: param >> 4,
             depth: param & 0x0F,
@@ -1083,6 +1082,15 @@ fn encode_xm_volume_column(effect: &Effect) -> u8 {
             let v = (*pan as u16 * 15 / 255) as u8;
             0xC0 + v.min(15)
         }
+        Effect::PanningSlide { speed } => {
+            if *speed < 0 {
+                0xD0 | (-*speed as u8).min(15)
+            } else if *speed > 0 {
+                0xE0 | (*speed as u8).min(15)
+            } else {
+                0
+            }
+        }
         _ => 0,
     }
 }
@@ -1118,7 +1126,17 @@ fn encode_xm_effect(effect: &Effect) -> (u8, u8) {
         }
         Effect::NoteCutAfter { ticks } => (0x14, *ticks),
         Effect::NoteDelay { ticks } => (0x15, *ticks),
+        Effect::SetEnvelopePosition { tick } => (0x13, (*tick).min(255) as u8),
         Effect::Panbrello { speed, depth } => (0x19, (speed << 4) | depth),
+        Effect::PanningSlide { speed } => {
+            if *speed < 0 {
+                (0, (0xD0 | (-*speed as u8).min(15)))
+            } else if *speed > 0 {
+                (0, (0xE0 | (*speed as u8).min(15)))
+            } else {
+                (0, 0)
+            }
+        }
         Effect::FinePortamentoUp { speed } => (0xE, 0x10 | (speed >> 4).min(0x0F) as u8),
         Effect::FinePortamentoDown { speed } => (0xE, 0x20 | (speed >> 4).min(0x0F) as u8),
         Effect::GlissandoControl { on } => (0xE, if *on { 0x31 } else { 0x30 }),
@@ -1396,10 +1414,17 @@ mod tests {
 
     #[test]
     fn decode_xm_volume_column_portamento() {
-        // 0xD0-0xDF = pan slide left (vol_kol handled), returns None
-        assert_eq!(decode_xm_volume_column(0xD5), Effect::None);
-        // 0xF0-0xFF = tone portamento (fixed from old PortamentoDown bug)
         assert_eq!(decode_xm_volume_column(0xF5), Effect::TonePortamento { speed: 5 });
+    }
+
+    #[test]
+    fn decode_xm_volume_column_pan_slide() {
+        assert_eq!(decode_xm_volume_column(0xD0), Effect::PanningSlide { speed: 0 });
+        assert_eq!(decode_xm_volume_column(0xD5), Effect::PanningSlide { speed: -5 });
+        assert_eq!(decode_xm_volume_column(0xDF), Effect::PanningSlide { speed: -15 });
+        assert_eq!(decode_xm_volume_column(0xE0), Effect::PanningSlide { speed: 0 });
+        assert_eq!(decode_xm_volume_column(0xE5), Effect::PanningSlide { speed: 5 });
+        assert_eq!(decode_xm_volume_column(0xEF), Effect::PanningSlide { speed: 15 });
     }
 
     #[test]
@@ -1426,6 +1451,11 @@ mod tests {
     #[test]
     fn decode_xm_effect_pattern_break() {
         assert_eq!(decode_xm_effect(0xD, 0x23, true), Effect::PatternBreak { row: 23 });
+    }
+
+    #[test]
+    fn decode_xm_effect_envelope_position() {
+        assert_eq!(decode_xm_effect(0x13, 0x20, true), Effect::SetEnvelopePosition { tick: 0x20 });
     }
 
     #[test]
@@ -1510,5 +1540,24 @@ mod tests {
         let vol = encode_xm_volume_column(&Effect::VolSetVolume { vol: 64 });
         assert_eq!(vol, 0x50);
         assert_eq!(decode_xm_volume_column(vol), Effect::VolSetVolume { vol: 64 });
+    }
+
+    #[test]
+    fn encode_decode_panning_slide_roundtrip() {
+        let (fx, param) = encode_xm_effect(&Effect::PanningSlide { speed: -5 });
+        assert_eq!(fx, 0);
+        assert_eq!(param, 0xD5);
+        assert_eq!(decode_xm_volume_column(0xD5), Effect::PanningSlide { speed: -5 });
+
+        let vol = encode_xm_volume_column(&Effect::PanningSlide { speed: 5 });
+        assert_eq!(vol, 0xE5);
+        assert_eq!(decode_xm_volume_column(0xE5), Effect::PanningSlide { speed: 5 });
+    }
+
+    #[test]
+    fn encode_decode_envelope_position() {
+        let (fx, param) = encode_xm_effect(&Effect::SetEnvelopePosition { tick: 32 });
+        assert_eq!(fx, 0x13);
+        assert_eq!(param, 32);
     }
 }

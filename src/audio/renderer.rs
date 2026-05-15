@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use crate::audio::commands::InterpolationType;
+use crate::audio::commands::{InterpolationType, LimiterMode};
 use crate::audio::mixer;
 use crate::audio::sequencer_engine::SequencerEngine;
 use crate::sequencer::Module;
@@ -10,6 +10,8 @@ pub struct WavRenderer {
     sequencer: SequencerEngine,
     sample_rate: u32,
     interpolation: InterpolationType,
+    limiter_mode: LimiterMode,
+    limiter_gain: f32,
     master_volume: f32,
     stereo: bool,
 }
@@ -23,6 +25,8 @@ impl WavRenderer {
             sequencer,
             sample_rate,
             interpolation: InterpolationType::Linear,
+            limiter_mode: LimiterMode::HardClip,
+            limiter_gain: 1.0,
             master_volume: 0.5,
             stereo: true,
         }
@@ -34,6 +38,11 @@ impl WavRenderer {
 
     pub fn set_master_volume(&mut self, volume: f32) {
         self.master_volume = volume;
+    }
+
+    pub fn set_limiter_mode(&mut self, mode: LimiterMode) {
+        self.limiter_mode = mode;
+        self.limiter_gain = 1.0;
     }
 
     pub fn set_channels(&mut self, stereo: bool) {
@@ -111,7 +120,17 @@ impl WavRenderer {
                 samples_done += chunk;
             }
 
-            mixer::buffer_wide_limit(&mut left, &mut right);
+            match self.limiter_mode {
+                LimiterMode::HardClip => {
+                    mixer::buffer_wide_limit(&mut left, &mut right);
+                }
+                LimiterMode::SoftKnee => {
+                    mixer::soft_knee_limit(&mut left, &mut right);
+                }
+                LimiterMode::SoftKneeSmooth => {
+                    mixer::soft_knee_limit_smoothed(&mut left, &mut right, &mut self.limiter_gain);
+                }
+            }
 
             match bit_depth {
                 BitDepth::Bits8 => {

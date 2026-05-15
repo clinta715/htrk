@@ -206,7 +206,7 @@ fn convert_effect_pt(effect_code: u8, effect_param: u8) -> Effect {
             volume: effect_param.min(64),
         },
         0xD => {
-            let row = effect_param;
+            let row = ((effect_param >> 4) * 10) + (effect_param & 0x0F);
             Effect::PatternBreak { row }
         }
         0xE => {
@@ -313,7 +313,7 @@ impl FormatHandler for ModHandler {
         let order_list: Vec<u8> = data[952..1080]
             .iter()
             .take(song_length)
-            .filter(|&&o| o != 0xFF)
+            .take_while(|&&o| o != 0xFF)
             .copied()
             .collect();
 
@@ -466,7 +466,7 @@ impl FormatHandler for ModHandler {
             mod_samples.into_iter().enumerate()
         {
             let sample_offset = sample_offsets[i];
-            let mut sample_data = if length_bytes > 0 && sample_offset + length_bytes <= data.len() {
+            let sample_data = if length_bytes > 0 && sample_offset + length_bytes <= data.len() {
                 data[sample_offset..sample_offset + length_bytes]
                     .iter()
                     .map(|&b| b as i8 as f32 / 128.0)
@@ -474,11 +474,6 @@ impl FormatHandler for ModHandler {
             } else {
                 Vec::new()
             };
-
-            if loop_type == LoopType::None && sample_data.len() >= 2 {
-                sample_data[0] = 0.0;
-                sample_data[1] = 0.0;
-            }
 
             let fine_tune = match variant {
                 ModMagic::NoiseTracker => decode_finetune_noisetracker(finetune_raw),
@@ -507,7 +502,7 @@ impl FormatHandler for ModHandler {
             samples.push(sample);
 
             let sample_idx = (i + 1) as u8;
-            let mut inst = Instrument {
+            let inst = Instrument {
                 name: sample_name,
                 sample_map: [sample_idx; 120],
                 ..Instrument::default()
@@ -701,7 +696,10 @@ mod tests {
 
     #[test]
     fn convert_effect_pattern_break() {
-        assert_eq!(convert_effect(0xD, 0x13, ModMagic::Standard), Effect::PatternBreak { row: 19 });
+        assert_eq!(convert_effect(0xD, 0x13, ModMagic::Standard), Effect::PatternBreak { row: 13 });
+        assert_eq!(convert_effect(0xD, 0x00, ModMagic::Standard), Effect::PatternBreak { row: 0 });
+        assert_eq!(convert_effect(0xD, 0x32, ModMagic::Standard), Effect::PatternBreak { row: 32 });
+        assert_eq!(convert_effect(0xD, 0x63, ModMagic::Standard), Effect::PatternBreak { row: 63 });
     }
 
     #[test]
@@ -764,15 +762,10 @@ mod tests {
         assert_eq!(module.samples[1].default_volume, 48);
         assert_eq!(module.samples[1].data.len(), 4);
 
-        let expected: Vec<f32> = {
-            let mut v: Vec<f32> = sample_data
-                .iter()
-                .map(|&b| (b as i8 as f32) / 128.0)
-                .collect();
-            v[0] = 0.0;
-            v[1] = 0.0;
-            v
-        };
+        let expected: Vec<f32> = sample_data
+            .iter()
+            .map(|&b| (b as i8 as f32) / 128.0)
+            .collect();
         assert_eq!(*module.samples[1].data, expected);
     }
 
@@ -950,10 +943,8 @@ mod tests {
         let handler = ModHandler;
         let module = handler.load(&data).unwrap();
 
-        assert_eq!(module.samples[1].data[0], 0.0);
-        assert_eq!(module.samples[1].data[1], 0.0);
-        assert!(module.samples[1].data[2] != 0.0);
-        assert!(module.samples[1].data[3] != 0.0);
+        assert!((module.samples[1].data[0] - 0.5).abs() < 0.001);
+        assert!((module.samples[1].data[1] - 0.75).abs() < 0.001);
     }
 
     #[test]

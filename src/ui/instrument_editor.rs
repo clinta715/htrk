@@ -248,10 +248,15 @@ pub fn draw_instrument_editor(
 
                 // ---- Bottom properties: two rows ----
                 // Row 1: NNA/DC + Volumes + Vibrato
-                ui.horizontal(|ui| {
-                    ui.group(|ui| {
-                        ui.set_min_width(280.0);
-                        ui.heading("NNAs & Duplicate Check");
+                ui.add_space(4.0);
+                egui::ScrollArea::horizontal()
+                    .id_salt("instrument_editor_bottom_row1")
+                    .max_height(110.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.group(|ui| {
+                            ui.heading("NNAs & Duplicate Check");
                         egui::Grid::new(format!("instrument_nna_{}", *selected_instrument)).show(ui, |ui| {
                             ui.label("NNA:");
                             ui.horizontal(|ui| {
@@ -434,11 +439,18 @@ pub fn draw_instrument_editor(
                         });
                     });
                 });
+                });
 
                 // Row 2: Sample Map + Note Map
-                ui.horizontal(|ui| {
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
+                ui.add_space(4.0);
+                egui::ScrollArea::horizontal()
+                    .id_salt("instrument_editor_bottom_row2")
+                    .max_height(200.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.group(|ui| {
+                            ui.horizontal(|ui| {
                             ui.label("Paint Sample:");
                             if ui.button("Browse...").clicked() {
                                 browser_open = true;
@@ -481,6 +493,7 @@ pub fn draw_instrument_editor(
                             }
                         }
                     });
+                });
                 });
             });
         } else {
