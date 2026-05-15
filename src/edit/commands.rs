@@ -32,7 +32,8 @@ pub struct SetCellCommand {
 impl EditCommand for SetCellCommand {
     fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
+        let pattern = module.patterns.get(pat_idx).ok_or(EditError::NoSelection)?;
+        if self.row >= pattern.num_rows || self.channel >= crate::sequencer::pattern::MAX_CHANNELS {
             return Err(EditError::NoSelection);
         }
         module.patterns[pat_idx].data[self.row][self.channel] = self.new_cell;
@@ -41,7 +42,8 @@ impl EditCommand for SetCellCommand {
 
     fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
+        let pattern = module.patterns.get(pat_idx).ok_or(EditError::NoSelection)?;
+        if self.row >= pattern.num_rows || self.channel >= crate::sequencer::pattern::MAX_CHANNELS {
             return Err(EditError::NoSelection);
         }
         module.patterns[pat_idx].data[self.row][self.channel] = self.old_cell;
@@ -908,6 +910,46 @@ impl EditCommand for InterpolateCommand {
 
     fn description(&self) -> &str {
         "Interpolate"
+    }
+}
+
+pub struct BulkSetCellsCommand {
+    pub order: usize,
+    pub old_cells: Vec<(usize, usize, Cell)>,
+    pub new_cells: Vec<(usize, usize, Cell)>,
+}
+
+impl EditCommand for BulkSetCellsCommand {
+    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
+        if pat_idx >= module.patterns.len() {
+            return Err(EditError::NoSelection);
+        }
+        let num_rows = module.patterns[pat_idx].num_rows;
+        for &(row, ch, cell) in &self.new_cells {
+            if row < num_rows && ch < crate::sequencer::pattern::MAX_CHANNELS {
+                module.patterns[pat_idx].data[row][ch] = cell;
+            }
+        }
+        Ok(())
+    }
+
+    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
+        if pat_idx >= module.patterns.len() {
+            return Err(EditError::NoSelection);
+        }
+        let num_rows = module.patterns[pat_idx].num_rows;
+        for &(row, ch, cell) in &self.old_cells {
+            if row < num_rows && ch < crate::sequencer::pattern::MAX_CHANNELS {
+                module.patterns[pat_idx].data[row][ch] = cell;
+            }
+        }
+        Ok(())
+    }
+
+    fn description(&self) -> &str {
+        "Bulk Set Cells"
     }
 }
 

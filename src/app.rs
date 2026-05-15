@@ -621,7 +621,7 @@ impl HtrkApp {
 
     fn advance_cursor_down(&mut self, step: usize) {
         if let Some(pattern) = self.current_pattern() {
-            let max_row = pattern.num_rows;
+            let max_row = pattern.num_rows.max(1);
             self.cursor.row = (self.cursor.row + step).min(max_row - 1);
         }
         self.ensure_cursor_visible();
@@ -1511,43 +1511,96 @@ impl HtrkApp {
     }
 
     fn delete_selection(&mut self) {
-        if let Some(sel) = &self.selection {
-            let (min, max) = sel.normalized();
-            for row in min.row..=max.row {
-                for ch in min.channel..=max.channel {
-                    let cursor = CursorPosition {
-                        row,
-                        channel: ch,
-                        sub_column: SubColumn::Note,
-                    };
-                    let old_cursor = self.cursor;
-                    self.cursor = cursor;
-                    self.clear_cell_at_cursor();
-                    self.cursor = old_cursor;
+        let sel = match &self.selection {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        let (min, max) = sel.normalized();
+        let selected_order = self.selected_order;
+
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
+                if pat_idx >= arc_module.patterns.len() {
+                    return;
+                }
+                let pattern = &arc_module.patterns[pat_idx];
+                let mut old_cells = Vec::new();
+                let mut new_cells = Vec::new();
+                for row in min.row..=max.row {
+                    for ch in min.channel..=max.channel {
+                        if row < pattern.num_rows && ch < crate::sequencer::pattern::MAX_CHANNELS {
+                            let old = pattern.data[row][ch];
+                            if !old.is_empty() {
+                                old_cells.push((row, ch, old));
+                                new_cells.push((row, ch, Cell::default()));
+                            }
+                        }
+                    }
+                }
+                if !old_cells.is_empty() {
+                    let cmd = Box::new(crate::edit::BulkSetCellsCommand {
+                        order: selected_order,
+                        old_cells,
+                        new_cells,
+                    });
+                    let _ = self.undo_manager.execute(cmd, arc_module);
                 }
             }
         }
+        self.sync_module_to_audio();
     }
 
     fn paste_at_cursor(&mut self) {
         let clipboard = self.clipboard.clone();
-        if let Some(ref clipboard_data) = clipboard {
-            for (row_offset, row_data) in clipboard_data.iter().enumerate() {
-                let target_row = self.cursor.row + row_offset;
-                for (ch_offset, cell) in row_data.iter().enumerate() {
-                    let target_ch = self.cursor.channel + ch_offset;
-                    let cursor = CursorPosition {
-                        row: target_row,
-                        channel: target_ch,
-                        sub_column: SubColumn::Note,
-                    };
-                    let old_cursor = self.cursor;
-                    self.cursor = cursor;
-                    self.set_cell_at_cursor(*cell);
-                    self.cursor = old_cursor;
+        let clipboard_data = match &clipboard {
+            Some(d) => d.clone(),
+            None => return,
+        };
+        let selected_order = self.selected_order;
+        let cursor_row = self.cursor.row;
+        let cursor_ch = self.cursor.channel;
+
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
+                if pat_idx >= arc_module.patterns.len() {
+                    return;
+                }
+                let pattern = &arc_module.patterns[pat_idx];
+                let mut old_cells = Vec::new();
+                let mut new_cells = Vec::new();
+                for (row_offset, row_data) in clipboard_data.iter().enumerate() {
+                    let target_row = cursor_row + row_offset;
+                    if target_row >= pattern.num_rows {
+                        continue;
+                    }
+                    for (ch_offset, cell) in row_data.iter().enumerate() {
+                        let target_ch = cursor_ch + ch_offset;
+                        if target_ch >= crate::sequencer::pattern::MAX_CHANNELS {
+                            continue;
+                        }
+                        if cell.is_empty() {
+                            continue;
+                        }
+                        let old = pattern.data[target_row][target_ch];
+                        old_cells.push((target_row, target_ch, old));
+                        new_cells.push((target_row, target_ch, *cell));
+                    }
+                }
+                if !old_cells.is_empty() {
+                    let cmd = Box::new(crate::edit::BulkSetCellsCommand {
+                        order: selected_order,
+                        old_cells,
+                        new_cells,
+                    });
+                    let _ = self.undo_manager.execute(cmd, arc_module);
                 }
             }
         }
+        self.sync_module_to_audio();
     }
 
     fn open_file_dialog(&mut self) {
@@ -2420,66 +2473,13 @@ fn hex_to_effect(d: u8) -> crate::sequencer::Effect {
 }
 
 fn effect_param(effect: &crate::sequencer::Effect) -> u8 {
-    match effect {
-        crate::sequencer::Effect::Arpeggio { note1, note2 } => (*note1 << 4) | note2,
-        crate::sequencer::Effect::PortamentoUp { speed } => *speed,
-        crate::sequencer::Effect::PortamentoDown { speed } => *speed,
-        crate::sequencer::Effect::TonePortamento { speed } => *speed,
-        crate::sequencer::Effect::Vibrato { speed, depth } => (*speed << 4) | depth,
-        crate::sequencer::Effect::VolumeSlide { up, down } => (*up << 4) | down,
-        crate::sequencer::Effect::SetSampleOffset { offset } => *offset as u8,
-        crate::sequencer::Effect::PositionJump { order } => *order,
-        crate::sequencer::Effect::SetVolume { volume } => *volume,
-        crate::sequencer::Effect::PatternBreak { row } => *row,
-        crate::sequencer::Effect::ExtendedEffect { param } => *param,
-        crate::sequencer::Effect::SetSpeed { speed } => *speed,
-        crate::sequencer::Effect::SetTempo { bpm } => *bpm,
-        _ => 0,
-    }
+    crate::sequencer::effect::effect_param_value(effect).unwrap_or(0)
 }
 
 fn set_effect_param(effect: &crate::sequencer::Effect, param: u8) -> crate::sequencer::Effect {
-    match effect {
-        crate::sequencer::Effect::Arpeggio { .. } => crate::sequencer::Effect::Arpeggio {
-            note1: param >> 4,
-            note2: param & 0x0F,
-        },
-        crate::sequencer::Effect::PortamentoUp { .. } => crate::sequencer::Effect::PortamentoUp { speed: param },
-        crate::sequencer::Effect::PortamentoDown { .. } => crate::sequencer::Effect::PortamentoDown { speed: param },
-        crate::sequencer::Effect::TonePortamento { .. } => crate::sequencer::Effect::TonePortamento { speed: param },
-        crate::sequencer::Effect::Vibrato { .. } => crate::sequencer::Effect::Vibrato {
-            speed: param >> 4,
-            depth: param & 0x0F,
-        },
-        crate::sequencer::Effect::VolumeSlide { .. } => crate::sequencer::Effect::VolumeSlide {
-            up: param >> 4,
-            down: param & 0x0F,
-        },
-        crate::sequencer::Effect::SetSampleOffset { .. } => {
-            crate::sequencer::Effect::SetSampleOffset { offset: (param as u16) << 8 }
-        }
-        crate::sequencer::Effect::PositionJump { .. } => crate::sequencer::Effect::PositionJump { order: param },
-        crate::sequencer::Effect::SetVolume { .. } => crate::sequencer::Effect::SetVolume { volume: param },
-        crate::sequencer::Effect::PatternBreak { .. } => crate::sequencer::Effect::PatternBreak { row: param },
-        crate::sequencer::Effect::ExtendedEffect { .. } => {
-            crate::sequencer::Effect::ExtendedEffect { param }
-        }
-        crate::sequencer::Effect::SetSpeed { .. } => {
-            if param < 32 {
-                crate::sequencer::Effect::SetSpeed { speed: param }
-            } else {
-                crate::sequencer::Effect::SetTempo { bpm: param }
-            }
-        }
-        crate::sequencer::Effect::SetTempo { .. } => {
-            if param < 32 {
-                crate::sequencer::Effect::SetSpeed { speed: param }
-            } else {
-                crate::sequencer::Effect::SetTempo { bpm: param }
-            }
-        }
-        _ => effect.clone(),
-    }
+    let mut fake_cell = crate::sequencer::pattern::Cell::default();
+    fake_cell.effect = *effect;
+    crate::sequencer::effect::set_effect_param_value(fake_cell, param).effect
 }
 
 impl eframe::App for HtrkApp {
@@ -2512,6 +2512,7 @@ impl eframe::App for HtrkApp {
                     if order < module.order_list.len() {
                         self.selected_order = order;
                         self.cursor.row = 0;
+                        self.scroll_row = 0;
                     }
                 }
             }
@@ -2519,11 +2520,10 @@ impl eframe::App for HtrkApp {
 
         if let Some(row) = playback_row {
             if self.follow_playback {
-                if let Some(ref module) = self.module {
+                if let (Some(active_pat), Some(ref module)) = (playback_pattern, self.module.as_ref()) {
                     if !module.order_list.is_empty() {
                         let order_idx = self.selected_order.min(module.order_list.len().saturating_sub(1));
                         let displayed_pat = module.order_list[order_idx] as usize;
-                        let active_pat = playback_pattern.unwrap_or(0);
                         if displayed_pat == active_pat {
                             if row < self.scroll_row {
                                 self.scroll_row = row;
@@ -2970,7 +2970,7 @@ impl eframe::App for HtrkApp {
                 .default_width(350.0)
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
-                        ui.heading("htrk v0.5.0");
+                        ui.heading("htrk v0.6.0");
                         ui.add_space(8.0);
                         ui.label("A modern tracker / music sequencer");
                         ui.add_space(4.0);

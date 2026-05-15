@@ -124,6 +124,9 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             effect_row(ui, "2", "Portamento Down (XX: speed)");
                             effect_row(ui, "3", "Tone Portamento (XX: speed)");
                             effect_row(ui, "4", "Vibrato (XY: speed, depth)");
+                            effect_row(ui, "5", "Tone Porta + Vol Slide (XY)");
+                            effect_row(ui, "6", "Vibrato + Vol Slide (XY)");
+                            effect_row(ui, "7", "Tremolo (XY: speed, depth)");
                             effect_row(ui, "8", "Set Panning (XX: 00-FF)");
                             effect_row(ui, "9", "Set Offset (XX: high byte)");
                             effect_row(ui, "A", "Volume Slide (XY: up, down)");
@@ -132,13 +135,23 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             effect_row(ui, "D", "Pattern Break (XX: row)");
                             effect_row(ui, "E", "Extended Effects (E1, E2...)");
                             effect_row(ui, "F", "Set Speed (XX < 20) / Tempo");
+                            effect_row(ui, "G", "Global Volume (XX)");
+                            effect_row(ui, "H", "Global Vol Slide (XY)");
+                            effect_row(ui, "I", "Tremor (XY: on, off)");
+                            effect_row(ui, "K", "Key Off (XM)");
+                            effect_row(ui, "L", "Envelope Position (XX)");
+                            effect_row(ui, "P", "Panning Slide (XX)");
+                            effect_row(ui, "R", "Filter Resonance (XX)");
+                            effect_row(ui, "X", "Filter Type (XX)");
+                            effect_row(ui, "Y", "Panbrello (XY)");
+                            effect_row(ui, "Z", "Filter Cutoff (XX)");
                         });
                     });
 
                     ui.add_space(10.0);
                     ui.separator();
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new("htrk v0.5.0 — A Modern Music Tracker").italics().color(egui::Color32::GRAY));
+                    ui.label(egui::RichText::new("htrk v0.6.0 — A Modern Music Tracker").italics().color(egui::Color32::GRAY));
                 });
         });
 }

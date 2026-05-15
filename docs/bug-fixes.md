@@ -145,3 +145,53 @@ In pattern 8, row 30 of `cry4bass.mod`, a sample would start looping/retriggerin
 - Added `advance_row_resets_effects` unit test.
 - Added `note_delay_stores_cell` unit test.
 - Verified pattern 8 row 30 data structure in `cry4bass.mod` via `analyze_mod`.
+
+## v0.6.0 — Track Display Loop Blank, Crash Prevention, Effect Editing, Undo Batching
+**Date:** 2026-05-15
+
+### Bug 1: Track data display goes blank when song loops (Loop Blank Fix)
+**Symptom:** When playing through a song in Loop mode, the pattern grid renders empty (no backgrounds, row numbers, or cells) after the song wraps back to order 0.
+
+**Root Cause:** `follow_playback` updated `selected_order` and `cursor.row` to follow the loop, but **did not reset `scroll_row`**. The scroll position stayed at a high value from the previous pattern. A subsequent scroll-adjustment check (`displayed_pat == active_pat`) could fail due to a TOCTOU race between independent atomic reads of `playback_order`, `playback_row`, and `playback_pattern`. When it failed, `scroll_row` was never corrected, and the pattern grid render loop `for row in first_row..last_row` received an empty range because `scroll_row >= pattern.num_rows`.
+
+**Fix:** Added `self.scroll_row = 0;` alongside the existing `self.cursor.row = 0;` in the `follow_playback` block (`src/app.rs:2515`).
+
+### Bug 2: `SetCellCommand` no bounds check (Crash Prevention)
+**Symptom:** `SetCellCommand::execute()` and `undo()` directly indexed `data[row][channel]` without validating that `row < pattern.num_rows` or `channel < MAX_CHANNELS`. This caused panics from `paste_at_cursor`, `delete_selection`, `transpose_selection`, and all context menu block operations.
+
+**Fix:** Added bounds checks in both `execute()` and `undo()` — return `Err(EditError::NoSelection)` if row/channel are out of range (`src/edit/commands.rs:33-53`).
+
+### Bug 3: `advance_cursor_down` usize underflow (Crash Prevention)
+**Symptom:** If a pattern had `num_rows == 0` (possible via pattern resize), the expression `(cursor.row + step).min(max_row - 1)` would underflow, panicking in debug mode.
+
+**Fix:** Used `.max(1)` on `num_rows` before the subtraction (`src/app.rs:625`).
+
+### Bug 4: `delete_selection` created N undo entries (Undo Batching)
+**Symptom:** Deleting a 10×4 selection produced 40 individual `SetCellCommand` undo entries and 40 `LoadModule` messages to the audio engine. Undo after delete only reverted a single cell.
+
+**Fix:** Rewrote `delete_selection` to collect all old cells and push a single `BulkSetCellsCommand`. Added `BulkSetCellsCommand` to commands.rs (`src/app.rs:1513-1537`, `src/edit/commands.rs:909-935`).
+
+### Bug 5: `paste_at_cursor` created N undo entries (Undo Batching)
+**Symptom:** Same as Bug 4 — one undo per pasted cell. Also had no bounds checking on target row/channel, risking panics.
+
+**Fix:** Rewrote `paste_at_cursor` to validate bounds first, skip out-of-range targets, and push a single `BulkSetCellsCommand` (`src/app.rs:1539-1584`).
+
+### Bug 6: `effect_param`/`set_effect_param` only handled 13 of 50+ Effect variants (Effect Editing)
+**Symptom:** Effects like `SetPanning`, `Tremolo`, `SetGlobalVolume`, `Retrigger`, `NoteDelay`, `SetFilterCutoff`, `SetFilterResonance`, `SetFilterType`, `FinePortamento`, `FineVolumeSlide`, `PanningSlide`, `GlobalVolumeSlide`, `PatternDelay`, `Tremor`, and all volume-column effects could not have their parameters edited through the hex input UI. The display always showed "00" and editing silently did nothing.
+
+**Fix:** Expanded `effect_param_value()` and `set_effect_param_value()` in `effect.rs` to handle ALL standard Effect variants with correct nibble splitting where needed (Arpeggio, Vibrato, VolumeSlide, Tremolo, Panbrello, Tremor, etc.). Replaced the standalone app.rs `effect_param()` and `set_effect_param()` functions to delegate to these canonical implementations, eliminating code duplication (`src/sequencer/effect.rs:165-260`, `src/app.rs:2422-2483`).
+
+### Bug 7: `pattern.cell()`/`cell_mut()` no bounds checking (Defensive)
+**Symptom:** Direct array indexing with no debug assertions made it harder to catch out-of-bounds access during development.
+
+**Fix:** Added `debug_assert!` for row and channel bounds in both `cell()` and `cell_mut()` (`src/sequencer/pattern.rs:79-87`).
+
+### Bug 8: Follow-playback scroll could fire without playback guard (Minor)
+**Symptom:** When `playback_pattern` was `None` (playback stopped), the scroll-adjustment code used `unwrap_or(0)`, potentially matching against pattern 0 and scrolling incorrectly.
+
+**Fix:** Guarded the scroll-adjustment block with `if let Some(active_pat) = playback_pattern` (`src/app.rs:2526`).
+
+### Verification
+- Build: `cargo build` passes cleanly.
+- Tests: All 229 unit tests pass.
+- The `BulkSetCellsCommand` and expanded `effect_param_value`/`set_effect_param_value` functions have bounds-safe implementations.

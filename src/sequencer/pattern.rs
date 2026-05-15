@@ -77,11 +77,15 @@ impl Pattern {
     }
 
     pub fn cell(&self, row: usize, channel: usize) -> &Cell {
+        debug_assert!(row < self.num_rows, "cell: row {} out of bounds (max {})", row, self.num_rows);
+        debug_assert!(channel < MAX_CHANNELS, "cell: channel {} out of bounds", channel);
         &self.data[row][channel]
     }
 
     #[allow(dead_code)]
     pub fn cell_mut(&mut self, row: usize, channel: usize) -> &mut Cell {
+        debug_assert!(row < self.num_rows, "cell_mut: row {} out of bounds (max {})", row, self.num_rows);
+        debug_assert!(channel < MAX_CHANNELS, "cell_mut: channel {} out of bounds", channel);
         &mut self.data[row][channel]
     }
 
