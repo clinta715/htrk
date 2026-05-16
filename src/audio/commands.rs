@@ -1,3 +1,4 @@
+use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::module::Module;
 use crate::sequencer::player::PlayMode;
 use std::sync::Arc;
@@ -46,4 +47,5 @@ pub enum AudioCommand {
     SetSendLevel { channel: usize, send_index: usize, level: f32 },
     SetSendReturnLevel { send_index: usize, level: f32 },
     SetSendFxParam { send_index: usize, param: u32, value: f32 },
+    SetSendEffectType { send_index: usize, effect_type: SendEffectType },
 }

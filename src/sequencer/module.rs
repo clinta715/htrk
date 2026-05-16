@@ -1,8 +1,19 @@
+use crate::sequencer::effect::SendEffectType;
+use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::instrument::Instrument;
 use crate::sequencer::pattern::Pattern;
 use crate::sequencer::sample::Sample;
 
+fn default_send_bus_config() -> [SendEffectType; NUM_SEND_BUSES] {
+    [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None]
+}
+
+fn default_send_return_levels() -> [f32; NUM_SEND_BUSES] {
+    [0.5, 0.0, 0.0, 0.0]
+}
+
 pub const MAX_CHANNELS: usize = 64;
+pub const DEFAULT_CHANNELS: usize = 4;
 pub const MAX_VOICES: usize = 256;
 #[allow(dead_code)]
 pub const MAX_PATTERNS: usize = 256;
@@ -94,6 +105,11 @@ pub struct Module {
     pub channel_volume: Vec<u8>,
 
     pub flags: ModuleFlags,
+
+    #[serde(default = "default_send_bus_config")]
+    pub send_bus_config: [SendEffectType; NUM_SEND_BUSES],
+    #[serde(default = "default_send_return_levels")]
+    pub send_return_levels: [f32; NUM_SEND_BUSES],
 }
 
 impl Default for Module {
@@ -112,9 +128,11 @@ impl Default for Module {
             initial_speed: DEFAULT_SPEED,
             initial_global_volume: DEFAULT_GLOBAL_VOLUME,
             initial_mixing_volume: 128,
-            channel_panning: vec![PANNING_CENTER; MAX_CHANNELS],
-            channel_volume: vec![VOLUME_MAX; MAX_CHANNELS],
+            channel_panning: vec![PANNING_CENTER; DEFAULT_CHANNELS],
+            channel_volume: vec![VOLUME_MAX; DEFAULT_CHANNELS],
             flags: ModuleFlags::default(),
+            send_bus_config: [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None],
+            send_return_levels: [0.5, 0.0, 0.0, 0.0],
         }
     }
 }
@@ -132,8 +150,8 @@ mod tests {
         assert_eq!(m.initial_bpm, DEFAULT_BPM);
         assert_eq!(m.initial_speed, DEFAULT_SPEED);
         assert_eq!(m.initial_global_volume, DEFAULT_GLOBAL_VOLUME);
-        assert_eq!(m.channel_panning.len(), MAX_CHANNELS);
-        assert_eq!(m.channel_volume.len(), MAX_CHANNELS);
+        assert_eq!(m.channel_panning.len(), DEFAULT_CHANNELS);
+        assert_eq!(m.channel_volume.len(), DEFAULT_CHANNELS);
     }
 
     #[test]

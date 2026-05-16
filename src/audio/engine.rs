@@ -5,10 +5,13 @@ use ringbuf::{traits::*, HeapRb, HeapCons, HeapProd};
 use crate::audio::commands::{AudioCommand, InterpolationType, LimiterMode};
 use crate::audio::mixer;
 use crate::audio::playback_state::AtomicPlaybackState;
-use crate::audio::playback_state::MAX_CHANNELS;
+use crate::audio::sendfx;
 use crate::audio::sequencer_engine::SequencerEngine;
+use crate::sequencer::effect::SendEffectType;
+use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::module::Module;
 use crate::sequencer::module::COMMAND_BUFFER_SIZE;
+use crate::sequencer::module::DEFAULT_CHANNELS;
 use crate::sequencer::instrument::NewNoteAction;
 use crate::sequencer::note::Note;
 
@@ -29,8 +32,8 @@ pub struct AudioEngine {
     output_channels: u16,
     mix_left: Vec<f32>,
     mix_right: Vec<f32>,
-    ch_mix_left: [Vec<f32>; MAX_CHANNELS],
-    ch_mix_right: [Vec<f32>; MAX_CHANNELS],
+    ch_mix_left: Vec<Vec<f32>>,
+    ch_mix_right: Vec<Vec<f32>>,
     send_buses: Vec<SendBus>,
 }
 
@@ -73,24 +76,23 @@ pub fn create_engine_and_sender(
         output_channels: channels.max(1),
         mix_left: vec![0.0; BUFFER_SIZE],
         mix_right: vec![0.0; BUFFER_SIZE],
-        ch_mix_left: std::array::from_fn(|_| vec![0.0; BUFFER_SIZE]),
-        ch_mix_right: std::array::from_fn(|_| vec![0.0; BUFFER_SIZE]),
-        send_buses: vec![
-            SendBus {
-                buffer_left: vec![0.0; BUFFER_SIZE],
-                buffer_right: vec![0.0; BUFFER_SIZE],
-                return_level: 0.5,
-                pre_fader: false,
-                effect: Some(Box::new(crate::audio::sendfx::DelayEffect::new(sample_rate as f32))),
-            },
-            SendBus {
-                buffer_left: vec![0.0; BUFFER_SIZE],
-                buffer_right: vec![0.0; BUFFER_SIZE],
-                return_level: 0.0,
-                pre_fader: false,
-                effect: Some(Box::new(crate::audio::sendfx::ReverbEffect::new(sample_rate as f32))),
-            },
-        ],
+        ch_mix_left: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
+        ch_mix_right: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
+        send_buses: {
+            let configs = [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None];
+            let returns = [0.5, 0.0, 0.0, 0.0];
+            let mut buses = Vec::with_capacity(NUM_SEND_BUSES);
+            for (i, &effect_type) in configs.iter().enumerate() {
+                buses.push(SendBus {
+                    buffer_left: vec![0.0; BUFFER_SIZE],
+                    buffer_right: vec![0.0; BUFFER_SIZE],
+                    return_level: returns[i],
+                    pre_fader: false,
+                    effect: sendfx::create_send_effect(effect_type, sample_rate as f32),
+                });
+            }
+            buses
+        },
     };
 
     let sender = CommandSender { tx };
@@ -118,7 +120,7 @@ impl AudioEngine {
         if self.mix_left.len() != frame_count {
             self.mix_left.resize(frame_count, 0.0);
             self.mix_right.resize(frame_count, 0.0);
-            for ch in 0..MAX_CHANNELS {
+            for ch in 0..self.ch_mix_left.len() {
                 self.ch_mix_left[ch].resize(frame_count, 0.0);
                 self.ch_mix_right[ch].resize(frame_count, 0.0);
             }
@@ -128,13 +130,24 @@ impl AudioEngine {
             }
         }
 
+        // Ensure ch_mix buffers match sequencer channel count
+        let num_ch = self.sequencer.state.channels.len();
+        while self.ch_mix_left.len() < num_ch {
+            self.ch_mix_left.push(vec![0.0; frame_count]);
+            self.ch_mix_right.push(vec![0.0; frame_count]);
+        }
+        while self.ch_mix_left.len() > num_ch {
+            self.ch_mix_left.pop();
+            self.ch_mix_right.pop();
+        }
+
         for s in self.mix_left.iter_mut() {
             *s = 0.0;
         }
         for s in self.mix_right.iter_mut() {
             *s = 0.0;
         }
-        for ch in 0..MAX_CHANNELS {
+        for ch in 0..num_ch {
             for s in self.ch_mix_left[ch].iter_mut() {
                 *s = 0.0;
             }
@@ -249,6 +262,8 @@ impl AudioEngine {
             }
         }
 
+        self.apply_pending_send_params();
+
         match self.limiter_mode {
             LimiterMode::HardClip => {
                 mixer::buffer_wide_limit(
@@ -324,7 +339,18 @@ impl AudioEngine {
                         (fmt, samples_with_data, order_len, first_order, has_non_empty_pattern)
                     };
                     self.module = Some(module.clone());
-                    self.sequencer.load_module(module);
+                    self.sequencer.load_module(module.clone());
+                    // Rebuild send buses from module config
+                    self.send_buses = module.send_bus_config.iter().enumerate().map(|(i, &effect_type)| {
+                        let bus = SendBus {
+                            buffer_left: vec![0.0; self.mix_left.len().max(BUFFER_SIZE)],
+                            buffer_right: vec![0.0; self.mix_right.len().max(BUFFER_SIZE)],
+                            return_level: module.send_return_levels.get(i).copied().unwrap_or(0.0),
+                            pre_fader: false,
+                            effect: sendfx::create_send_effect(effect_type, self.output_sample_rate as f32),
+                        };
+                        bus
+                    }).collect();
                     #[cfg(feature = "audio_debug")]
                     debug_log!("[AUDIO] Module loaded: format={} {}/{} samples have data, {} instruments, {} patterns ({} rows, non_empty={}), order_list_len={}, first_order={}, BPM={} speed={}",
                         _debug_info.0,
@@ -386,6 +412,11 @@ impl AudioEngine {
                         self.send_buses[send_index].return_level = level;
                     }
                 }
+                AudioCommand::SetSendEffectType { send_index, effect_type } => {
+                    if send_index < self.send_buses.len() {
+                        self.send_buses[send_index].effect = sendfx::create_send_effect(effect_type, self.output_sample_rate as f32);
+                    }
+                }
                 AudioCommand::SetSendFxParam { send_index, param, value } => {
                     if send_index < self.send_buses.len() {
                         if let Some(ref mut fx) = self.send_buses[send_index].effect {
@@ -438,7 +469,8 @@ impl AudioEngine {
         self.playback_state.master_peak_left.store(peak_l.to_bits(), std::sync::atomic::Ordering::Relaxed);
         self.playback_state.master_peak_right.store(peak_r.to_bits(), std::sync::atomic::Ordering::Relaxed);
 
-        let mut ch_peaks = [0.0f32; crate::audio::playback_state::MAX_CHANNELS];
+        let num_ch = self.sequencer.state.channels.len();
+        let mut ch_peaks = vec![0.0f32; num_ch];
         for voice in &self.sequencer.voices {
             if voice.active {
                 if let Some(ch) = voice.channel {
@@ -452,10 +484,12 @@ impl AudioEngine {
             }
         }
         for (ch, peak) in ch_peaks.iter().enumerate() {
-            self.playback_state.channel_peaks[ch].store(peak.to_bits(), std::sync::atomic::Ordering::Relaxed);
+            if ch < crate::audio::playback_state::MAX_CHANNELS {
+                self.playback_state.channel_peaks[ch].store(peak.to_bits(), std::sync::atomic::Ordering::Relaxed);
+            }
         }
 
-        for ch in 0..crate::audio::playback_state::MAX_CHANNELS {
+        for ch in 0..num_ch.min(crate::audio::playback_state::MAX_CHANNELS) {
             self.playback_state.write_channel_scope(
                 ch,
                 &self.ch_mix_left[ch][..frame_count],
@@ -571,6 +605,16 @@ impl AudioEngine {
             NewNoteAction::NoteCut,
             0,
         );
+    }
+
+    fn apply_pending_send_params(&mut self) {
+        for (send_index, param, value) in self.sequencer.pending_send_fx_params.drain(..) {
+            if send_index < self.send_buses.len() {
+                if let Some(ref mut fx) = self.send_buses[send_index].effect {
+                    fx.set_param(param, value);
+                }
+            }
+        }
     }
 }
 

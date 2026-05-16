@@ -22,7 +22,9 @@ use crate::ui::instrument_editor::InstrumentEditEvent;
 use crate::ui::file_browser::{FileBrowser, BrowserMode};
 use crate::formats;
 use crate::sequencer::pattern::Cell;
-use crate::sequencer::{Effect, Module, Note, MAX_CHANNELS};
+use crate::sequencer::effect::NUM_SEND_BUSES;
+use crate::sequencer::effect::SendEffectType;
+use crate::sequencer::{Effect, Module, Note, MAX_CHANNELS, DEFAULT_CHANNELS};
 use crate::ui::pattern_grid::{CursorPosition, Selection, SubColumn, VISIBLE_ROWS};
 use crate::ui::TrackerTheme;
 use crate::ui::theme::ThemePreset;
@@ -129,8 +131,9 @@ pub struct HtrkApp {
     config: AppConfig,
     last_visible_rows: usize,
     last_visible_channels: usize,
-    send_levels: [[f32; 2]; 64],
-    send_bus_params: [[f32; 5]; 2],
+    send_levels: Vec<[f32; 4]>,
+    send_bus_effect_types: [SendEffectType; NUM_SEND_BUSES],
+    send_bus_params: [[f32; 5]; NUM_SEND_BUSES],
 }
 
 impl Default for HtrkApp {
@@ -171,13 +174,13 @@ impl Default for HtrkApp {
             edit_mask_instrument: true,
             edit_mask_volume: true,
             multichannel_enabled: false,
-            multichannel_channels: vec![false; MAX_CHANNELS],
+            multichannel_channels: vec![false; DEFAULT_CHANNELS],
             selected_order: 0,
             selected_sample: 1,
             selected_instrument: 1,
-            muted_channels: vec![false; MAX_CHANNELS],
-            solo_channels: vec![false; MAX_CHANNELS],
-            channel_names: (0..MAX_CHANNELS).map(|i| format!("Ch{}", i + 1)).collect(),
+            muted_channels: vec![false; DEFAULT_CHANNELS],
+            solo_channels: vec![false; DEFAULT_CHANNELS],
+            channel_names: (0..DEFAULT_CHANNELS).map(|i| format!("Ch{}", i + 1)).collect(),
             channel_rename_state: crate::ui::channel_headers::ChannelRenameState::default(),
             undo_manager: UndoManager::default(),
             clipboard: None,
@@ -199,8 +202,19 @@ impl Default for HtrkApp {
             config,
             last_visible_rows: VISIBLE_ROWS,
             last_visible_channels: 16,
-            send_levels: [[0.0f32; 2]; 64],
-            send_bus_params: [[0.5, 1.0, 1.0, 0.4, 0.3], [0.0, 0.7, 0.5, 0.6, 0.5]],
+            send_levels: vec![[0.0f32; NUM_SEND_BUSES]; DEFAULT_CHANNELS],
+            send_bus_effect_types: [
+                SendEffectType::Delay,
+                SendEffectType::Reverb,
+                SendEffectType::None,
+                SendEffectType::None,
+            ],
+            send_bus_params: [
+                [0.5, 1.0, 0.4, 0.3, 1.0],
+                [0.0, 0.7, 0.5, 0.6, 0.5],
+                [0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0],
+            ],
         }
     }
 }
@@ -434,6 +448,25 @@ impl HtrkApp {
         }
     }
 
+    fn sync_channel_fields(&mut self) {
+        let count = self.module.as_ref()
+            .map(|m| m.channel_panning.len())
+            .unwrap_or(DEFAULT_CHANNELS);
+        self.send_levels.resize(count, [0.0; NUM_SEND_BUSES]);
+        self.muted_channels.resize(count, false);
+        self.solo_channels.resize(count, false);
+        self.multichannel_channels.resize(count, false);
+        if self.channel_names.len() < count {
+            let old = self.channel_names.len();
+            self.channel_names.resize_with(count, || String::new());
+            for i in old..count {
+                self.channel_names[i] = format!("Ch{}", i + 1);
+            }
+        } else {
+            self.channel_names.truncate(count);
+        }
+    }
+
     fn apply_audio_settings_to_engine(&mut self) {
         let interp = match self.config.default_interpolation.as_str() {
             "Nearest" => crate::audio::commands::InterpolationType::Nearest,
@@ -503,6 +536,7 @@ impl HtrkApp {
                 self.selected_order = 0;
                 self.selected_sample = 1;
                 self.selected_instrument = 1;
+                self.sync_channel_fields();
                 self.undo_manager.clear();
             }
             Err(e) => {
@@ -530,6 +564,7 @@ impl HtrkApp {
         self.selected_order = 0;
         self.selected_sample = 1;
         self.selected_instrument = 1;
+        self.sync_channel_fields();
         self.undo_manager.clear();
     }
 
@@ -548,22 +583,9 @@ impl HtrkApp {
     }
 
     fn num_channels(&self) -> usize {
-        self.module.as_ref().map_or(8, |m| {
-            let mut max_ch = 0;
-            for &pat_idx in &m.order_list {
-                if let Some(pat) = m.patterns.get(pat_idx as usize) {
-                    for row in &pat.data {
-                        for (ch, cell) in row.iter().enumerate() {
-                            if !cell.is_empty() && ch + 1 > max_ch {
-                                max_ch = ch + 1;
-                            }
-                        }
-                    }
-                }
-            }
-            // Allow expansion up to what's visible, but at least 16 or current used.
-            max_ch.max(self.last_visible_channels + self.scroll_channel).max(16).min(MAX_CHANNELS)
-        })
+        self.module.as_ref()
+            .map(|m| m.channel_panning.len())
+            .unwrap_or(DEFAULT_CHANNELS)
     }
 
     fn num_channels_checked(&self) -> usize {
@@ -1147,15 +1169,40 @@ impl HtrkApp {
             }
         }
 
-        if self.cursor.sub_column.accepts_hex() {
+        if self.cursor.sub_column == SubColumn::EffectType {
+            let mut cell = self.get_cell_at_cursor();
+            let changed = if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
+                cell.effect = hex_to_effect(d as u8);
+                true
+            } else {
+                match ch.to_ascii_uppercase() {
+                    'P' => { cell.effect = Effect::SetSendBusParam { bus: 0, param: 0, value: 0 }; true }
+                    'Z' => { cell.effect = Effect::SetFilterCutoff { cutoff: 0 }; true }
+                    'S' => { cell.effect = Effect::SetSendLevel { send_index: 0, level: 0 }; true }
+                    'R' => { cell.effect = Effect::SetFilterResonance { resonance: 0 }; true }
+                    'X' => { cell.effect = Effect::SetFilterType { filter_type: 0 }; true }
+                    _ => false,
+                }
+            };
+            if changed {
+                self.set_cell_at_cursor(cell);
+                if let Some(next) = self.cursor.sub_column.next() {
+                    self.cursor.sub_column = next;
+                } else {
+                    self.cursor.sub_column = SubColumn::Note;
+                    self.advance_cursor_down(self.cursor_skip as usize);
+                }
+                return;
+            }
+        }
+
+        if self.cursor.sub_column == SubColumn::EffectParamHigh
+            || self.cursor.sub_column == SubColumn::EffectParamLow
+        {
             if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
                 let d = d as u8;
                 let mut cell = self.get_cell_at_cursor();
-
                 match self.cursor.sub_column {
-                    SubColumn::EffectType => {
-                        cell.effect = hex_to_effect(d);
-                    }
                     SubColumn::EffectParamHigh => {
                         let param = effect_param(&cell.effect);
                         let new_param = (d << 4) | (param & 0x0F);
@@ -1166,11 +1213,9 @@ impl HtrkApp {
                         let new_param = (param & 0xF0) | d;
                         cell.effect = set_effect_param(&cell.effect, new_param);
                     }
-                    _ => return,
+                    _ => unreachable!(),
                 }
-
                 self.set_cell_at_cursor(cell);
-
                 if let Some(next) = self.cursor.sub_column.next() {
                     self.cursor.sub_column = next;
                 } else {
@@ -2513,6 +2558,11 @@ impl eframe::App for HtrkApp {
 
         self.handle_keyboard_input(ctx);
 
+        // Clamp cursor and scroll to active channel count
+        let nch = self.num_channels();
+        self.cursor.channel = self.cursor.channel.min(nch.saturating_sub(1));
+        self.scroll_channel = self.scroll_channel.min(nch.saturating_sub(1));
+
         self.update_wav_export_progress();
 
         let (playback_row, playback_order, playback_pattern) = {
@@ -2824,6 +2874,43 @@ impl eframe::App for HtrkApp {
                     let visible_channels = crate::ui::pattern_grid::GridMetrics::calculate_visible_channels(ui, metrics);
                     let visible_channels = visible_channels.min(num_channels - self.scroll_channel).max(1);
 
+                    // Channel add/remove buttons
+                    ui.horizontal(|ui| {
+                        ui.set_min_height(0.0);
+                        if ui.button("+").clicked() {
+                            self.ensure_module_ownership();
+                            if let Some(ref mut module) = self.module {
+                                if let Some(arc_module) = Arc::get_mut(module) {
+                                    if arc_module.channel_panning.len() < MAX_CHANNELS {
+                                        arc_module.channel_panning.push(crate::sequencer::module::PANNING_CENTER);
+                                        arc_module.channel_volume.push(crate::sequencer::module::VOLUME_MAX);
+                                        self.sync_module_to_audio();
+                                        self.sync_channel_fields();
+                                    }
+                                }
+                            }
+                        }
+                        let can_remove = self.module.as_ref()
+                            .map(|m| m.channel_panning.len() > 1).unwrap_or(false);
+                        if ui.button("−").clicked() && can_remove {
+                            self.ensure_module_ownership();
+                            if let Some(ref mut module) = self.module {
+                                if let Some(arc_module) = Arc::get_mut(module) {
+                                    arc_module.channel_panning.pop();
+                                    arc_module.channel_volume.pop();
+                                    self.sync_module_to_audio();
+                                    self.sync_channel_fields();
+                                    if self.cursor.channel >= self.num_channels() {
+                                        self.cursor.channel = self.num_channels().saturating_sub(1);
+                                    }
+                                    if self.scroll_channel >= self.num_channels() {
+                                        self.scroll_channel = self.num_channels().saturating_sub(1);
+                                    }
+                                }
+                            }
+                        }
+                    });
+
                     let ch_resp = crate::ui::channel_headers::draw_channel_headers(
                         ui,
                         num_channels,
@@ -2855,7 +2942,7 @@ impl eframe::App for HtrkApp {
                         });
                     }
                     if let Some((ch, si, level)) = ch_resp.send_changed {
-                        if ch < self.send_levels.len() && si < 2 {
+                        if ch < self.send_levels.len() && si < NUM_SEND_BUSES {
                             self.send_levels[ch][si] = level;
                             self.send_command(crate::audio::commands::AudioCommand::SetSendLevel {
                                 channel: ch,
@@ -2962,6 +3049,7 @@ impl eframe::App for HtrkApp {
                     crate::ui::sendfx_editor::draw_sendfx_view(
                         ui,
                         &mut self.command_sender,
+                        &mut self.send_bus_effect_types,
                         &mut self.send_bus_params,
                     );
                 }

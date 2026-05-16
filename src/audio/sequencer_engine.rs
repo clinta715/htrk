@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::audio::voice::{EnvelopeState, Voice};
 use crate::audio::filter::StateVariableFilter;
-use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect, FilterType};
+use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect, FilterType, NUM_SEND_BUSES};
 use crate::sequencer::instrument::{
     DuplicateCheckAction, DuplicateCheckType, NewNoteAction,
 };
@@ -46,6 +46,7 @@ pub struct SequencerEngine {
     global_volume: f32,
     use_xm_model: bool,
     amiga_led_filter: bool,
+    pub pending_send_fx_params: Vec<(usize, u32, f32)>,
 }
 
 fn quantize_to_semitone(freq: f64) -> f64 {
@@ -74,6 +75,7 @@ impl SequencerEngine {
             global_volume: 1.0,
             use_xm_model: false,
             amiga_led_filter: false,
+            pending_send_fx_params: Vec::new(),
         }
     }
 
@@ -98,9 +100,10 @@ impl SequencerEngine {
         self.state.master_volume = 1.0;
         self.state.samples_per_tick = compute_samples_per_tick(self.state.bpm, self.output_sample_rate);
 
+        let num_ch = module.channel_panning.len();
         self.state.channels.clear();
-        self.state.channels.resize(64, ChannelState::default());
-        for i in 0..64 {
+        self.state.channels.resize(num_ch, ChannelState::default());
+        for i in 0..num_ch {
             self.state.channels[i].channel_panning = module.channel_panning[i];
             self.state.channels[i].channel_volume = module.channel_volume[i];
         }
@@ -150,9 +153,10 @@ impl SequencerEngine {
         self.state.master_volume = 1.0;
         self.state.samples_per_tick = compute_samples_per_tick(self.state.bpm, self.output_sample_rate);
 
+        let num_ch = module.channel_panning.len();
         self.state.channels.clear();
-        self.state.channels.resize(64, ChannelState::default());
-        for i in 0..64 {
+        self.state.channels.resize(num_ch, ChannelState::default());
+        for i in 0..num_ch {
             self.state.channels[i].channel_panning = module.channel_panning[i];
             self.state.channels[i].channel_volume = module.channel_volume[i];
         }
@@ -351,7 +355,12 @@ impl SequencerEngine {
 
     // Volume column
     if let Some(vol) = cell.volume {
-        if is_xm {
+        // Pxy effect — volume column carries the param value
+        if let Effect::SetSendBusParam { bus, param, .. } = cell.effect {
+            let idx = (bus as usize) * 4 + (param as usize) % 4;
+            let mapped = ((vol as u16 * 255 + 49) / 99).min(255) as u8; // 0-99 → 0-255, rounding
+            self.state.channels[channel].last_send_param_value[idx] = mapped;
+        } else if is_xm {
             let ch = &mut self.state.channels[channel];
             ch.vol_kol = vol;
             if vol <= 64 {
@@ -1431,9 +1440,20 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
             Effect::SetSendLevel { send_index, level } => {
                 let idx = *send_index as usize;
-                if idx < 2 {
+                if idx < NUM_SEND_BUSES {
                     let level_f = (*level as f32) / 15.0;
                     self.state.channels[channel].send_levels[idx] = level_f;
+                }
+            }
+
+            Effect::SetSendBusParam { bus, param, .. } => {
+                let bus = *bus as usize;
+                let param_idx = (*param as u32) % 4;
+                let mem_idx = bus * 4 + (*param as usize) % 4;
+                let value = self.state.channels[channel].last_send_param_value[mem_idx];
+                let actual_value = (value as f32) / 255.0;
+                if bus < NUM_SEND_BUSES {
+                    self.pending_send_fx_params.push((bus, param_idx, actual_value));
                 }
             }
         }

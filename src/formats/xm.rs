@@ -311,11 +311,11 @@ let file_type = read_u8(data, &mut offset)?;
             instruments.push(inst);
         }
 
-        let mut channel_panning = vec![32u8; MAX_CHANNELS];
-        let mut channel_volume = vec![64u8; MAX_CHANNELS];
-        for i in 0..num_channels.min(MAX_CHANNELS) {
+        let count = num_channels.min(MAX_CHANNELS).max(1);
+        let mut channel_panning = vec![32u8; count];
+        let channel_volume = vec![64u8; count];
+        for i in 0..count {
             channel_panning[i] = 128;
-            channel_volume[i] = 64;
         }
 
         let module_flags = ModuleFlags {
@@ -349,6 +349,8 @@ let file_type = read_u8(data, &mut offset)?;
             channel_panning,
             channel_volume,
             flags: module_flags,
+            send_bus_config: Default::default(),
+            send_return_levels: Default::default(),
         })
     }
 }

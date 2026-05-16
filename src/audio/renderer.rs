@@ -63,24 +63,24 @@ impl WavRenderer {
         let mut left = vec![0.0f32; buffer_size];
         let mut right = vec![0.0f32; buffer_size];
 
-        let total_orders = self.sequencer.module.as_ref().map(|m| m.order_list.len()).unwrap_or(1) as f32;
+        // Compute max rows: 4 full passes of the order list
+        let max_rows: u64 = self.sequencer.module.as_ref().map_or(256, |m| {
+            let per_pass: u64 = m.order_list.iter().map(|&o| {
+                m.patterns.get(o as usize).map(|p| p.num_rows as u64).unwrap_or(64)
+            }).sum();
+            (per_pass.max(64) * 4).max(256)
+        });
 
-        while self.sequencer.state.playing {
-            let current_order = self.sequencer.state.current_order as f32;
-            let current_row = self.sequencer.state.current_row as f32;
-            let rows_in_pattern = self.sequencer.module.as_ref()
-                .and_then(|m| {
-                    let order_idx = self.sequencer.state.current_order as usize;
-                    let order = m.order_list.get(order_idx)?;
-                    m.patterns.get(*order as usize)
-                })
-                .map(|p| p.num_rows)
-                .unwrap_or(64) as f32;
-            
-            let progress = (current_order + (current_row / rows_in_pattern)) / total_orders;
-            if !progress_cb(progress.min(1.0)) {
+        let mut rows_rendered: u64 = 0;
+
+        while self.sequencer.state.playing && rows_rendered < max_rows {
+            let progress = (rows_rendered as f32 / max_rows as f32).min(1.0);
+            if !progress_cb(progress) {
                 return Ok(());
             }
+
+            let prev_order = self.sequencer.state.current_order;
+            let prev_row = self.sequencer.state.current_row;
 
             left.fill(0.0);
             right.fill(0.0);
@@ -118,6 +118,13 @@ impl WavRenderer {
 
                 self.sequencer.state.sample_counter += chunk as f64;
                 samples_done += chunk;
+            }
+
+            // Track row advances for monotonic progress
+            if self.sequencer.state.current_order != prev_order
+                || self.sequencer.state.current_row != prev_row
+            {
+                rows_rendered += 1;
             }
 
             match self.limiter_mode {

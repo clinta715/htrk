@@ -12,7 +12,7 @@ pub use instrument::{
     DuplicateCheckAction, DuplicateCheckType, Envelope, EnvelopeFlags, EnvelopePoint, Instrument,
     NewNoteAction,
 };
-pub use module::{ModVariant, Module, ModuleFlags, ModuleFormat, MAX_CHANNELS, MAX_ENVELOPE_POINTS};
+pub use module::{ModVariant, Module, ModuleFlags, ModuleFormat, MAX_CHANNELS, DEFAULT_CHANNELS, MAX_ENVELOPE_POINTS};
 pub use note::{Note, PERIOD_TABLE};
 pub use pattern::{Cell, Pattern};
 pub use period::{

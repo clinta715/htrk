@@ -60,6 +60,7 @@ pub enum Effect {
     FilterCutoffSlide { amount: i16 },
 
     SetSendLevel { send_index: u8, level: u8 },
+    SetSendBusParam { bus: u8, param: u8, value: u8 },
 
     FormatSpecific(FormatEffect),
 }
@@ -121,6 +122,32 @@ pub enum S3mEffect {
 pub enum ItEffect {
     SetSampleOffset(u16),
     Raw { effect: u8, param: u8 },
+}
+
+pub const NUM_SEND_BUSES: usize = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub enum SendEffectType {
+    #[default]
+    None,
+    Delay,
+    Reverb,
+    Chorus,
+    Flanger,
+    Phaser,
+}
+
+impl SendEffectType {
+    pub fn name(&self) -> &'static str {
+        match self {
+            SendEffectType::None => "None",
+            SendEffectType::Delay => "Stereo Delay",
+            SendEffectType::Reverb => "Reverb",
+            SendEffectType::Chorus => "Chorus",
+            SendEffectType::Flanger => "Flanger",
+            SendEffectType::Phaser => "Phaser",
+        }
+    }
 }
 
 /// Supported module formats
@@ -216,6 +243,7 @@ pub fn effect_param_value(effect: &Effect) -> Option<u8> {
         Effect::SetFilterType { filter_type } => Some(*filter_type),
         Effect::FilterCutoffSlide { amount } => Some(amount.unsigned_abs() as u8),
         Effect::SetSendLevel { send_index, level } => Some((*send_index << 4) | level),
+        Effect::SetSendBusParam { bus, param, value: _ } => Some((*bus << 4) | param),
         Effect::None | Effect::FormatSpecific(_) => None,
     }
 }
@@ -267,6 +295,7 @@ pub fn set_effect_param_value(mut cell: Cell, val: u8) -> Cell {
         Effect::SetFilterType { filter_type } => *filter_type = val,
         Effect::FilterCutoffSlide { amount } => *amount = val as i16,
         Effect::SetSendLevel { send_index, level } => { *send_index = val >> 4; *level = val & 0x0F; }
+        Effect::SetSendBusParam { bus, param, value: _ } => { *bus = val >> 4; *param = val & 0x0F; }
         _ => {}
     }
     cell

@@ -522,8 +522,9 @@ impl FormatHandler for ModHandler {
             }
         }
 
-        let mut channel_panning = vec![32u8; MAX_CHANNELS];
-        for ch in 0..(num_channels as usize) {
+        let mod_count = (num_channels as usize).min(MAX_CHANNELS).max(1);
+        let mut channel_panning = vec![32u8; mod_count];
+        for ch in 0..mod_count {
             if ch % 2 == 0 {
                 channel_panning[ch] = 0;
             } else {
@@ -556,11 +557,13 @@ impl FormatHandler for ModHandler {
             initial_global_volume: 128,
             initial_mixing_volume: 128,
             channel_panning,
-            channel_volume: vec![64u8; MAX_CHANNELS],
+            channel_volume: vec![64u8; mod_count],
             flags: crate::sequencer::ModuleFlags {
                 mod_variant,
                 ..crate::sequencer::ModuleFlags::default()
             },
+            send_bus_config: Default::default(),
+            send_return_levels: Default::default(),
         })
     }
 }

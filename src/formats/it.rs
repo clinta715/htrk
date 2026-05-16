@@ -166,6 +166,13 @@ impl FormatHandler for ItHandler {
                 panning_separation,
                 ..module_flags
             },
+            send_bus_config: [
+                crate::sequencer::effect::SendEffectType::Delay,
+                crate::sequencer::effect::SendEffectType::Reverb,
+                crate::sequencer::effect::SendEffectType::None,
+                crate::sequencer::effect::SendEffectType::None,
+            ],
+            send_return_levels: [0.5, 0.0, 0.0, 0.0],
         })
     }
 }

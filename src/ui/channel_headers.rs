@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::audio::playback_state::AtomicPlaybackState;
+use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::ui::pattern_grid::GridMetrics;
 
 use super::theme::TrackerTheme;
@@ -35,7 +36,7 @@ pub fn draw_channel_headers(
     solo_channels: &[bool],
     channel_names: &[String],
     channel_panning: &[u8],
-    send_levels: &[[f32; 2]],
+    send_levels: &[[f32; NUM_SEND_BUSES]],
     rename_state: &mut ChannelRenameState,
     theme: &TrackerTheme,
     playback_state: &AtomicPlaybackState,
@@ -172,7 +173,13 @@ pub fn draw_channel_headers(
                 pan_painter.circle_filled(egui::pos2(dot_x, pan_rect.center().y), dot_r, dot_color);
 
                 // ── Send level bars ──
-                for si in 0..2 {
+                let bar_colors = [
+                    egui::Color32::from_rgb(60, 100, 200),
+                    egui::Color32::from_rgb(180, 80, 160),
+                    egui::Color32::from_rgb(80, 180, 80),
+                    egui::Color32::from_rgb(200, 160, 40),
+                ];
+                for si in 0..NUM_SEND_BUSES.min(4) {
                     let send_y = pan_rect.bottom() + 2.0 + (si as f32) * (send_bar_h + send_bar_gap);
                     let (bar_rect, bar_resp) = ui.allocate_exact_size(
                         egui::vec2(vu_width, send_bar_h),
@@ -184,11 +191,7 @@ pub fn draw_channel_headers(
                         egui::pos2(pan_rect.left(), send_y),
                         egui::pos2(pan_rect.right(), send_y + send_bar_h),
                     );
-                    let bar_color = if si == 0 {
-                        egui::Color32::from_rgb(60, 100, 200)
-                    } else {
-                        egui::Color32::from_rgb(180, 80, 160)
-                    };
+                    let bar_color = bar_colors[si % bar_colors.len()];
                     bar_painter.rect_filled(bar_rect, 0.0, egui::Color32::from_rgb(20, 20, 30));
                     if let Some(lvl) = send_levels.get(ch).map(|sl| sl[si]) {
                         if lvl > 0.0 {

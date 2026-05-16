@@ -2,7 +2,7 @@ use crate::errors::{FormatError, FormatResult};
 use crate::sequencer::module::ModuleFormat;
 use crate::sequencer::Module;
 
-const HTK_VERSION: u32 = 3;
+const HTK_VERSION: u32 = 4;
 const HTK_MAGIC: &[u8; 4] = b"HTRA";
 
 pub fn save_module(module: &Module) -> Vec<u8> {

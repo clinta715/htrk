@@ -198,7 +198,7 @@ impl FormatHandler for S3mHandler {
                 num_channels = num_channels.max((channel_settings[i] & 0x1F) as usize + 1);
             }
         }
-        let _num_channels = if num_channels == 0 { 4 } else { num_channels };
+        let _num_channels = if num_channels == 0 { 4 } else { num_channels.min(MAX_CHANNELS).max(1) };
 
         let mut offset = S3M_HEADER_SIZE;
 
@@ -430,19 +430,18 @@ impl FormatHandler for S3mHandler {
             instruments.push(inst);
         }
 
-        let mut channel_panning = vec![32u8; MAX_CHANNELS];
-        for ch in 0..S3M_MAX_CHANNELS {
-            if ch < 32 {
-                if channel_settings[ch] == 0xFF {
-                    continue;
-                }
-                if (default_panning[ch] & 0x80) != 0 {
-                    channel_panning[ch] = ((default_panning[ch] & 0x0F) as u8) * 4;
-                } else if ch % 2 == 0 {
-                    channel_panning[ch] = 0;
-                } else {
-                    channel_panning[ch] = 64;
-                }
+        let s3m_count = _num_channels;
+        let mut channel_panning = vec![32u8; s3m_count];
+        for ch in 0..s3m_count.min(S3M_MAX_CHANNELS) {
+            if channel_settings[ch] == 0xFF {
+                continue;
+            }
+            if (default_panning[ch] & 0x80) != 0 {
+                channel_panning[ch] = ((default_panning[ch] & 0x0F) as u8) * 4;
+            } else if ch % 2 == 0 {
+                channel_panning[ch] = 0;
+            } else {
+                channel_panning[ch] = 64;
             }
         }
 
@@ -461,8 +460,10 @@ impl FormatHandler for S3mHandler {
             initial_global_volume: if global_volume == 0 { 128 } else { (global_volume as u16 * 128 / 64).min(128) as u8 },
             initial_mixing_volume: if master_volume == 0 { 48 } else { master_volume },
             channel_panning,
-            channel_volume: vec![64u8; MAX_CHANNELS],
+            channel_volume: vec![64u8; s3m_count],
             flags: crate::sequencer::ModuleFlags::default(),
+            send_bus_config: Default::default(),
+            send_return_levels: Default::default(),
         })
     }
 }

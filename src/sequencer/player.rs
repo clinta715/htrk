@@ -1,4 +1,5 @@
 use crate::sequencer::effect::Effect;
+use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::effect::FilterType;
@@ -100,7 +101,8 @@ pub struct ChannelState {
     pub funk_pos: u8,
     pub karplus_param: u8,
 
-    pub send_levels: [f32; 2],
+    pub send_levels: [f32; 4],
+    pub last_send_param_value: [u8; NUM_SEND_BUSES * 4],
 }
 
 impl Default for ChannelState {
@@ -174,7 +176,8 @@ impl Default for ChannelState {
             funk_speed: 0,
             funk_pos: 0,
             karplus_param: 0,
-            send_levels: [0.0; 2],
+            send_levels: [0.0; NUM_SEND_BUSES],
+            last_send_param_value: [0; NUM_SEND_BUSES * 4],
         }
     }
 }
@@ -256,7 +259,7 @@ impl Default for SequencerState {
             pattern_loop_count: 0,
             pattern_loop_final_pass: false,
             pattern_loop_jump_target: None,
-            channels: vec![ChannelState::default(); 64],
+            channels: vec![ChannelState::default(); crate::sequencer::module::DEFAULT_CHANNELS],
             play_mode: PlayMode::Once,
         }
     }
@@ -283,7 +286,7 @@ mod tests {
         assert_eq!(ss.speed, 6);
         assert!(!ss.playing);
         assert!(!ss.paused);
-        assert_eq!(ss.channels.len(), 64);
+        assert_eq!(ss.channels.len(), crate::sequencer::module::DEFAULT_CHANNELS);
         assert_eq!(ss.play_mode, PlayMode::Once);
     }
 

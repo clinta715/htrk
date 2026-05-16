@@ -555,6 +555,7 @@ fn format_effect(effect: &Effect) -> (String, String) {
         Effect::SetFilterType { filter_type } => ("X".to_string(), format!("{:02X}", filter_type)),
         Effect::FilterCutoffSlide { amount } => ("Y".to_string(), format!("{:+03}", amount)),
         Effect::SetSendLevel { send_index, level } => ("S".to_string(), format!("{:X}{:X}", send_index, level)),
+        Effect::SetSendBusParam { bus, param, value: _ } => ("P".to_string(), format!("{:X}{:X}", bus, param)),
         Effect::FormatSpecific(fe) => {
             match fe {
                 FormatEffect::Xm(xe) => match xe {
@@ -655,6 +656,7 @@ fn effect_tooltip_text(effect: &Effect) -> String {
         Effect::SetFilterType { filter_type } => format!("Filter Type: {}", match filter_type { 0 => "LP", 1 => "HP", 2 => "BP", _ => "Notch" }),
         Effect::FilterCutoffSlide { amount } => format!("Filter Cutoff Slide: {}", amount),
         Effect::SetSendLevel { send_index, level } => format!("Send Level: bus {} at {}%", send_index, (*level as u16) * 100 / 15),
+        Effect::SetSendBusParam { bus, param, value } => format!("Send Param: bus {} param {} value {}", bus, param, value),
         _ => String::new(),
     }
 }
