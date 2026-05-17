@@ -6,7 +6,21 @@ use crate::sequencer::pattern::Cell;
 
 use super::theme::TrackerTheme;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ColumnVisibility {
+    pub note: bool,
+    pub instrument: bool,
+    pub volume: bool,
+    pub effect: bool,
+}
+
+impl ColumnVisibility {
+    pub fn all() -> Self {
+        ColumnVisibility { note: true, instrument: true, volume: true, effect: true }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GridMetrics {
     pub font_size: f32,
     pub row_height: f32,
@@ -538,6 +552,8 @@ fn format_effect(effect: &Effect) -> (String, String) {
         Effect::Retrigger { interval } => ("E".to_string(), format!("9{:X}", interval)),
         Effect::NoteCutAfter { ticks } => ("E".to_string(), format!("C{:X}", ticks)),
         Effect::NoteDelay { ticks } => ("E".to_string(), format!("D{:X}", ticks)),
+        Effect::ExtraFinePortamentoUp { speed } => ("F".to_string(), format!("1{:X}", speed & 0xF)),
+        Effect::ExtraFinePortamentoDown { speed } => ("F".to_string(), format!("2{:X}", speed & 0xF)),
         Effect::FinePortamentoUp { speed } => ("E".to_string(), format!("1{:X}", speed >> 4)),
         Effect::FinePortamentoDown { speed } => ("E".to_string(), format!("2{:X}", speed >> 4)),
         Effect::FineVolumeSlideUp { amount } => ("E".to_string(), format!("A{:X}", amount)),
@@ -646,6 +662,8 @@ fn effect_tooltip_text(effect: &Effect) -> String {
         Effect::Retrigger { interval } => format!("Retrigger: every {} ticks", interval),
         Effect::NoteCutAfter { ticks } => format!("Note Cut after {} ticks", ticks),
         Effect::NoteDelay { ticks } => format!("Note Delay: {} ticks", ticks),
+        Effect::ExtraFinePortamentoUp { speed } => format!("Extra Fine Porta Up: {}", speed),
+        Effect::ExtraFinePortamentoDown { speed } => format!("Extra Fine Porta Down: {}", speed),
         Effect::FinePortamentoUp { speed } => format!("Fine Porta Up: {}", speed),
         Effect::FinePortamentoDown { speed } => format!("Fine Porta Down: {}", speed),
         Effect::FineVolumeSlideUp { amount } => format!("Fine Vol Up: {}", amount),

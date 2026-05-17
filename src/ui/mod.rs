@@ -8,6 +8,7 @@ pub mod note_map;
 pub mod oscilloscope;
 pub mod order_list;
 pub mod pattern_grid;
+pub mod playback_view;
 pub mod sample_editor;
 pub mod sample_map;
 pub mod sample_palette;

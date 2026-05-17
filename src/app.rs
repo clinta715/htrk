@@ -25,7 +25,7 @@ use crate::sequencer::pattern::Cell;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::{Effect, Module, Note, MAX_CHANNELS, DEFAULT_CHANNELS};
-use crate::ui::pattern_grid::{CursorPosition, Selection, SubColumn, VISIBLE_ROWS};
+use crate::ui::pattern_grid::{ColumnVisibility, CursorPosition, Selection, SubColumn, VISIBLE_ROWS};
 use crate::ui::TrackerTheme;
 use crate::ui::theme::ThemePreset;
 
@@ -65,6 +65,7 @@ pub enum AppView {
     Sample,
     Instrument,
     SendFx,
+    Playback,
 }
 
 pub struct HtrkApp {
@@ -129,6 +130,7 @@ pub struct HtrkApp {
     sample_clipboard: Option<Arc<Vec<f32>>>,
     amplify_factor: f32,
     config: AppConfig,
+    col_vis: ColumnVisibility,
     last_visible_rows: usize,
     last_visible_channels: usize,
     send_levels: Vec<[f32; 4]>,
@@ -200,6 +202,7 @@ impl Default for HtrkApp {
             sample_clipboard: None,
             amplify_factor: config.default_amplify_factor,
             config,
+            col_vis: ColumnVisibility::all(),
             last_visible_rows: VISIBLE_ROWS,
             last_visible_channels: 16,
             send_levels: vec![[0.0f32; NUM_SEND_BUSES]; DEFAULT_CHANNELS],
@@ -2619,6 +2622,7 @@ impl eframe::App for HtrkApp {
                 &self.theme,
                 self.current_sample_rate,
                 &self.current_sample_format,
+                &mut self.col_vis,
             );
             if menu_resp.new_song {
                 self.new_song();
@@ -2680,6 +2684,9 @@ impl eframe::App for HtrkApp {
                 self.theme = TrackerTheme::from_preset(preset);
                 self.config.theme_preset = preset.config_key().to_string();
                 self.config.save();
+            }
+            if let Some(col_vis) = menu_resp.col_vis {
+                self.col_vis = col_vis;
             }
             if menu_resp.show_shortcuts {
                 self.show_shortcuts = true;
@@ -2863,6 +2870,7 @@ impl eframe::App for HtrkApp {
             ui.selectable_value(&mut self.current_view, AppView::Sample, "Sample");
             ui.selectable_value(&mut self.current_view, AppView::Instrument, "Instrument");
             ui.selectable_value(&mut self.current_view, AppView::SendFx, "Send FX");
+            ui.selectable_value(&mut self.current_view, AppView::Playback, "Playback");
             });
             ui.separator();
 
@@ -3051,6 +3059,16 @@ impl eframe::App for HtrkApp {
                         &mut self.command_sender,
                         &mut self.send_bus_effect_types,
                         &mut self.send_bus_params,
+                    );
+                }
+                AppView::Playback => {
+                    let num_channels = self.num_channels();
+                    crate::ui::playback_view::draw_playback_view(
+                        ui,
+                        &self.playback_state,
+                        &mut self.command_sender,
+                        &self.theme,
+                        num_channels,
                     );
                 }
             }

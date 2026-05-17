@@ -1,5 +1,6 @@
 use eframe::egui;
 
+use super::pattern_grid::ColumnVisibility;
 use super::theme::{ThemePreset, TrackerTheme};
 
 pub struct MenuResponse {
@@ -24,6 +25,7 @@ pub struct MenuResponse {
     pub delete_column: bool,
     pub follow_playback: bool,
     pub theme_changed: Option<ThemePreset>,
+    pub col_vis: Option<ColumnVisibility>,
 
     pub show_shortcuts: bool,
     pub show_about: bool,
@@ -54,6 +56,7 @@ impl Default for MenuResponse {
             delete_column: false,
             follow_playback: false,
             theme_changed: None,
+            col_vis: None,
 
             show_shortcuts: false,
             show_about: false,
@@ -72,6 +75,7 @@ pub fn draw_menu_bar(
     _theme: &TrackerTheme,
     sample_rate: u32,
     sample_format: &str,
+    col_vis: &mut ColumnVisibility,
 ) -> MenuResponse {
     let mut resp = MenuResponse::default();
 
@@ -200,6 +204,29 @@ pub fn draw_menu_bar(
                 resp.follow_playback = !follow_playback;
                 ui.close_menu();
             }
+            ui.separator();
+            ui.menu_button("Columns", |ui| {
+                let mut note = col_vis.note;
+                if ui.checkbox(&mut note, "Note").changed() {
+                    col_vis.note = note;
+                    resp.col_vis = Some(*col_vis);
+                }
+                let mut instr = col_vis.instrument;
+                if ui.checkbox(&mut instr, "Instrument").changed() {
+                    col_vis.instrument = instr;
+                    resp.col_vis = Some(*col_vis);
+                }
+                let mut vol = col_vis.volume;
+                if ui.checkbox(&mut vol, "Volume").changed() {
+                    col_vis.volume = vol;
+                    resp.col_vis = Some(*col_vis);
+                }
+                let mut eff = col_vis.effect;
+                if ui.checkbox(&mut eff, "Effect").changed() {
+                    col_vis.effect = eff;
+                    resp.col_vis = Some(*col_vis);
+                }
+            });
             ui.separator();
             for preset in ThemePreset::all() {
                 let label = if *preset == current_theme {

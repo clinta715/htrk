@@ -18,6 +18,7 @@ pub struct ActiveEffects {
     pub key_off: bool,
     pub filter_cutoff_slide: bool,
     pub panning_slide: bool,
+    pub global_volume_slide: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -34,6 +35,8 @@ pub struct ChannelState {
     pub last_effect: Effect,
     pub last_portamento_up_speed: u8,
     pub last_portamento_down_speed: u8,
+    pub last_extra_fine_portamento_up_speed: u8,
+    pub last_extra_fine_portamento_down_speed: u8,
     pub last_tone_portamento_speed: u8,
     pub last_vibrato_speed: u8,
     pub last_vibrato_depth: u8,
@@ -99,6 +102,7 @@ pub struct ChannelState {
     pub note_cut_tick: Option<u8>,
     pub funk_speed: u8,
     pub funk_pos: u8,
+    pub funk_toggle: bool,
     pub karplus_param: u8,
 
     pub send_levels: [f32; 4],
@@ -117,6 +121,8 @@ impl Default for ChannelState {
             last_effect: Effect::None,
             last_portamento_up_speed: 0,
             last_portamento_down_speed: 0,
+            last_extra_fine_portamento_up_speed: 0,
+            last_extra_fine_portamento_down_speed: 0,
             last_tone_portamento_speed: 0,
             last_vibrato_speed: 0,
             last_vibrato_depth: 0,
@@ -175,6 +181,7 @@ impl Default for ChannelState {
             note_cut_tick: None,
             funk_speed: 0,
             funk_pos: 0,
+            funk_toggle: false,
             karplus_param: 0,
             send_levels: [0.0; NUM_SEND_BUSES],
             last_send_param_value: [0; NUM_SEND_BUSES * 4],

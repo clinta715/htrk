@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use crate::sequencer::player::PlayMode;
 
+use crate::sequencer::note::TONE_NAMES;
+
 static MASTER_VOLUME_DEFAULT: f32 = 0.25;
 
 pub const CHANNEL_SCOPE_SIZE: usize = 512;
@@ -29,6 +31,9 @@ pub struct AtomicPlaybackState {
     pub channel_scope_right: [Arc<Vec<AtomicU32>>; MAX_CHANNELS],
     pub channel_scope_write_pos: AtomicU32,
     pub channel_scope_available: AtomicU32,
+
+    pub channel_note: [AtomicU16; MAX_CHANNELS],
+    pub channel_instrument: [AtomicU16; MAX_CHANNELS],
 }
 
 impl AtomicPlaybackState {
@@ -148,6 +153,51 @@ impl Default for AtomicPlaybackState {
             channel_scope_right,
             channel_scope_write_pos: AtomicU32::new(0),
             channel_scope_available: AtomicU32::new(0),
+            channel_note: std::array::from_fn(|_| AtomicU16::new(0)),
+            channel_instrument: std::array::from_fn(|_| AtomicU16::new(0)),
         }
+    }
+}
+
+impl AtomicPlaybackState {
+    pub fn set_channel_note(&self, ch: usize, note: u16) {
+        if ch < MAX_CHANNELS {
+            self.channel_note[ch].store(note, Ordering::Relaxed);
+        }
+    }
+
+    pub fn channel_note(&self, ch: usize) -> u16 {
+        if ch < MAX_CHANNELS { self.channel_note[ch].load(Ordering::Relaxed) } else { 0 }
+    }
+
+    pub fn set_channel_instrument(&self, ch: usize, instr: u16) {
+        if ch < MAX_CHANNELS {
+            self.channel_instrument[ch].store(instr, Ordering::Relaxed);
+        }
+    }
+
+    pub fn channel_instrument(&self, ch: usize) -> u16 {
+        if ch < MAX_CHANNELS { self.channel_instrument[ch].load(Ordering::Relaxed) } else { 0 }
+    }
+
+    pub fn channel_note_str(&self, ch: usize) -> String {
+        let note_val = self.channel_note(ch);
+        if note_val == 0 {
+            "---".to_string()
+        } else if note_val == 0xFF {
+            "^^^".to_string()
+        } else if note_val == 0xFE {
+            "===".to_string()
+        } else {
+            let key = note_val as u8;
+            let tone = key % 12;
+            let octave = key / 12;
+            format!("{}{}", TONE_NAMES[tone as usize], octave)
+        }
+    }
+
+    pub fn channel_instrument_str(&self, ch: usize) -> String {
+        let instr = self.channel_instrument(ch);
+        if instr == 0 { "..".to_string() } else { format!("{:02}", instr) }
     }
 }

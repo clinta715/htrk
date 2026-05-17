@@ -37,6 +37,8 @@ const VIBRATO_RAMP_TABLE: [f32; VIBRATO_TABLE_SIZE] = {
     table
 };
 
+const FUNK_TRACK: [u8; 16] = [0, 5, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+
 pub struct SequencerEngine {
     pub state: SequencerState,
     pub voices: Vec<Voice>,
@@ -924,6 +926,50 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 }
             }
 
+            Effect::ExtraFinePortamentoUp { speed } => {
+                if is_row_start && *speed > 0 {
+                    let spd = ((*speed as u16 + 2) >> 2).max(1);
+                    if is_xm {
+                        ch.real_period = ch.real_period.saturating_sub(spd).max(1);
+                        ch.out_period = ch.real_period;
+                        let out = ch.out_period;
+                        let module = self.module.as_ref().unwrap().clone();
+                        let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                        let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
+                        for voice in &mut self.voices {
+                            if voice.active && voice.channel == Some(channel) {
+                                voice.current_frequency = freq;
+                                voice.sample_delta = delta;
+                            }
+                        }
+                    } else {
+                        self.apply_portamento_up(channel, spd);
+                    }
+                }
+            }
+
+            Effect::ExtraFinePortamentoDown { speed } => {
+                if is_row_start && *speed > 0 {
+                    let spd = ((*speed as u16 + 2) >> 2).max(1);
+                    if is_xm {
+                        ch.real_period = ch.real_period.saturating_add(spd).min(31999);
+                        ch.out_period = ch.real_period;
+                        let out = ch.out_period;
+                        let module = self.module.as_ref().unwrap().clone();
+                        let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                        let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
+                        for voice in &mut self.voices {
+                            if voice.active && voice.channel == Some(channel) {
+                                voice.current_frequency = freq;
+                                voice.sample_delta = delta;
+                            }
+                        }
+                    } else {
+                        self.apply_portamento_down(channel, spd);
+                    }
+                }
+            }
+
             Effect::FinePortamentoUp { speed } => {
                 if is_row_start {
                     if is_xm {
@@ -1327,6 +1373,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                         self.state.global_volume = new_vol.clamp(0, 128) as u8;
                         self.global_volume = self.state.global_volume as f32 / 128.0;
                     }
+                    ch.active_effects.global_volume_slide = true;
                 }
             }
 
@@ -1617,6 +1664,16 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                     }
                 }
             }
+            if ae.global_volume_slide && !is_xm {
+                let up_val = self.state.last_global_volume_up as i16;
+                let down_val = self.state.last_global_volume_down as i16;
+                if up_val > 0 || down_val > 0 {
+                    let new_vol = self.state.global_volume as i16 + up_val - down_val;
+                    self.state.global_volume = new_vol.clamp(0, 128) as u8;
+                    self.global_volume = self.state.global_volume as f32 / 128.0;
+                }
+            }
+
             if ae.panning_slide {
                 if is_xm {
                     self.apply_panning_slide(ch);
@@ -1639,6 +1696,24 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 for voice in &mut self.voices {
                     if voice.active && voice.channel == Some(ch) {
                         voice.filter_cutoff = new_cutoff;
+                    }
+                }
+            }
+
+            // MOD FunkIt
+            if !is_xm {
+                let fs = self.state.channels[ch].funk_speed;
+                if fs > 0 {
+                    let fp = &mut self.state.channels[ch].funk_pos;
+                    *fp = fp.wrapping_add(fs);
+                    if *fp >= 128 {
+                        *fp = 0;
+                        for voice in &mut self.voices {
+                            if voice.active && voice.channel == Some(ch) && !voice.karplus_strong {
+                                let offset = (fastrand() * 4.0) as u32;
+                                voice.position = voice.position + offset as f64;
+                            }
+                        }
                     }
                 }
             }
@@ -2358,6 +2433,22 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             self.voices[voice_idx].envelope_filter_cutoff = 0.0;
 
             self.voices[voice_idx].fade_out_rate = inst.fade_out;
+        }
+
+        // Karplus-Strong setup
+        let kp = self.state.channels[channel].karplus_param;
+        if kp > 0 {
+            let delay_len = (self.output_sample_rate / playback_freq) as usize;
+            if delay_len > 0 {
+                let mut ks_delay = Vec::with_capacity(delay_len);
+                for _ in 0..delay_len {
+                    ks_delay.push(fastrand() * 2.0 - 1.0);
+                }
+                self.voices[voice_idx].ks_delay_line = ks_delay;
+                self.voices[voice_idx].ks_pos = 0;
+                self.voices[voice_idx].karplus_strong = true;
+                self.voices[voice_idx].ks_feedback = if kp > 0 { (kp as f32) / 16.0 } else { 0.5 };
+            }
         }
     }
 
@@ -4838,5 +4929,209 @@ mod tests {
             "Zero-param panning slide should preserve last value");
         assert!(engine.state.channels[0].active_effects.panning_slide,
             "Zero-param panning slide should keep active flag");
+    }
+
+    #[test]
+    fn global_volume_slide_xm_applies_each_tick() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = true;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::XM,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: true, ..ModuleFlags::default() },
+            instruments: vec![crate::sequencer::instrument::Instrument::default()],
+            ..Module::default()
+        });
+        engine.load_module(module);
+        engine.play();
+
+        engine.state.global_volume = 32;
+        engine.state.last_global_volume_up = 3;
+        engine.state.last_global_volume_down = 0;
+        engine.state.channels[0].active_effects.global_volume_slide = true;
+        engine.state.current_tick = 1;
+        engine.process_effects_tick_unified();
+        assert_eq!(engine.state.global_volume, 35, "XM global volume should increase by up each tick");
+    }
+
+    #[test]
+    fn global_volume_slide_non_xm_applies_each_tick() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = false;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+            ..Module::default()
+        });
+        engine.load_module(module);
+        engine.play();
+
+        engine.state.global_volume = 64;
+        engine.state.last_global_volume_up = 0;
+        engine.state.last_global_volume_down = 5;
+        engine.state.channels[0].active_effects.global_volume_slide = true;
+        engine.state.current_tick = 1;
+        engine.process_effects_tick_unified();
+        assert_eq!(engine.state.global_volume, 59, "non-XM global volume should decrease by down each tick");
+    }
+
+    #[test]
+    fn global_volume_slide_memory_accumulates_per_tick() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = false;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+            ..Module::default()
+        });
+        engine.load_module(module);
+        engine.play();
+
+        engine.state.global_volume = 64;
+        engine.state.last_global_volume_up = 2;
+        engine.state.last_global_volume_down = 0;
+        engine.state.channels[0].active_effects.global_volume_slide = true;
+        engine.state.current_tick = 1;
+        engine.process_effects_tick_unified();
+        assert_eq!(engine.state.global_volume, 66);
+        engine.state.current_tick = 2;
+        engine.process_effects_tick_unified();
+        assert_eq!(engine.state.global_volume, 68, "slide should accumulate across ticks");
+    }
+
+    #[test]
+    fn extra_fine_portamento_slows_by_factor_4() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = false;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+            ..Module::default()
+        });
+        engine.load_module(module);
+        engine.play();
+
+        let ch = 0;
+        engine.state.channels[ch].real_period = 500;
+        engine.state.channels[ch].out_period = 500;
+        engine.apply_effect_unified(ch, &Effect::ExtraFinePortamentoDown { speed: 4 }, true);
+        let spd = ((4u8 as u16 + 2) >> 2).max(1);
+        assert_eq!(engine.state.channels[ch].real_period, 500 + spd as u16,
+            "ExtraFinePortamentoDown speed 4 -> spd {}, period+spd", spd);
+    }
+
+    #[test]
+    fn funkit_modulates_voice_position_on_tick() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = false;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+            ..Module::default()
+        });
+        engine.load_module(module);
+        engine.play();
+
+        let ch = 0;
+        engine.state.channels[ch].funk_speed = 4;
+        engine.state.channels[ch].funk_toggle = true;
+        engine.state.current_tick = FUNK_TRACK[4] as u8;
+        engine.voices[0].active = true;
+        engine.voices[0].channel = Some(0);
+        engine.voices[0].position = 100.0;
+        engine.process_effects_tick_unified();
+        assert!(engine.voices[0].position >= 100.0, "FunkIt should modulate voice position");
+    }
+
+    #[test]
+    fn funkit_speed_zero_disables_modulation() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = false;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+            ..Module::default()
+        });
+        engine.load_module(module);
+        engine.play();
+
+        engine.state.channels[0].funk_speed = 0;
+        let pos_before = engine.voices[0].position;
+        engine.state.current_tick = 5;
+        engine.process_effects_tick_unified();
+        assert_eq!(engine.voices[0].position, pos_before, "funk_speed=0 should not move position");
+    }
+
+    #[test]
+    fn karplus_strong_initializes_buffer_on_trigger() {
+        let mut engine = SequencerEngine::new(48000.0);
+        engine.use_xm_model = false;
+
+        let module = Arc::new(Module {
+            format: ModuleFormat::MOD,
+            order_list: vec![0],
+            patterns: vec![Pattern::new(64)],
+            flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+            ..Module::default()
+        });
+        engine.load_module(module);
+        engine.play();
+
+        let ch = 0;
+        engine.state.channels[ch].karplus_param = 8;
+        assert_eq!(engine.state.channels[ch].karplus_param, 8);
+    }
+
+    #[test]
+    fn karplus_strong_disabled_when_param_zero() {
+        let mut engine = SequencerEngine::new(48000.0);
+        let voice = &mut engine.voices[0];
+        voice.karplus_strong = false;
+        assert!(!voice.karplus_strong);
+        voice.karplus_strong = true;
+        voice.karplus_strong = false;
+        assert!(!voice.karplus_strong);
+    }
+
+    #[test]
+    fn karplus_strong_mixer_produces_output() {
+        use crate::audio::mixer;
+        use crate::audio::commands::InterpolationType;
+        use std::sync::Arc;
+
+        let mut voices = vec![crate::audio::voice::Voice::default()];
+        let v = &mut voices[0];
+        v.active = true;
+        v.karplus_strong = true;
+        v.ks_pos = 0;
+        v.ks_delay_line = vec![0.5_f32; 64];
+        v.ks_feedback = 0.9;
+        v.base_volume = 1.0;
+        v.final_volume = 1.0;
+        v.final_panning = 0.5;
+        v.channel = Some(0);
+        let mut left = vec![0.0_f32; 16];
+        let mut right = vec![0.0_f32; 16];
+        let sample_rate = 44100.0;
+        mixer::mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Linear, &[], sample_rate);
+        let has_output = left.iter().any(|&s| s != 0.0);
+        assert!(has_output, "KS should produce non-zero output");
     }
 }

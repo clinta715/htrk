@@ -101,6 +101,11 @@ pub struct Voice {
     pub fade_out_amp: i32,
     pub fade_out_speed_i32: i32,
     pub auto_vib_period_base: u16,
+
+    pub karplus_strong: bool,
+    pub ks_delay_line: Vec<f32>,
+    pub ks_pos: usize,
+    pub ks_feedback: f32,
 }
 
 impl Voice {
@@ -194,6 +199,10 @@ self.tremor_mute = false;
         self.fade_out_amp = 32768i32;
         self.fade_out_speed_i32 = 0;
         self.auto_vib_period_base = 0;
+        self.karplus_strong = false;
+        self.ks_delay_line.clear();
+        self.ks_pos = 0;
+        self.ks_feedback = 0.5;
     }
 
     pub fn deactivate(&mut self) {
@@ -272,7 +281,11 @@ impl Default for Voice {
             env_sustain_active: false,
             fade_out_amp: 0,
             fade_out_speed_i32: 0,
-auto_vib_period_base: 0,
+        auto_vib_period_base: 0,
+        karplus_strong: false,
+        ks_delay_line: Vec::new(),
+        ks_pos: 0,
+        ks_feedback: 0.5,
         }
     }
 }

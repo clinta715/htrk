@@ -39,6 +39,41 @@ pub fn mix_voices_per_channel(
             }
         }
 
+        if voice.karplus_strong {
+            let delay_len = voice.ks_delay_line.len();
+            if delay_len == 0 {
+                voice.active = false;
+                continue;
+            }
+            let vol = voice.final_volume * master_volume;
+            let pan = voice.final_panning;
+            let left_gain = vol * (1.0 - pan);
+            let right_gain = vol * pan;
+            let ch_idx = voice.channel.unwrap_or(MAX_CHANNELS);
+            for i in 0..len {
+                if voice.ks_pos >= delay_len {
+                    voice.ks_pos = 0;
+                }
+                let s = voice.ks_delay_line[voice.ks_pos];
+                let next = if voice.ks_pos + 1 < delay_len {
+                    voice.ks_delay_line[voice.ks_pos + 1]
+                } else {
+                    voice.ks_delay_line[0]
+                };
+                voice.ks_delay_line[voice.ks_pos] = (s + next) * 0.5 * voice.ks_feedback;
+                let fl = s * left_gain;
+                let fr = s * right_gain;
+                output_left[i] += fl;
+                output_right[i] += fr;
+                if ch_idx < ch_left.len() {
+                    ch_left[ch_idx][offset + i] += fl;
+                    ch_right[ch_idx][offset + i] += fr;
+                }
+                voice.ks_pos += 1;
+            }
+            continue;
+        }
+
         let sample_data = match &voice.sample {
             Some(data) => match std::sync::Arc::as_ref(data) {
                 s if !s.is_empty() => s,
@@ -192,6 +227,34 @@ pub fn mix_voices(
             if ch < muted_channels.len() && muted_channels[ch] {
                 continue;
             }
+        }
+
+        if voice.karplus_strong {
+            let delay_len = voice.ks_delay_line.len();
+            if delay_len == 0 {
+                voice.active = false;
+                continue;
+            }
+            let vol = voice.final_volume * master_volume;
+            let pan = voice.final_panning;
+            let left_gain = vol * (1.0 - pan);
+            let right_gain = vol * pan;
+            for i in 0..output_left.len() {
+                if voice.ks_pos >= delay_len {
+                    voice.ks_pos = 0;
+                }
+                let s = voice.ks_delay_line[voice.ks_pos];
+                let next = if voice.ks_pos + 1 < delay_len {
+                    voice.ks_delay_line[voice.ks_pos + 1]
+                } else {
+                    voice.ks_delay_line[0]
+                };
+                voice.ks_delay_line[voice.ks_pos] = (s + next) * 0.5 * voice.ks_feedback;
+                output_left[i] += s * left_gain;
+                output_right[i] += s * right_gain;
+                voice.ks_pos += 1;
+            }
+            continue;
         }
 
         let sample_data = match &voice.sample {

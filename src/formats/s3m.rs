@@ -25,20 +25,20 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
             up: param >> 4,
             down: param & 0x0F,
         },
-        5 => {
+         5 => {
             if param >= 0xF0 {
-                Effect::FinePortamentoDown { speed: param & 0x0F }
+                Effect::ExtraFinePortamentoDown { speed: param & 0x0F }
             } else if param >= 0xE0 {
-                Effect::FinePortamentoDown { speed: param & 0x0F } // Should be extra fine, but we'll map to Fine for now
+                Effect::FinePortamentoDown { speed: param & 0x0F }
             } else {
                 Effect::PortamentoDown { speed: param }
             }
         }
         6 => {
             if param >= 0xF0 {
-                Effect::FinePortamentoUp { speed: param & 0x0F }
+                Effect::ExtraFinePortamentoUp { speed: param & 0x0F }
             } else if param >= 0xE0 {
-                Effect::FinePortamentoUp { speed: param & 0x0F } // Should be extra fine
+                Effect::FinePortamentoUp { speed: param & 0x0F }
             } else {
                 Effect::PortamentoUp { speed: param }
             }
@@ -115,6 +115,10 @@ fn effect_to_s3m(effect: &Effect) -> (u8, u8) {
         Effect::VolumeSlide { up, down } => (4, (*up << 4) | *down),
         Effect::PortamentoDown { speed } => (5, *speed),
         Effect::PortamentoUp { speed } => (6, *speed),
+        Effect::FinePortamentoDown { speed } => (5, 0xE0 | speed),
+        Effect::FinePortamentoUp { speed } => (6, 0xE0 | speed),
+        Effect::ExtraFinePortamentoDown { speed } => (5, 0xF0 | speed),
+        Effect::ExtraFinePortamentoUp { speed } => (6, 0xF0 | speed),
         Effect::TonePortamento { speed } => (7, *speed),
         Effect::Vibrato { speed, depth } => (8, (*speed << 4) | *depth),
         Effect::Tremor { ontime, offtime } => (9, (*ontime << 4) | *offtime),
