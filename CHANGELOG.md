@@ -2,6 +2,42 @@
 
 All notable changes to htrk will be documented in this file.
 
+## [0.9.0] - 2026-05-17
+
+### Added
+
+#### File Browser
+- **Selection position persistence**: File browser now remembers scroll position and selected index per directory, persisted across sessions in `last_selections` config field (key format: `"mode:/full/path"` → `(selected_index, page)`).
+- **List/Details view modes**: Toggle between compact list view and detailed columnar view via toolbar button (☰/≡). Details view shows columns: Name, Duration, Type, Size, Modified. Persisted in `file_browser_view_mode` config.
+- **Sort options**: Sort files by Name, Date, Size, or Type with ascending/descending toggle (↑/↓). Sort preference persisted in `file_browser_sort_by` and `file_browser_sort_desc` config fields.
+- **Extended audio format duration support**: Duration now shown for wav, mp3, ogg, flac, it, xm, s3m, mod, and 669 files (previously only wav).
+- **Modified date column**: Details view shows file modification date (xx/xx/xx format).
+
+#### Sample Export
+- **Individual sample export to WAV**: Right-click context menu on sample list (index > 0) with "Export Sample..." option.
+- **Bit depth selection**: Combined file dialog with bit depth options (8-bit unsigned, 16-bit, 24-bit, 32-bit float). Choice persisted in `sample_export_bit_depth` config.
+- **Path persistence**: Exports default to last used `default_wav_path` directory, which updates after each successful export.
+- **Sample name sanitization**: Invalid filename characters replaced with `_` when suggesting default filename.
+
+#### Pattern Grid
+- **Spacing modes**: New configurable spacing options affecting both row height and column width:
+  - **Compact**: Minimal spacing (font_size × 1.3 row height, no column gaps)
+  - **Normal**: Default spacing (font_size × 1.6 row height, 0.3 char_width gaps)
+  - **Wide**: Extra spacing (font_size × 1.8 row height, 0.6 char_width gaps)
+  - **Extra Wide**: Maximum spacing (font_size × 2.1 row height, 1.0 char_width gaps)
+- **Keyboard shortcut**: `Ctrl+Shift+Space` cycles through spacing modes.
+- **Settings UI**: 4-button selector in Settings > Editor tab.
+- **Persistence**: `spacing_mode` stored in config (compact/normal/wide/extra_wide).
+- **Independent of zoom**: Spacing mode operates independently from zoom_factor.
+
+#### Instrument Export
+- **Export .hti instruments via context menu**: Right-click on instrument list (index > 0) shows "Export..." and "Import..." options.
+- **Path persistence**: Both export and import dialogs open in `default_instrument_path` directory, which updates after each operation.
+- **Export specific instrument**: `ExportInstrument(usize)` event carries instrument index, separate from main "Save..." button which saves selected instrument.
+
+### Changed
+- **Version**: 0.8.0 → 0.9.0
+
 ## [0.8.0] - 2026-05-17
 
 ### Added

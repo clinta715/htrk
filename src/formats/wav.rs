@@ -107,7 +107,28 @@ pub fn import_wav(data: &[u8]) -> FormatResult<Sample> {
 }
 
 #[allow(dead_code)]
-pub fn export_wav(sample: &Sample) -> Vec<u8> {
+pub fn sanitize_filename(name: &str, fallback: &str) -> String {
+    if name.is_empty() {
+        return fallback.to_string();
+    }
+    let result: String = name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if result.is_empty() {
+        fallback.to_string()
+    } else {
+        result
+    }
+}
+
+#[allow(dead_code)]
+pub fn export_wav(sample: &Sample, bits_per_sample: u8) -> Vec<u8> {
     let rate = if sample.sample_rate == 0 {
         44100
     } else {
@@ -117,8 +138,12 @@ pub fn export_wav(sample: &Sample) -> Vec<u8> {
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate: rate,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
+        bits_per_sample: bits_per_sample as u16,
+        sample_format: if bits_per_sample == 32 {
+            hound::SampleFormat::Float
+        } else {
+            hound::SampleFormat::Int
+        },
     };
 
     let mut buf = Cursor::new(Vec::new());
@@ -126,8 +151,27 @@ pub fn export_wav(sample: &Sample) -> Vec<u8> {
         let mut writer = hound::WavWriter::new(&mut buf, spec).unwrap();
         for &s in sample.data.iter() {
             let clamped = s.clamp(-1.0, 1.0);
-            let val = (clamped * 32768.0) as i16;
-            writer.write_sample(val).unwrap();
+            match bits_per_sample {
+                8 => {
+                    let val = (clamped * 128.0) as i8;
+                    writer.write_sample(val).unwrap();
+                },
+                16 => {
+                    let val = (clamped * 32768.0) as i16;
+                    writer.write_sample(val).unwrap();
+                },
+                24 => {
+                    let val = (clamped * 8388608.0) as i32;
+                    writer.write_sample(val).unwrap();
+                },
+                32 => {
+                    writer.write_sample(clamped).unwrap();
+                },
+                _ => {
+                    let val = (clamped * 32768.0) as i16;
+                    writer.write_sample(val).unwrap();
+                }
+            }
         }
         writer.finalize().unwrap();
     }
@@ -167,7 +211,7 @@ mod tests {
             _flags: SampleFlags::default(),
         };
 
-        let wav_bytes = export_wav(&sample);
+        let wav_bytes = export_wav(&sample, 16);
         assert!(!wav_bytes.is_empty());
         assert_eq!(&wav_bytes[0..4], b"RIFF");
 
@@ -195,7 +239,7 @@ mod tests {
             ..Sample::default()
         };
 
-        let wav_bytes = export_wav(&sample);
+        let wav_bytes = export_wav(&sample, 16);
         let imported = import_wav(&wav_bytes).unwrap();
         assert_eq!(imported.sample_rate, 22050);
         assert_eq!(imported.data.len(), 100);
@@ -211,7 +255,7 @@ mod tests {
             sample_rate: 0,
             ..Sample::default()
         };
-        let wav_bytes = export_wav(&sample);
+        let wav_bytes = export_wav(&sample, 16);
         let imported = import_wav(&wav_bytes).unwrap();
         assert_eq!(imported.sample_rate, 44100);
     }
@@ -225,7 +269,7 @@ mod tests {
             bits_per_sample: 16,
             ..Sample::default()
         };
-        let wav_bytes = export_wav(&sample);
+        let wav_bytes = export_wav(&sample, 16);
         let imported = import_wav(&wav_bytes).unwrap();
         assert!(imported.data[0] >= -1.0);
         assert!(imported.data[imported.data.len() - 1] <= 1.0);

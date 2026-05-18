@@ -34,6 +34,8 @@ pub enum InstrumentEditEvent {
     VibRateChanged(u8),
     SaveInstrument,
     LoadInstrument,
+    ExportInstrument(usize),
+    ImportInstrument,
 }
 
 pub fn draw_instrument_editor(
@@ -62,17 +64,29 @@ pub fn draw_instrument_editor(
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                 for i in 1..module.instruments.len().max(100) {
-                    if let Some(inst) = module.instruments.get(i) {
-                        let name = &inst.name;
-                        let label = format!("{:02}: {}", i, if name.is_empty() { "Untitled" } else { name });
-                        if ui.selectable_label(*selected_instrument == i, label).clicked() {
-                            *selected_instrument = i;
-                        }
+                    let is_selected = *selected_instrument == i;
+                    let has_inst = module.instruments.get(i).is_some();
+                    let label = if has_inst {
+                        let name = &module.instruments.get(i).unwrap().name;
+                        format!("{:02}: {}", i, if name.is_empty() { "Untitled" } else { name })
                     } else {
-                        let label = format!("{:02}: (empty)", i);
-                        if ui.selectable_label(*selected_instrument == i, label).clicked() {
-                            *selected_instrument = i;
-                        }
+                        format!("{:02}: (empty)", i)
+                    };
+                    let response = ui.selectable_label(is_selected, label);
+                    if response.clicked() {
+                        *selected_instrument = i;
+                    }
+                    if has_inst && i > 0 {
+                        response.context_menu(|ui| {
+                            if ui.button("Export...").clicked() {
+                                event = Some(InstrumentEditEvent::ExportInstrument(i));
+                                ui.close_menu();
+                            }
+                            if ui.button("Import...").clicked() {
+                                event = Some(InstrumentEditEvent::ImportInstrument);
+                                ui.close_menu();
+                            }
+                        });
                     }
                 }
             });

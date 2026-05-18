@@ -123,6 +123,7 @@ pub struct HtrkApp {
     show_about: bool,
     settings_state: crate::ui::settings_window::SettingsState,
     wav_export_state: crate::ui::wav_export_window::WavExportState,
+    sample_export_dialog: Option<crate::ui::sample_export_dialog::SampleExportDialog>,
     last_backup_time: std::time::Instant,
     module_dirty: bool,
     audio_init_failed: bool,
@@ -195,6 +196,7 @@ impl Default for HtrkApp {
             show_about: false,
             settings_state: crate::ui::settings_window::SettingsState::from_config(&config),
             wav_export_state: crate::ui::wav_export_window::WavExportState::new(44100),
+            sample_export_dialog: None,
             last_backup_time: std::time::Instant::now(),
             module_dirty: false,
             audio_init_failed: false,
@@ -734,14 +736,14 @@ impl HtrkApp {
                             }
                             egui::Key::O => {
                                 match self.current_view {
-                                    AppView::Sample => self.file_browser.open(BrowserMode::Samples),
-                                    AppView::Instrument => self.file_browser.open(BrowserMode::Instruments),
+                                    AppView::Sample => self.file_browser.open(BrowserMode::Samples, &mut self.config),
+                                    AppView::Instrument => self.file_browser.open(BrowserMode::Instruments, &mut self.config),
                                     _ => self.open_file_dialog(),
                                 }
                                 handled = true;
                             }
                             egui::Key::I => {
-                                self.file_browser.open(BrowserMode::Samples);
+                                self.file_browser.open(BrowserMode::Samples, &mut self.config);
                                 handled = true;
                             }
                             egui::Key::ArrowRight => {
@@ -768,12 +770,15 @@ impl HtrkApp {
                     if let egui::Event::Key { key, pressed: true, .. } = event {
                         match key {
                             egui::Key::S => self.save_as_dialog(),
-                            egui::Key::I => self.file_browser.open(BrowserMode::Instruments),
+                            egui::Key::I => self.file_browser.open(BrowserMode::Instruments, &mut self.config),
                             egui::Key::ArrowUp => {
                                 if self.current_octave < 9 { self.current_octave += 1; }
                             }
                             egui::Key::ArrowDown => {
                                 if self.current_octave > 0 { self.current_octave -= 1; }
+                            }
+                            egui::Key::Space => {
+                                self.cycle_spacing_mode();
                             }
                             _ => {}
                         }
@@ -1275,6 +1280,15 @@ impl HtrkApp {
         }
     }
 
+    fn cycle_spacing_mode(&mut self) {
+        use crate::app_config::SpacingMode;
+        let modes = [SpacingMode::Compact, SpacingMode::Normal, SpacingMode::Wide, SpacingMode::ExtraWide];
+        let current = self.config.get_spacing_mode();
+        let idx = modes.iter().position(|&m| m == current).unwrap_or(1);
+        let next = modes[(idx + 1) % modes.len()];
+        self.config.set_spacing_mode(next);
+    }
+
     fn extend_selection_down(&mut self) {
         if self.selection.is_none() {
             self.selection_anchor = Some(self.cursor);
@@ -1673,7 +1687,7 @@ impl HtrkApp {
     }
 
     fn open_file_dialog(&mut self) {
-        self.file_browser.open(BrowserMode::Modules);
+        self.file_browser.open(BrowserMode::Modules, &mut self.config);
     }
 
     fn import_wav(&mut self, path: &str) {
@@ -1747,7 +1761,7 @@ impl HtrkApp {
     }
 
     fn save_as_dialog(&mut self) {
-        self.file_browser.open(BrowserMode::Projects);
+        self.file_browser.open(BrowserMode::Projects, &mut self.config);
     }
 
     fn open_wav_export_dialog(&mut self) {
@@ -2159,6 +2173,28 @@ impl HtrkApp {
                 self.sync_module_to_audio();
                 return;
             }
+            SampleEditEvent::ExportSample(idx) => {
+                let module = match &self.module {
+                    Some(m) => m,
+                    None => return,
+                };
+                let sample = match module.samples.get(idx) {
+                    Some(s) if !s.data.is_empty() => s,
+                    _ => return,
+                };
+                let default_dir = self.config.default_wav_path.as_deref();
+                let bit_depth = self.config.get_sample_export_bit_depth();
+                self.sample_export_dialog = Some(
+                    crate::ui::sample_export_dialog::SampleExportDialog::new(
+                        idx,
+                        sample.name.clone(),
+                        sample.sample_rate,
+                        default_dir,
+                        bit_depth,
+                    )
+                );
+                return;
+            }
         };
 
         self.ensure_module_ownership();
@@ -2379,6 +2415,12 @@ impl HtrkApp {
             InstrumentEditEvent::LoadInstrument => {
                 return;
             }
+            InstrumentEditEvent::ExportInstrument(_) => {
+                return;
+            }
+            InstrumentEditEvent::ImportInstrument => {
+                return;
+            }
         };
 
         self.ensure_module_ownership();
@@ -2411,13 +2453,59 @@ impl HtrkApp {
         } else {
             inst.name.clone()
         };
-        if let Some(path) = rfd::FileDialog::new()
+        let mut dialog = rfd::FileDialog::new()
             .set_title("Save Instrument")
             .set_file_name(format!("{}.hti", inst_name))
-            .add_filter("HTRK Instruments", &["hti"])
-            .save_file()
-        {
+            .add_filter("HTRK Instruments", &["hti"]);
+        if let Some(ref dir) = self.config.default_instrument_path {
+            let dir_path = std::path::PathBuf::from(dir);
+            if dir_path.is_dir() {
+                dialog = dialog.set_directory(&dir_path);
+            }
+        }
+        if let Some(path) = dialog.save_file() {
             self.save_instrument_to_file(inst_idx, path.to_string_lossy().as_ref());
+            if let Some(parent) = path.parent() {
+                self.config.default_instrument_path = Some(parent.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    fn export_instrument_dialog(&mut self, inst_idx: usize) {
+        let module = match &self.module {
+            Some(m) => m,
+            None => {
+                eprintln!("No module loaded");
+                return;
+            }
+        };
+        let inst = match module.instruments.get(inst_idx) {
+            Some(i) => i,
+            None => {
+                eprintln!("No instrument at index {}", inst_idx);
+                return;
+            }
+        };
+        let inst_name = if inst.name.is_empty() {
+            format!("Instrument_{:02X}", inst_idx)
+        } else {
+            inst.name.clone()
+        };
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Export Instrument")
+            .set_file_name(format!("{}.hti", inst_name))
+            .add_filter("HTRK Instruments", &["hti"]);
+        if let Some(ref dir) = self.config.default_instrument_path {
+            let dir_path = std::path::PathBuf::from(dir);
+            if dir_path.is_dir() {
+                dialog = dialog.set_directory(&dir_path);
+            }
+        }
+        if let Some(path) = dialog.save_file() {
+            self.save_instrument_to_file(inst_idx, path.to_string_lossy().as_ref());
+            if let Some(parent) = path.parent() {
+                self.config.default_instrument_path = Some(parent.to_string_lossy().into_owned());
+            }
         }
     }
 
@@ -2453,12 +2541,21 @@ impl HtrkApp {
     }
 
     fn load_instrument_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
+        let mut dialog = rfd::FileDialog::new()
             .set_title("Load Instrument")
-            .add_filter("HTRK Instruments", &["hti"])
-            .pick_file()
-        {
-            self.load_instrument_from_file(path.to_string_lossy().as_ref());
+            .add_filter("HTRK Instruments", &["hti"]);
+        if let Some(ref dir) = self.config.default_instrument_path {
+            let dir_path = std::path::PathBuf::from(dir);
+            if dir_path.is_dir() {
+                dialog = dialog.set_directory(&dir_path);
+            }
+        }
+        if let Some(path) = dialog.pick_file() {
+            let path_str = path.to_string_lossy().to_string();
+            self.load_instrument_from_file(&path_str);
+            if let Some(parent) = path.parent() {
+                self.config.default_instrument_path = Some(parent.to_string_lossy().into_owned());
+            }
         }
     }
 
@@ -2631,10 +2728,10 @@ impl eframe::App for HtrkApp {
                 self.open_file_dialog();
             }
             if menu_resp.import_sample {
-                self.file_browser.open(BrowserMode::Samples);
+                self.file_browser.open(BrowserMode::Samples, &mut self.config);
             }
             if menu_resp.import_instrument {
-                self.file_browser.open(BrowserMode::Instruments);
+                self.file_browser.open(BrowserMode::Instruments, &mut self.config);
             }
             if menu_resp.save_file {
                 self.save_current_file();
@@ -2878,7 +2975,7 @@ impl eframe::App for HtrkApp {
                 AppView::Pattern => {
                     let num_channels = self.num_channels();
 
-                    let metrics = crate::ui::pattern_grid::GridMetrics::new(self.config.editor_font_size as f32);
+                    let metrics = crate::ui::pattern_grid::GridMetrics::new(self.config.editor_font_size as f32, self.config.get_spacing_mode());
                     let visible_channels = crate::ui::pattern_grid::GridMetrics::calculate_visible_channels(ui, metrics);
                     let visible_channels = visible_channels.min(num_channels - self.scroll_channel).max(1);
 
@@ -3048,6 +3145,12 @@ impl eframe::App for HtrkApp {
                                 crate::ui::instrument_editor::InstrumentEditEvent::LoadInstrument => {
                                     self.load_instrument_dialog();
                                 }
+                                crate::ui::instrument_editor::InstrumentEditEvent::ExportInstrument(idx) => {
+                                    self.export_instrument_dialog(idx);
+                                }
+                                crate::ui::instrument_editor::InstrumentEditEvent::ImportInstrument => {
+                                    self.load_instrument_dialog();
+                                }
                                 other => self.handle_instrument_edit(other),
                             }
                         }
@@ -3150,6 +3253,26 @@ impl eframe::App for HtrkApp {
                 });
         }
 
+        if let Some(ref mut dialog) = self.sample_export_dialog {
+            if let Some((path, bit_depth)) = dialog.show(ctx) {
+                let sample_idx = dialog.sample_index;
+                if let Some(ref module) = self.module {
+                    if let Some(sample) = module.samples.get(sample_idx) {
+                        let wav_data = crate::formats::wav::export_wav(sample, bit_depth);
+                        if let Err(e) = std::fs::write(&path, wav_data) {
+                            eprintln!("Failed to write sample: {}", e);
+                        } else {
+                            if let Some(parent) = path.parent() {
+                                self.config.default_wav_path = Some(parent.to_string_lossy().into_owned());
+                            }
+                            self.config.set_sample_export_bit_depth(bit_depth);
+                        }
+                    }
+                }
+                self.sample_export_dialog = None;
+            }
+        }
+
         if self.file_browser.show {
             let mut file_browser_open = true;
             egui::Window::new("File Browser")
@@ -3158,7 +3281,7 @@ impl eframe::App for HtrkApp {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .resizable(true)
                 .show(ctx, |ui| {
-                    if let Some(path) = self.file_browser.render(ui) {
+                    if let Some(path) = self.file_browser.render(ui, Some(&mut self.config)) {
                         let path_str = path.to_string_lossy().to_string();
                         let ext = path.extension()
                             .and_then(|e| e.to_str())

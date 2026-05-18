@@ -23,6 +23,7 @@ pub enum SampleEditEvent {
     SilenceRegion(usize, usize),
     TrimSilence,
     SetLoopFromSelection(usize, usize),
+    ExportSample(usize),
 }
 
 pub fn draw_sample_editor(
@@ -126,6 +127,14 @@ pub fn draw_sample_editor(
                             if response.clicked() {
                                 *selected_sample = i;
                                 *selection = None;
+                            }
+                            if has_data && i > 0 {
+                                response.context_menu(|ui| {
+                                    if ui.button("Export Sample...").clicked() {
+                                        event = Some(SampleEditEvent::ExportSample(i));
+                                        ui.close_menu();
+                                    }
+                                });
                             }
                         }
                     }

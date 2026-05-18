@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-use crate::app_config::AppConfig;
+use crate::app_config::{AppConfig, SpacingMode};
 use crate::ui::theme::ThemePreset;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +47,8 @@ pub struct SettingsState {
     editor_highlight_minor: u8,
     editor_highlight_major: u8,
 
+    spacing_mode: SpacingMode,
+
     default_amplify_factor: f32,
 
     default_interpolation: String,
@@ -90,6 +92,8 @@ impl SettingsState {
             editor_highlight_minor: config.row_highlight_minor,
             editor_highlight_major: config.row_highlight_major,
 
+            spacing_mode: config.get_spacing_mode(),
+
             default_amplify_factor: config.default_amplify_factor,
 
             default_interpolation: config.default_interpolation.clone(),
@@ -128,6 +132,7 @@ impl SettingsState {
         config.follow_playback_default = self.follow_playback_default;
         config.row_highlight_minor = self.editor_highlight_minor;
         config.row_highlight_major = self.editor_highlight_major;
+        config.set_spacing_mode(self.spacing_mode);
 
         config.default_amplify_factor = self.default_amplify_factor;
 
@@ -317,6 +322,24 @@ fn draw_editor_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
     ui.horizontal(|ui| {
         ui.label("Zoom Factor:");
         ui.add(egui::Slider::new(&mut state.zoom_factor, 0.5..=2.5).step_by(0.1));
+    });
+    ui.add_space(4.0);
+
+    ui.horizontal(|ui| {
+        ui.label("Grid Spacing:");
+        let modes = [
+            (SpacingMode::Compact, "Compact"),
+            (SpacingMode::Normal, "Normal"),
+            (SpacingMode::Wide, "Wide"),
+            (SpacingMode::ExtraWide, "Extra Wide"),
+        ];
+        for (mode, label) in modes {
+            let is_selected = state.spacing_mode == mode;
+            if ui.selectable_label(is_selected, label).clicked() {
+                state.spacing_mode = mode;
+            }
+            ui.add_space(4.0);
+        }
     });
     ui.add_space(4.0);
 

@@ -1,6 +1,7 @@
 use eframe::egui::{self, Pos2, Rect, Stroke};
 
-use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect};
+use crate::app_config::SpacingMode;
+use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect, C669Effect, MmdEffect, UltEffect, StmEffect};
 use crate::sequencer::note::{Note, TONE_NAMES};
 use crate::sequencer::pattern::Cell;
 
@@ -27,23 +28,73 @@ pub struct GridMetrics {
     pub char_width: f32,
     pub row_num_width: f32,
     pub channel_width: f32,
+    pub spacing_mode: SpacingMode,
+    pub note_width: f32,
+    pub inst_width: f32,
+    pub vol_width: f32,
+    pub effect_width: f32,
+    pub note_to_inst_gap: f32,
+    pub inst_to_vol_gap: f32,
+    pub vol_to_effect_gap: f32,
 }
 
 impl GridMetrics {
-    pub fn new(font_size: f32) -> Self {
-        let char_width = font_size * 0.6; // Approximation for monospace
+    pub fn new(font_size: f32, spacing_mode: SpacingMode) -> Self {
+        let char_width = font_size * 0.6;
+        let (row_spacing, col_gap) = match spacing_mode {
+            SpacingMode::Compact => (0.0, 0.0),
+            SpacingMode::Normal => (0.3, 0.3),
+            SpacingMode::Wide => (0.5, 0.6),
+            SpacingMode::ExtraWide => (0.8, 1.0),
+        };
+        let note_width = char_width * 3.5;
+        let inst_width = char_width * 2.5;
+        let vol_width = char_width * 2.5;
+        let effect_width = char_width * 3.0;
+        let note_to_inst_gap = char_width * col_gap;
+        let inst_to_vol_gap = char_width * col_gap;
+        let vol_to_effect_gap = char_width * col_gap;
+        let channel_width = note_width + note_to_inst_gap + inst_width + inst_to_vol_gap + vol_width + vol_to_effect_gap + effect_width;
         Self {
             font_size,
-            row_height: font_size * 1.3,
+            row_height: font_size * 1.3 + font_size * row_spacing,
             char_width,
             row_num_width: char_width * 4.0,
-            channel_width: char_width * 14.0,
+            channel_width,
+            spacing_mode,
+            note_width,
+            inst_width,
+            vol_width,
+            effect_width,
+            note_to_inst_gap,
+            inst_to_vol_gap,
+            vol_to_effect_gap,
         }
     }
 
     pub fn calculate_visible_channels(ui: &egui::Ui, metrics: GridMetrics) -> usize {
         let available_size = ui.available_size();
         ((available_size.x - metrics.row_num_width) / metrics.channel_width).floor() as usize
+    }
+
+    pub fn inst_x(&self) -> f32 {
+        self.note_width + self.note_to_inst_gap
+    }
+
+    pub fn vol_x(&self) -> f32 {
+        self.inst_x() + self.inst_width + self.inst_to_vol_gap
+    }
+
+    pub fn effect_type_x(&self) -> f32 {
+        self.vol_x() + self.vol_width + self.vol_to_effect_gap
+    }
+
+    pub fn effect_param1_x(&self) -> f32 {
+        self.effect_type_x() + self.char_width
+    }
+
+    pub fn effect_param2_x(&self) -> f32 {
+        self.effect_param1_x() + self.char_width
     }
 }
 
@@ -407,24 +458,19 @@ pub fn draw_pattern_grid(
 }
 
 fn position_to_sub_column(x: f32, metrics: GridMetrics) -> SubColumn {
-    let char_pos = x / metrics.char_width;
-    if char_pos < 4.0 {
+    if x < metrics.note_width {
         SubColumn::Note
-    } else if char_pos < 6.0 {
-        if char_pos < 5.0 {
-            SubColumn::InstrumentTens
-        } else {
-            SubColumn::InstrumentOnes
-        }
-    } else if char_pos < 9.0 {
-        if char_pos < 8.0 {
-            SubColumn::VolumeTens
-        } else {
-            SubColumn::VolumeOnes
-        }
-    } else if char_pos < 10.0 {
+    } else if x < metrics.inst_x() + metrics.char_width * 0.5 {
+        SubColumn::InstrumentTens
+    } else if x < metrics.inst_x() + metrics.inst_width {
+        SubColumn::InstrumentOnes
+    } else if x < metrics.vol_x() + metrics.char_width * 0.5 {
+        SubColumn::VolumeTens
+    } else if x < metrics.vol_x() + metrics.vol_width {
+        SubColumn::VolumeOnes
+    } else if x < metrics.effect_type_x() + metrics.char_width * 0.5 {
         SubColumn::EffectType
-    } else if char_pos < 11.0 {
+    } else if x < metrics.effect_param1_x() + metrics.char_width * 0.5 {
         SubColumn::EffectParamHigh
     } else {
         SubColumn::EffectParamLow
@@ -465,7 +511,7 @@ fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: Grid
         theme.fg_note_empty
     };
     painter.text(
-        Pos2::new(x + metrics.char_width * 4.0, center_y),
+        Pos2::new(x + metrics.inst_x(), center_y),
         egui::Align2::LEFT_CENTER,
         ins_text,
         font.clone(),
@@ -482,7 +528,7 @@ fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: Grid
         theme.fg_note_empty
     };
     painter.text(
-        Pos2::new(x + metrics.char_width * 7.0, center_y),
+        Pos2::new(x + metrics.vol_x(), center_y),
         egui::Align2::LEFT_CENTER,
         vol_text,
         font.clone(),
@@ -501,14 +547,14 @@ fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: Grid
         theme.fg_note_empty
     };
     painter.text(
-        Pos2::new(x + metrics.char_width * 10.0, center_y),
+        Pos2::new(x + metrics.effect_type_x(), center_y),
         egui::Align2::LEFT_CENTER,
         fx_type,
         font.clone(),
         fx_type_color,
     );
     painter.text(
-        Pos2::new(x + metrics.char_width * 11.0, center_y),
+        Pos2::new(x + metrics.effect_param1_x(), center_y),
         egui::Align2::LEFT_CENTER,
         fx_param,
         font,
@@ -593,6 +639,21 @@ fn format_effect(effect: &Effect) -> (String, String) {
                 FormatEffect::S3m(se) => match se {
                     S3mEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
                     _ => ("s".to_string(), "??".to_string()),
+                },
+                FormatEffect::C669(ce) => match ce {
+                    C669Effect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
+                    _ => ("?".to_string(), "??".to_string()),
+                },
+                FormatEffect::Mmd(me) => match me {
+                    MmdEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
+                    _ => ("?".to_string(), "??".to_string()),
+                },
+                FormatEffect::Ult(ue) => match ue {
+                    UltEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
+                    _ => ("?".to_string(), "??".to_string()),
+                },
+                FormatEffect::Stm(se) => match se {
+                    StmEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
                 },
             }
         }

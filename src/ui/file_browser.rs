@@ -20,7 +20,7 @@ pub enum BrowserMode {
 impl BrowserMode {
     pub fn extensions(&self) -> Vec<&'static str> {
         match self {
-            BrowserMode::Modules => vec!["htk", "it", "xm", "s3m", "mod"],
+            BrowserMode::Modules => vec!["htk", "it", "xm", "s3m", "mod", "669", "ult", "mmd1", "mmd3", "stm"],
             BrowserMode::Samples => vec!["wav", "raw"],
             BrowserMode::Instruments => vec!["hti"],
             BrowserMode::Projects => vec!["htk"],
@@ -37,6 +37,79 @@ impl BrowserMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewMode {
+    List,
+    Details,
+}
+
+impl ViewMode {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "list" => Some(ViewMode::List),
+            "details" => Some(ViewMode::Details),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ViewMode::List => "list",
+            ViewMode::Details => "details",
+        }
+    }
+}
+
+impl Default for ViewMode {
+    fn default() -> Self {
+        ViewMode::Details
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortBy {
+    Name,
+    Date,
+    Size,
+    Type,
+}
+
+impl SortBy {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "name" => Some(SortBy::Name),
+            "date" => Some(SortBy::Date),
+            "size" => Some(SortBy::Size),
+            "type" => Some(SortBy::Type),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SortBy::Name => "name",
+            SortBy::Date => "date",
+            SortBy::Size => "size",
+            SortBy::Type => "type",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            SortBy::Name => "Name",
+            SortBy::Date => "Date",
+            SortBy::Size => "Size",
+            SortBy::Type => "Type",
+        }
+    }
+}
+
+impl Default for SortBy {
+    fn default() -> Self {
+        SortBy::Name
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FileEntry {
     pub name: String,
@@ -45,6 +118,7 @@ pub struct FileEntry {
     pub size: u64,
     pub extension: String,
     pub is_hidden: bool,
+    pub modified: Option<std::time::SystemTime>,
 }
 
 impl FileEntry {
@@ -53,10 +127,11 @@ impl FileEntry {
         let is_dir = path.is_dir();
         let is_hidden = name.starts_with('.');
 
+        let metadata = fs::metadata(path).ok()?;
+        let modified = metadata.modified().ok();
         let (size, extension) = if is_dir {
             (0, String::new())
         } else {
-            let metadata = fs::metadata(path).ok()?;
             let ext = path.extension()
                 .and_then(|e| e.to_str())
                 .map(|s| s.to_lowercase())
@@ -71,6 +146,7 @@ impl FileEntry {
             size,
             extension,
             is_hidden,
+            modified,
         })
     }
 
@@ -100,6 +176,19 @@ fn format_duration(seconds: f64) -> String {
         let secs = (seconds % 60.0) as u32;
         format!("{}:{:02}", mins, secs)
     }
+}
+
+fn format_date(time: std::time::SystemTime) -> String {
+    let secs = time.duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days_since_epoch = secs / 86400;
+    let year_base = days_since_epoch / 365;
+    let remaining_days = days_since_epoch % 365;
+    let year = 1970 + year_base as i64;
+    let month = (remaining_days / 30).max(1).min(12) as u32;
+    let day = (remaining_days % 30).max(1).min(31) as u32;
+    format!("{:02}/{:02}/{:02}", month, day, (year % 100) as u32)
 }
 
 fn wav_duration(path: &Path) -> Option<f64> {
@@ -181,6 +270,9 @@ pub struct FileBrowser {
     pub search_query: String,
     pub favorites: Vec<PathBuf>,
     duration_cache: HashMap<PathBuf, Option<f64>>,
+    pub view_mode: ViewMode,
+    pub sort_by: SortBy,
+    pub sort_descending: bool,
 }
 
 impl Default for FileBrowser {
@@ -202,6 +294,9 @@ impl Default for FileBrowser {
             search_query: String::new(),
             favorites: Vec::new(),
             duration_cache: HashMap::new(),
+            view_mode: ViewMode::Details,
+            sort_by: SortBy::Name,
+            sort_descending: false,
         }
     }
 }
@@ -230,15 +325,13 @@ impl FileBrowser {
             }
         }
 
-        let _ = browser.refresh();
+        let _ = browser.refresh(None);
         browser
     }
 
-    pub fn open(&mut self, mode: BrowserMode) {
+    pub fn open(&mut self, mode: BrowserMode, config: &mut crate::app_config::AppConfig) {
         self.mode = mode;
         self.show = true;
-        self.selected_index = 0;
-        self.page = 0;
         self.preview_enabled = false;
         self.search_query.clear();
 
@@ -248,7 +341,19 @@ impl FileBrowser {
             }
         }
 
-        let _ = self.refresh();
+        if let Some((idx, pg)) = config.get_last_selection(mode, &self.current_path) {
+            self.selected_index = idx;
+            self.page = pg;
+        } else {
+            self.selected_index = 0;
+            self.page = 0;
+        }
+
+        self.view_mode = config.get_file_browser_view_mode();
+        self.sort_by = config.get_file_browser_sort_by();
+        self.sort_descending = config.get_file_browser_sort_desc();
+
+        let _ = self.refresh(Some(config));
     }
 
     pub fn close(&mut self) {
@@ -286,7 +391,10 @@ impl FileBrowser {
             .collect()
     }
 
-    pub fn refresh(&mut self) -> std::io::Result<()> {
+    pub fn refresh(&mut self, config: Option<&mut crate::app_config::AppConfig>) -> std::io::Result<()> {
+        let old_path = self.current_path.clone();
+        let old_selection = (self.selected_index, self.page);
+
         self.entries.clear();
         self.selected_index = 0;
         self.page = 0;
@@ -309,12 +417,31 @@ impl FileBrowser {
 
         let mut dirs: Vec<_> = entries.iter().filter(|e| e.is_dir).cloned().collect();
         let mut files: Vec<_> = entries.iter().filter(|e| !e.is_dir).cloned().collect();
-        dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-        files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+        let sort_fn = |a: &FileEntry, b: &FileEntry| {
+            let cmp = match self.sort_by {
+                SortBy::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                SortBy::Date => a.modified.cmp(&b.modified),
+                SortBy::Size => a.size.cmp(&b.size),
+                SortBy::Type => a.extension.cmp(&b.extension),
+            };
+            if self.sort_descending { cmp.reverse() } else { cmp }
+        };
+
+        dirs.sort_by(&sort_fn);
+        files.sort_by(&sort_fn);
 
         self.entries = dirs.into_iter().chain(files.into_iter()).collect();
 
         self.last_dirs.insert(self.mode, self.current_path.clone());
+
+        if let Some(cfg) = config {
+            if let Some((idx, pg)) = cfg.get_last_selection(self.mode, &self.current_path) {
+                self.selected_index = idx.min(self.entries.len().saturating_sub(1));
+                self.page = pg.min(self.total_pages().saturating_sub(1));
+            }
+            cfg.set_last_selection(self.mode, &old_path, old_selection.0, old_selection.1);
+        }
 
         Ok(())
     }
@@ -375,7 +502,7 @@ impl FileBrowser {
         if let Some(parent) = self.current_path.parent() {
             if parent.exists() {
                 self.current_path = parent.to_path_buf();
-                let _ = self.refresh();
+                let _ = self.refresh(None);
                 return true;
             }
         }
@@ -385,14 +512,14 @@ impl FileBrowser {
     pub fn navigate_home(&mut self) {
         if self.project_root.exists() && self.project_root != self.current_path {
             self.current_path = self.project_root.clone();
-            let _ = self.refresh();
+            let _ = self.refresh(None);
         }
     }
 
     pub fn navigate_to(&mut self, path: &Path) {
         if path.is_dir() {
             self.current_path = path.to_path_buf();
-            let _ = self.refresh();
+            let _ = self.refresh(None);
         }
     }
 
@@ -454,7 +581,7 @@ impl FileBrowser {
         self.favorites.retain(|p| p != path);
     }
 
-    pub fn render(&mut self, ui: &mut Ui) -> Option<PathBuf> {
+    pub fn render(&mut self, ui: &mut Ui, config: Option<&mut crate::app_config::AppConfig>) -> Option<PathBuf> {
         if !self.show {
             return None;
         }
@@ -489,13 +616,35 @@ impl FileBrowser {
                                         self.current_path = last.clone();
                                     }
                                 }
-                                let _ = self.refresh();
+                                let _ = self.refresh(None);
                             }
                         }
                     }
+                    ui.separator();
+                    let view_icon = if self.view_mode == ViewMode::Details { "☰" } else { "≡" };
+                    if ui.button(view_icon).clicked() {
+                        self.view_mode = if self.view_mode == ViewMode::List {
+                            ViewMode::Details
+                        } else {
+                            ViewMode::List
+                        };
+                    }
+                    egui_module::ComboBox::from_id_salt("file_sort")
+                        .selected_text(self.sort_by.label())
+                        .show_ui(ui, |ui| {
+                            for sort in [SortBy::Name, SortBy::Date, SortBy::Size, SortBy::Type] {
+                                if ui.selectable_label(self.sort_by == sort, sort.label()).clicked() {
+                                    self.sort_by = sort;
+                                }
+                            }
+                        });
+                    let dir_icon = if self.sort_descending { "↓" } else { "↑" };
+                    if ui.button(dir_icon).clicked() {
+                        self.sort_descending = !self.sort_descending;
+                    }
                     ui.with_layout(egui_module::Layout::right_to_left(egui_module::Align::Center), |ui| {
                         if ui.checkbox(&mut self.show_hidden, "Hidden").clicked() {
-                            let _ = self.refresh();
+                            let _ = self.refresh(None);
                         }
                         if ui.button("✕").clicked() {
                             self.close();
@@ -613,59 +762,166 @@ impl FileBrowser {
                     .max_height(ui.available_height() - 40.0)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        egui_module::Grid::new("file_entries")
-                            .striped(true)
-                            .spacing(egui_module::vec2(4.0, 2.0))
-                            .show(ui, |ui| {
-                                for (vis_idx, (_orig_idx, entry)) in page_entries.iter().enumerate() {
-                                    let is_selected = self.selected_index == vis_idx;
+                        match self.view_mode {
+                            ViewMode::List => {
+                                egui_module::Grid::new("file_entries")
+                                    .striped(true)
+                                    .spacing(egui_module::vec2(4.0, 2.0))
+                                    .show(ui, |ui| {
+                                        for (vis_idx, (_orig_idx, entry)) in page_entries.iter().enumerate() {
+                                            let is_selected = self.selected_index == vis_idx;
+                                            let name_text = if entry.is_dir {
+                                                format!("📁 {}", entry.name)
+                                            } else {
+                                                entry.name.clone()
+                                            };
+                                            let response = ui.selectable_label(is_selected, &name_text);
 
-                                    let name_text = if entry.is_dir {
-                                        format!("📁 {}", entry.name)
-                                    } else {
-                                        entry.name.clone()
-                                    };
-                                    let response = ui.selectable_label(is_selected, &name_text);
-
-                                    if !entry.is_dir {
-                                        ui.with_layout(egui_module::Layout::right_to_left(egui_module::Align::Center), |ui| {
-                                            if entry.extension == "wav" {
-                                                if let Some(dur) = self.get_duration(&entry.path) {
+                                            if !entry.is_dir {
+                                                ui.with_layout(egui_module::Layout::right_to_left(egui_module::Align::Center), |ui| {
+                                                    let audio_exts = ["wav", "mp3", "ogg", "flac", "it", "xm", "s3m", "mod", "669"];
+                                                    if audio_exts.contains(&entry.extension.as_str()) {
+                                                        if let Some(dur) = self.get_duration(&entry.path) {
+                                                            ui.label(
+                                                                egui_module::RichText::new(format_duration(dur))
+                                                                    .font(egui_module::FontId::monospace(9.0))
+                                                                    .color(egui_module::Color32::from_rgb(100, 140, 180)),
+                                                            );
+                                                        }
+                                                    }
                                                     ui.label(
-                                                        egui_module::RichText::new(format_duration(dur))
+                                                        egui_module::RichText::new(entry.format_size())
                                                             .font(egui_module::FontId::monospace(9.0))
-                                                            .color(egui_module::Color32::from_rgb(100, 140, 180)),
+                                                            .color(egui_module::Color32::from_rgb(120, 120, 130)),
                                                     );
+                                                });
+                                            } else {
+                                                ui.label(
+                                                    egui_module::RichText::new("DIR")
+                                                        .font(egui_module::FontId::monospace(9.0))
+                                                        .color(egui_module::Color32::from_rgb(90, 90, 100)),
+                                                );
+                                            }
+
+                                            ui.end_row();
+
+                                            if response.clicked() {
+                                                self.select_index(vis_idx);
+                                            }
+                                            if response.double_clicked() {
+                                                if entry.is_dir {
+                                                    self.navigate_to(&entry.path);
+                                                } else {
+                                                    selected_path = Some(entry.path.clone());
                                                 }
                                             }
-                                            ui.label(
-                                                egui_module::RichText::new(entry.format_size())
-                                                    .font(egui_module::FontId::monospace(9.0))
-                                                    .color(egui_module::Color32::from_rgb(120, 120, 130)),
-                                            );
-                                        });
-                                    } else {
-                                        ui.label(
-                                            egui_module::RichText::new("DIR")
-                                                .font(egui_module::FontId::monospace(9.0))
-                                                .color(egui_module::Color32::from_rgb(90, 90, 100)),
-                                        );
-                                    }
-
-                                    ui.end_row();
-
-                                    if response.clicked() {
-                                        self.select_index(vis_idx);
-                                    }
-                                    if response.double_clicked() {
-                                        if entry.is_dir {
-                                            self.navigate_to(&entry.path);
-                                        } else {
-                                            selected_path = Some(entry.path.clone());
                                         }
-                                    }
-                                }
-                            });
+                                    });
+                            }
+                            ViewMode::Details => {
+                                egui_module::Grid::new("file_entries_header")
+                                    .spacing(egui_module::vec2(4.0, 2.0))
+                                    .show(ui, |ui| {
+                                        ui.label(egui_module::RichText::new("Name").strong());
+                                        ui.with_layout(egui_module::Layout::right_to_left(egui_module::Align::Center), |ui| {
+                                            ui.set_width(60.0);
+                                            ui.label(egui_module::RichText::new("Duration").font(egui_module::FontId::monospace(9.0)));
+                                            ui.set_width(50.0);
+                                            ui.label(egui_module::RichText::new("Type").font(egui_module::FontId::monospace(9.0)));
+                                            ui.set_width(70.0);
+                                            ui.label(egui_module::RichText::new("Size").font(egui_module::FontId::monospace(9.0)));
+                                            ui.set_width(80.0);
+                                            ui.label(egui_module::RichText::new("Modified").font(egui_module::FontId::monospace(9.0)));
+                                        });
+                                        ui.end_row();
+                                    });
+                                ui.separator();
+                                egui_module::Grid::new("file_entries_details")
+                                    .striped(true)
+                                    .spacing(egui_module::vec2(4.0, 2.0))
+                                    .show(ui, |ui| {
+                                        for (vis_idx, (_orig_idx, entry)) in page_entries.iter().enumerate() {
+                                            let is_selected = self.selected_index == vis_idx;
+                                            let name_text = if entry.is_dir {
+                                                format!("📁 {}", entry.name)
+                                            } else {
+                                                entry.name.clone()
+                                            };
+                                            let response = ui.selectable_label(is_selected, &name_text);
+
+                                            ui.with_layout(egui_module::Layout::right_to_left(egui_module::Align::Center), |ui| {
+                                                let audio_exts = ["wav", "mp3", "ogg", "flac", "it", "xm", "s3m", "mod", "669"];
+                                                if !entry.is_dir {
+                                                    if audio_exts.contains(&entry.extension.as_str()) {
+                                                        if let Some(dur) = self.get_duration(&entry.path) {
+                                                            ui.set_width(60.0);
+                                                            ui.label(
+                                                                egui_module::RichText::new(format_duration(dur))
+                                                                    .font(egui_module::FontId::monospace(9.0))
+                                                                    .color(egui_module::Color32::from_rgb(100, 140, 180)),
+                                                            );
+                                                        } else {
+                                                            ui.set_width(60.0);
+                                                            ui.label("");
+                                                        }
+                                                    } else {
+                                                        ui.set_width(60.0);
+                                                        ui.label("");
+                                                    }
+                                                    ui.set_width(50.0);
+                                                    ui.label(
+                                                        egui_module::RichText::new(entry.extension.to_uppercase())
+                                                            .font(egui_module::FontId::monospace(9.0))
+                                                            .color(egui_module::Color32::from_rgb(100, 100, 110)),
+                                                    );
+                                                    ui.set_width(70.0);
+                                                    ui.label(
+                                                        egui_module::RichText::new(entry.format_size())
+                                                            .font(egui_module::FontId::monospace(9.0))
+                                                            .color(egui_module::Color32::from_rgb(120, 120, 130)),
+                                                    );
+                                                    ui.set_width(80.0);
+                                                    if let Some(modified) = entry.modified {
+                                                        ui.label(
+                                                            egui_module::RichText::new(format_date(modified))
+                                                                .font(egui_module::FontId::monospace(9.0))
+                                                                .color(egui_module::Color32::from_rgb(100, 100, 110)),
+                                                        );
+                                                    } else {
+                                                        ui.label("");
+                                                    }
+                                                } else {
+                                                    ui.set_width(60.0);
+                                                    ui.label("");
+                                                    ui.set_width(50.0);
+                                                    ui.label(
+                                                        egui_module::RichText::new("DIR")
+                                                            .font(egui_module::FontId::monospace(9.0))
+                                                            .color(egui_module::Color32::from_rgb(90, 90, 100)),
+                                                    );
+                                                    ui.set_width(70.0);
+                                                    ui.label("");
+                                                    ui.set_width(80.0);
+                                                    ui.label("");
+                                                }
+                                            });
+
+                                            ui.end_row();
+
+                                            if response.clicked() {
+                                                self.select_index(vis_idx);
+                                            }
+                                            if response.double_clicked() {
+                                                if entry.is_dir {
+                                                    self.navigate_to(&entry.path);
+                                                } else {
+                                                    selected_path = Some(entry.path.clone());
+                                                }
+                                            }
+                                        }
+                                    });
+                            }
+                        }
                     });
 
                 ui.separator();
@@ -679,11 +935,16 @@ impl FileBrowser {
                                 selected_path = Some(entry.path.clone());
                             }
                             ui.label(format!("Size: {}", entry.format_size()));
-                            if entry.extension == "wav" {
+                            let audio_exts = ["wav", "mp3", "ogg", "flac", "it", "xm", "s3m", "mod", "669"];
+                            if audio_exts.contains(&entry.extension.as_str()) {
                                 if let Some(dur) = self.get_duration(&entry.path) {
                                     ui.label(format!("Duration: {}", format_duration(dur)));
                                 }
                             }
+                            if let Some(modified) = entry.modified {
+                                ui.label(format!("Modified: {}", format_date(modified)));
+                            }
+                            ui.label(format!("Type: {}", entry.extension.to_uppercase()));
                         } else {
                             if ui.button("Open Folder").clicked() {
                                 self.navigate_to(&entry.path);
@@ -713,6 +974,12 @@ impl FileBrowser {
 
         if let Some(path) = selected_path {
             self.last_dirs.insert(self.mode, self.current_path.clone());
+            if let Some(cfg) = config {
+                cfg.set_last_selection(self.mode, &self.current_path, self.selected_index, self.page);
+                cfg.set_file_browser_view_mode(self.view_mode);
+                cfg.set_file_browser_sort_by(self.sort_by);
+                cfg.set_file_browser_sort_desc(self.sort_descending);
+            }
             self.close();
             return Some(path);
         }

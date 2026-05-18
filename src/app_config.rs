@@ -1,15 +1,52 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::ui::file_browser::BrowserMode;
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum SpacingMode {
+    Compact,
+    Normal,
+    Wide,
+    ExtraWide,
+}
+
+impl Default for SpacingMode {
+    fn default() -> Self {
+        SpacingMode::Normal
+    }
+}
+
+impl SpacingMode {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "compact" => Some(SpacingMode::Compact),
+            "normal" => Some(SpacingMode::Normal),
+            "wide" => Some(SpacingMode::Wide),
+            "extra_wide" => Some(SpacingMode::ExtraWide),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SpacingMode::Compact => "compact",
+            SpacingMode::Normal => "normal",
+            SpacingMode::Wide => "wide",
+            SpacingMode::ExtraWide => "extra_wide",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub last_dirs: HashMap<String, String>,
+    #[serde(default)]
+    pub last_selections: HashMap<String, (u32, u32)>,
     #[serde(default)]
     pub last_file_path: Option<String>,
     #[serde(default)]
@@ -23,6 +60,8 @@ pub struct AppConfig {
     pub default_instrument_path: Option<String>,
     #[serde(default)]
     pub default_wav_path: Option<String>,
+    #[serde(default)]
+    pub sample_export_bit_depth: Option<u8>,
     #[serde(default)]
     pub default_project_path: Option<String>,
 
@@ -54,6 +93,9 @@ pub struct AppConfig {
     #[serde(default = "default_theme")]
     pub theme_preset: String,
 
+    #[serde(default = "default_spacing_mode")]
+    pub spacing_mode: String,
+
     #[serde(default)]
     pub debug: bool,
 
@@ -70,6 +112,13 @@ pub struct AppConfig {
     pub output_device_name: Option<String>,
     #[serde(default)]
     pub preferred_sample_rate: Option<u32>,
+
+    #[serde(default = "default_file_browser_view_mode")]
+    pub file_browser_view_mode: String,
+    #[serde(default = "default_file_browser_sort_by")]
+    pub file_browser_sort_by: String,
+    #[serde(default)]
+    pub file_browser_sort_desc: bool,
 }
 
 fn default_row_highlight_minor() -> u8 { 4 }
@@ -82,6 +131,9 @@ fn default_visible_channels() -> usize { 16 }
 fn default_true() -> bool { true }
 fn default_amplify() -> f32 { 2.0 }
 fn default_theme() -> String { "DarkModern".to_string() }
+fn default_spacing_mode() -> String { "normal".to_string() }
+fn default_file_browser_view_mode() -> String { "details".to_string() }
+fn default_file_browser_sort_by() -> String { "name".to_string() }
 fn default_interpolation() -> String { "Linear".to_string() }
 fn default_limiter() -> String { "HardClip".to_string() }
 
@@ -89,6 +141,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         AppConfig {
             last_dirs: HashMap::new(),
+            last_selections: HashMap::new(),
             last_file_path: None,
             favorites: Vec::new(),
 
@@ -96,6 +149,7 @@ impl Default for AppConfig {
             default_mod_path: None,
             default_instrument_path: None,
             default_wav_path: None,
+            sample_export_bit_depth: None,
             default_project_path: None,
 
             editor_font_size: default_font_size(),
@@ -113,6 +167,7 @@ impl Default for AppConfig {
             backup_directory: None,
 
             theme_preset: default_theme(),
+            spacing_mode: default_spacing_mode(),
             debug: false,
             row_highlight_minor: default_row_highlight_minor(),
             row_highlight_major: default_row_highlight_major(),
@@ -120,6 +175,10 @@ impl Default for AppConfig {
             limiter_mode: default_limiter(),
             output_device_name: None,
             preferred_sample_rate: None,
+
+            file_browser_view_mode: default_file_browser_view_mode(),
+            file_browser_sort_by: default_file_browser_sort_by(),
+            file_browser_sort_desc: false,
         }
     }
 }
@@ -173,6 +232,16 @@ impl AppConfig {
         self.last_dirs.insert(key, path.to_string_lossy().into_owned());
     }
 
+    pub fn get_last_selection(&self, mode: BrowserMode, path: &Path) -> Option<(usize, usize)> {
+        let key = format!("{}:{}", mode_key(mode), path.to_string_lossy());
+        self.last_selections.get(&key).map(|(s, p)| (*s as usize, *p as usize))
+    }
+
+    pub fn set_last_selection(&mut self, mode: BrowserMode, path: &Path, selected_index: usize, page: usize) {
+        let key = format!("{}:{}", mode_key(mode), path.to_string_lossy());
+        self.last_selections.insert(key, (selected_index as u32, page as u32));
+    }
+
     pub fn get_backup_dir(&self) -> PathBuf {
         if let Some(ref dir) = self.backup_directory {
             let p = PathBuf::from(dir);
@@ -209,6 +278,48 @@ impl AppConfig {
                 if p.is_dir() { Some(p) } else { None }
             }),
         }
+    }
+
+    pub fn get_sample_export_bit_depth(&self) -> u8 {
+        self.sample_export_bit_depth.unwrap_or(16)
+    }
+
+    pub fn set_sample_export_bit_depth(&mut self, depth: u8) {
+        self.sample_export_bit_depth = Some(depth);
+    }
+
+    pub fn get_spacing_mode(&self) -> SpacingMode {
+        SpacingMode::from_str(&self.spacing_mode).unwrap_or(SpacingMode::Normal)
+    }
+
+    pub fn set_spacing_mode(&mut self, mode: SpacingMode) {
+        self.spacing_mode = mode.as_str().to_string();
+    }
+
+    pub fn get_file_browser_view_mode(&self) -> crate::ui::file_browser::ViewMode {
+        crate::ui::file_browser::ViewMode::from_str(&self.file_browser_view_mode)
+            .unwrap_or(crate::ui::file_browser::ViewMode::Details)
+    }
+
+    pub fn set_file_browser_view_mode(&mut self, mode: crate::ui::file_browser::ViewMode) {
+        self.file_browser_view_mode = mode.as_str().to_string();
+    }
+
+    pub fn get_file_browser_sort_by(&self) -> crate::ui::file_browser::SortBy {
+        crate::ui::file_browser::SortBy::from_str(&self.file_browser_sort_by)
+            .unwrap_or(crate::ui::file_browser::SortBy::Name)
+    }
+
+    pub fn set_file_browser_sort_by(&mut self, sort: crate::ui::file_browser::SortBy) {
+        self.file_browser_sort_by = sort.as_str().to_string();
+    }
+
+    pub fn get_file_browser_sort_desc(&self) -> bool {
+        self.file_browser_sort_desc
+    }
+
+    pub fn set_file_browser_sort_desc(&mut self, desc: bool) {
+        self.file_browser_sort_desc = desc;
     }
 }
 
