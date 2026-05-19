@@ -983,8 +983,17 @@ impl HtrkApp {
                                     self.sync_module_to_audio();
                                 }
                             } else {
-                                self.clear_cell_at_cursor();
-                                self.advance_cursor_down(1);
+                                let auto_target = self.automation_targets.get(self.cursor.channel).copied().flatten();
+                                if auto_target.is_some()
+                                    && matches!(self.cursor.sub_column,
+                                        SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow)
+                                {
+                                    self.delete_automation_point(self.cursor.channel, self.cursor.row);
+                                    self.advance_cursor_down(1);
+                                } else {
+                                    self.clear_cell_at_cursor();
+                                    self.advance_cursor_down(1);
+                                }
                             }
                         }
                         egui::Key::Insert if self.edit_mode => {
@@ -1220,6 +1229,14 @@ impl HtrkApp {
         }
 
         if self.cursor.sub_column == SubColumn::EffectType {
+            let auto_target = self.automation_targets.get(self.cursor.channel).copied().flatten();
+            if auto_target.is_some() {
+                if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
+                    self.enter_automation_hex(self.cursor.channel, self.cursor.row, d as u8);
+                    self.advance_cursor_down(self.cursor_skip as usize);
+                    return;
+                }
+            }
             let mut cell = self.get_cell_at_cursor();
             let changed = if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
                 cell.effect = hex_to_effect(d as u8);
@@ -1250,6 +1267,14 @@ impl HtrkApp {
         if self.cursor.sub_column == SubColumn::EffectParamHigh
             || self.cursor.sub_column == SubColumn::EffectParamLow
         {
+            let auto_target = self.automation_targets.get(self.cursor.channel).copied().flatten();
+            if auto_target.is_some() {
+                if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
+                    self.enter_automation_hex(self.cursor.channel, self.cursor.row, d as u8);
+                    self.advance_cursor_down(self.cursor_skip as usize);
+                    return;
+                }
+            }
             if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
                 let d = d as u8;
                 let mut cell = self.get_cell_at_cursor();
@@ -1663,6 +1688,59 @@ impl HtrkApp {
                 self.sync_module_to_audio();
             }
         }
+    }
+
+    fn enter_automation_hex(&mut self, channel: usize, row: usize, digit: u8) {
+        let selected_order = self.selected_order as u16;
+        let row_u16 = row as u16;
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let target = match self.automation_targets.get(channel).copied().flatten() {
+                    Some(t) => t,
+                    None => return,
+                };
+                let track = arc_module.automation_tracks.iter_mut()
+                    .find(|tr| tr.channel == Some(channel) && tr.target == target);
+                if let Some(track) = track {
+                    let existing = track.points.iter().find(|p| p.order == selected_order && p.row == row_u16);
+                    let value = match existing {
+                        Some(p) => {
+                            let old_byte = (p.value * 255.0).round() as u8;
+                            (old_byte & 0xF0) | digit
+                        },
+                        None => digit,
+                    };
+                    track.insert_point(crate::sequencer::AutomationPoint {
+                        order: selected_order,
+                        row: row_u16,
+                        value: value as f32 / 255.0,
+                        interp_to_next: track.default_interp,
+                    });
+                }
+            }
+        }
+        self.sync_module_to_audio();
+    }
+
+    fn delete_automation_point(&mut self, channel: usize, row: usize) {
+        let selected_order = self.selected_order as u16;
+        let row_u16 = row as u16;
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let target = match self.automation_targets.get(channel).copied().flatten() {
+                    Some(t) => t,
+                    None => return,
+                };
+                let track = arc_module.automation_tracks.iter_mut()
+                    .find(|tr| tr.channel == Some(channel) && tr.target == target);
+                if let Some(track) = track {
+                    track.remove_point_at(selected_order, row_u16);
+                }
+            }
+        }
+        self.sync_module_to_audio();
     }
 
     fn skip_to_prev_pattern(&mut self) {
