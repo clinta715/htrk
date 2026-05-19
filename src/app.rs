@@ -24,6 +24,7 @@ use crate::formats;
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::effect::SendEffectType;
+use crate::sequencer::automation::InterpolationMode;
 use crate::sequencer::{Effect, Module, Note, MAX_CHANNELS, DEFAULT_CHANNELS};
 use crate::ui::pattern_grid::{ColumnVisibility, CursorPosition, Selection, SubColumn, VISIBLE_ROWS};
 use crate::ui::TrackerTheme;
@@ -1591,6 +1592,77 @@ impl HtrkApp {
             }
         }
         self.sync_module_to_audio();
+    }
+
+    fn handle_automation_interaction(&mut self, interaction: crate::ui::pattern_grid::AutomationInteraction) {
+        self.ensure_module_ownership();
+        match interaction {
+            crate::ui::pattern_grid::AutomationInteraction::PointCreated { channel, order, row, value } => {
+                if let Some(ref mut module) = self.module {
+                    if let Some(arc_module) = Arc::get_mut(module) {
+                        let target = match self.automation_targets.get(channel).copied().flatten() {
+                            Some(t) => t,
+                            None => return,
+                        };
+                        let track = arc_module.automation_tracks.iter_mut()
+                            .find(|tr| tr.channel == Some(channel) && tr.target == target);
+                        if let Some(track) = track {
+                            track.insert_point(crate::sequencer::AutomationPoint {
+                                order,
+                                row,
+                                value,
+                                interp_to_next: track.default_interp,
+                            });
+                        }
+                    }
+                }
+                self.sync_module_to_audio();
+            }
+            crate::ui::pattern_grid::AutomationInteraction::PointMoved { channel, order, row, value } => {
+                if let Some(ref mut module) = self.module {
+                    if let Some(arc_module) = Arc::get_mut(module) {
+                        let target = match self.automation_targets.get(channel).copied().flatten() {
+                            Some(t) => t,
+                            None => return,
+                        };
+                        let track = arc_module.automation_tracks.iter_mut()
+                            .find(|tr| tr.channel == Some(channel) && tr.target == target);
+                        if let Some(track) = track {
+                            track.insert_point(crate::sequencer::AutomationPoint {
+                                order,
+                                row,
+                                value,
+                                interp_to_next: track.default_interp,
+                            });
+                        }
+                    }
+                }
+                self.sync_module_to_audio();
+            }
+            crate::ui::pattern_grid::AutomationInteraction::FreehandDraw { channel, points } => {
+                if let Some(ref mut module) = self.module {
+                    if let Some(arc_module) = Arc::get_mut(module) {
+                        let target = match self.automation_targets.get(channel).copied().flatten() {
+                            Some(t) => t,
+                            None => return,
+                        };
+                        let track = arc_module.automation_tracks.iter_mut()
+                            .find(|tr| tr.channel == Some(channel) && tr.target == target);
+                        if let Some(track) = track {
+                            for (order, row, value) in points {
+                                track.insert_point(crate::sequencer::AutomationPoint {
+                                    order,
+                                    row,
+                                    value,
+                                    interp_to_next: InterpolationMode::Hold,
+                                });
+                            }
+                        }
+                    }
+                }
+                self.sync_module_to_audio();
+            }
+        }
     }
 
     fn skip_to_prev_pattern(&mut self) {
@@ -3210,6 +3282,9 @@ impl eframe::App for HtrkApp {
                                 }
                                 if let Some(action) = grid_resp.context_menu_action {
                                     self.handle_context_menu_action(action);
+                                }
+                                if let Some(interaction) = grid_resp.automation_interaction {
+                                    self.handle_automation_interaction(interaction);
                                 }
                                 if grid_resp.toggle_sample_length_bg {
                                     self.config.toggle_sample_length_bg();

@@ -519,6 +519,7 @@ pub fn draw_pattern_grid(
 
     let mut clicked_position: Option<CursorPosition> = None;
     let mut drag_position: Option<CursorPosition> = None;
+    let mut automation_interaction: Option<AutomationInteraction> = None;
 
     if response.clicked() || response.dragged() {
         if let Some(pos) = response.interact_pointer_pos() {
@@ -532,19 +533,41 @@ pub fn draw_pattern_grid(
             let ch = first_ch + display_ch.min(visible_channels.saturating_sub(1));
 
             let sub_col_x = col_x - display_ch as f32 * metrics.channel_width;
-            let sub_column = position_to_sub_column(sub_col_x, metrics, col_vis);
 
-            let cursor_pos = CursorPosition {
-                row,
-                channel: ch,
-                sub_column,
-            };
+            let auto_overlay = automation_overlays.get(ch).and_then(|o| o.as_ref());
+            let in_fx_col = sub_col_x >= metrics.effect_type_x && sub_col_x < metrics.channel_width;
 
-            if response.clicked() {
-                clicked_position = Some(cursor_pos);
-            }
-            if response.dragged() {
-                drag_position = Some(cursor_pos);
+            if let Some(info) = auto_overlay {
+                if in_fx_col {
+                    let row_y = rel_y - display_row as f32 * metrics.row_height;
+                    let value = 1.0 - (row_y / metrics.row_height).clamp(0.0, 1.0);
+
+                    let shift_held = ui.input(|i| i.modifiers.shift);
+
+                    if response.clicked() && !shift_held {
+                        automation_interaction = Some(AutomationInteraction::PointCreated {
+                            channel: ch,
+                            order: info.current_order,
+                            row: row as u16,
+                            value,
+                        });
+                    } else if response.dragged() && shift_held {
+                        automation_interaction = Some(AutomationInteraction::FreehandDraw {
+                            channel: ch,
+                            points: vec![(info.current_order, row as u16, value)],
+                        });
+                    }
+                } else {
+                    let sub_column = position_to_sub_column(sub_col_x, metrics, col_vis);
+                    let cursor_pos = CursorPosition { row, channel: ch, sub_column };
+                    if response.clicked() { clicked_position = Some(cursor_pos); }
+                    if response.dragged() { drag_position = Some(cursor_pos); }
+                }
+            } else {
+                let sub_column = position_to_sub_column(sub_col_x, metrics, col_vis);
+                let cursor_pos = CursorPosition { row, channel: ch, sub_column };
+                if response.clicked() { clicked_position = Some(cursor_pos); }
+                if response.dragged() { drag_position = Some(cursor_pos); }
             }
         }
     }
@@ -583,7 +606,7 @@ pub fn draw_pattern_grid(
         context_menu_action,
         effect_tooltip,
         toggle_sample_length_bg,
-        automation_interaction: None,
+        automation_interaction,
     }
 }
 
