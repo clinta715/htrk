@@ -2,6 +2,7 @@ use eframe::egui;
 
 use super::pattern_grid::ColumnVisibility;
 use super::theme::{ThemePreset, TrackerTheme};
+use crate::app_config::SpacingMode;
 
 pub struct MenuResponse {
     pub new_song: bool,
@@ -26,6 +27,7 @@ pub struct MenuResponse {
     pub follow_playback: bool,
     pub theme_changed: Option<ThemePreset>,
     pub col_vis: Option<ColumnVisibility>,
+    pub spacing_mode_changed: Option<SpacingMode>,
 
     pub show_shortcuts: bool,
     pub show_about: bool,
@@ -57,6 +59,7 @@ impl Default for MenuResponse {
             follow_playback: false,
             theme_changed: None,
             col_vis: None,
+            spacing_mode_changed: None,
 
             show_shortcuts: false,
             show_about: false,
@@ -72,6 +75,7 @@ pub fn draw_menu_bar(
     has_selection: bool,
     follow_playback: bool,
     current_theme: ThemePreset,
+    current_spacing: SpacingMode,
     _theme: &TrackerTheme,
     sample_rate: u32,
     sample_format: &str,
@@ -207,24 +211,53 @@ pub fn draw_menu_bar(
             ui.separator();
             ui.menu_button("Columns", |ui| {
                 let mut note = col_vis.note;
-                if ui.checkbox(&mut note, "Note").changed() {
+                let note_check = if note { "✓ " } else { "  " };
+                if ui.checkbox(&mut note, format!("{}Note      Ctrl+1", note_check)).clicked() {
                     col_vis.note = note;
                     resp.col_vis = Some(*col_vis);
                 }
                 let mut instr = col_vis.instrument;
-                if ui.checkbox(&mut instr, "Instrument").changed() {
+                let instr_check = if instr { "✓ " } else { "  " };
+                if ui.checkbox(&mut instr, format!("{}Instrument      Ctrl+2", instr_check)).clicked() {
                     col_vis.instrument = instr;
                     resp.col_vis = Some(*col_vis);
                 }
                 let mut vol = col_vis.volume;
-                if ui.checkbox(&mut vol, "Volume").changed() {
+                let vol_check = if vol { "✓ " } else { "  " };
+                if ui.checkbox(&mut vol, format!("{}Volume      Ctrl+3", vol_check)).clicked() {
                     col_vis.volume = vol;
                     resp.col_vis = Some(*col_vis);
                 }
                 let mut eff = col_vis.effect;
-                if ui.checkbox(&mut eff, "Effect").changed() {
+                let eff_check = if eff { "✓ " } else { "  " };
+                if ui.checkbox(&mut eff, format!("{}Effect      Ctrl+4", eff_check)).clicked() {
                     col_vis.effect = eff;
                     resp.col_vis = Some(*col_vis);
+                }
+                ui.separator();
+                let all_visible = col_vis.note && col_vis.instrument && col_vis.volume && col_vis.effect;
+                let reset_label = if all_visible { "Reset to Default (all visible)" } else { "Reset to Default" };
+                if ui.button(reset_label).clicked() {
+                    col_vis.note = true;
+                    col_vis.instrument = true;
+                    col_vis.volume = true;
+                    col_vis.effect = true;
+                    resp.col_vis = Some(*col_vis);
+                }
+            });
+            ui.menu_button("Spacing", |ui| {
+                let modes = [
+                    (SpacingMode::Compact, "Compact"),
+                    (SpacingMode::Normal, "Normal"),
+                    (SpacingMode::Wide, "Wide"),
+                    (SpacingMode::ExtraWide, "Extra Wide"),
+                ];
+                for (mode, label) in modes {
+                    let check = if mode == current_spacing { "> " } else { "  " };
+                    if ui.button(format!("{}{}  Ctrl+Shift+Space", check, label)).clicked() {
+                        resp.spacing_mode_changed = Some(mode);
+                        ui.close_menu();
+                    }
                 }
             });
             ui.separator();

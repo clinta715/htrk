@@ -75,6 +75,15 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             shortcut_row(ui, "Alt+S", "Toggle solo channel");
                             ui.add_space(8.0);
 
+                            section_header(ui, "VIEW");
+                            shortcut_row(ui, "Ctrl+Shift+Space", "Cycle spacing mode");
+                            shortcut_row(ui, "Ctrl+Shift+L", "Toggle sample length background");
+                            shortcut_row(ui, "Ctrl+1", "Toggle Note column");
+                            shortcut_row(ui, "Ctrl+2", "Toggle Instrument column");
+                            shortcut_row(ui, "Ctrl+3", "Toggle Volume column");
+                            shortcut_row(ui, "Ctrl+4", "Toggle Effect column");
+                            ui.add_space(8.0);
+
                             section_header(ui, "IT-STYLE FEATURES");
                             shortcut_row(ui, "Alt+0..9", "Set cursor skip value");
                             shortcut_row(ui, ", (comma)", "Toggle edit mask (Instr+Vol)");

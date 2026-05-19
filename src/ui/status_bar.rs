@@ -41,6 +41,10 @@ pub fn draw_status_bar(
                 ModuleFormat::S3M => "S3M",
                 ModuleFormat::MOD => "MOD",
                 ModuleFormat::HTK => "HTK",
+                ModuleFormat::C669 => "669",
+                ModuleFormat::Mmd => "MMD",
+                ModuleFormat::Ult => "ULT",
+                ModuleFormat::Stm => "STM",
             },
             None => "---",
         };

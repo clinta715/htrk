@@ -42,6 +42,35 @@ pub fn read_u32_le(data: &[u8], offset: &mut usize) -> FormatResult<u32> {
     Ok(val)
 }
 
+pub fn read_u16_be(data: &[u8], offset: &mut usize) -> FormatResult<u16> {
+    if *offset + 2 > data.len() {
+        return Err(FormatError::TruncatedFile {
+            expected_size: *offset + 2,
+            actual_size: data.len(),
+        });
+    }
+    let val = u16::from_be_bytes([data[*offset], data[*offset + 1]]);
+    *offset += 2;
+    Ok(val)
+}
+
+pub fn read_u32_be(data: &[u8], offset: &mut usize) -> FormatResult<u32> {
+    if *offset + 4 > data.len() {
+        return Err(FormatError::TruncatedFile {
+            expected_size: *offset + 4,
+            actual_size: data.len(),
+        });
+    }
+    let val = u32::from_be_bytes([
+        data[*offset],
+        data[*offset + 1],
+        data[*offset + 2],
+        data[*offset + 3],
+    ]);
+    *offset += 4;
+    Ok(val)
+}
+
 pub fn read_string(data: &[u8], offset: &mut usize, len: usize) -> FormatResult<String> {
     if *offset + len > data.len() {
         return Err(FormatError::TruncatedFile {
@@ -114,6 +143,22 @@ mod tests {
         let data = [0x78, 0x56, 0x34, 0x12];
         let mut offset = 0;
         assert_eq!(read_u32_le(&data, &mut offset).unwrap(), 0x12345678);
+        assert_eq!(offset, 4);
+    }
+
+    #[test]
+    fn read_u16_be_basic() {
+        let data = [0x12, 0x34];
+        let mut offset = 0;
+        assert_eq!(read_u16_be(&data, &mut offset).unwrap(), 0x1234);
+        assert_eq!(offset, 2);
+    }
+
+    #[test]
+    fn read_u32_be_basic() {
+        let data = [0x12, 0x34, 0x56, 0x78];
+        let mut offset = 0;
+        assert_eq!(read_u32_be(&data, &mut offset).unwrap(), 0x12345678);
         assert_eq!(offset, 4);
     }
 

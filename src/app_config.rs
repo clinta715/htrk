@@ -119,7 +119,21 @@ pub struct AppConfig {
     pub file_browser_sort_by: String,
     #[serde(default)]
     pub file_browser_sort_desc: bool,
+
+    #[serde(default = "default_sample_length_bg")]
+    pub sample_length_bg: bool,
+
+    #[serde(default = "default_col_vis")]
+    pub col_vis_note: bool,
+    #[serde(default = "default_col_vis")]
+    pub col_vis_instrument: bool,
+    #[serde(default = "default_col_vis")]
+    pub col_vis_volume: bool,
+    #[serde(default = "default_col_vis")]
+    pub col_vis_effect: bool,
 }
+
+fn default_col_vis() -> bool { true }
 
 fn default_row_highlight_minor() -> u8 { 4 }
 fn default_row_highlight_major() -> u8 { 16 }
@@ -136,6 +150,7 @@ fn default_file_browser_view_mode() -> String { "details".to_string() }
 fn default_file_browser_sort_by() -> String { "name".to_string() }
 fn default_interpolation() -> String { "Linear".to_string() }
 fn default_limiter() -> String { "HardClip".to_string() }
+fn default_sample_length_bg() -> bool { false }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -179,6 +194,11 @@ impl Default for AppConfig {
             file_browser_view_mode: default_file_browser_view_mode(),
             file_browser_sort_by: default_file_browser_sort_by(),
             file_browser_sort_desc: false,
+            sample_length_bg: default_sample_length_bg(),
+            col_vis_note: true,
+            col_vis_instrument: true,
+            col_vis_volume: true,
+            col_vis_effect: true,
         }
     }
 }
@@ -320,6 +340,34 @@ impl AppConfig {
 
     pub fn set_file_browser_sort_desc(&mut self, desc: bool) {
         self.file_browser_sort_desc = desc;
+    }
+
+    pub fn get_sample_length_bg(&self) -> bool {
+        self.sample_length_bg
+    }
+
+    pub fn set_sample_length_bg(&mut self, enabled: bool) {
+        self.sample_length_bg = enabled;
+    }
+
+    pub fn toggle_sample_length_bg(&mut self) {
+        self.sample_length_bg = !self.sample_length_bg;
+    }
+
+    pub fn get_col_vis(&self) -> crate::ui::pattern_grid::ColumnVisibility {
+        crate::ui::pattern_grid::ColumnVisibility {
+            note: self.col_vis_note,
+            instrument: self.col_vis_instrument,
+            volume: self.col_vis_volume,
+            effect: self.col_vis_effect,
+        }
+    }
+
+    pub fn set_col_vis(&mut self, col_vis: crate::ui::pattern_grid::ColumnVisibility) {
+        self.col_vis_note = col_vis.note;
+        self.col_vis_instrument = col_vis.instrument;
+        self.col_vis_volume = col_vis.volume;
+        self.col_vis_effect = col_vis.effect;
     }
 }
 

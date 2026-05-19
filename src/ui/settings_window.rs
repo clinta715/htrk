@@ -327,6 +327,9 @@ fn draw_editor_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
 
     ui.horizontal(|ui| {
         ui.label("Grid Spacing:");
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("(Ctrl+Shift+Space)").small().weak());
+        ui.add_space(8.0);
         let modes = [
             (SpacingMode::Compact, "Compact"),
             (SpacingMode::Normal, "Normal"),

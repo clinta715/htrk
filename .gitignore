@@ -9,3 +9,6 @@ run_log.txt
 analysis*.txt
 ft2play-main/
 protracker/
+/libxmp-4.7.0/
+/ocp-3.2.0/
+/test_files/

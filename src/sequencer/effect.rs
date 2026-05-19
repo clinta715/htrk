@@ -72,12 +72,20 @@ pub enum Effect {
 pub enum FormatEffect {
     /// XM format-specific effects
     Xm(XmEffect),
-    /// MOD format-specific effects  
+    /// MOD format-specific effects
     Mod(ModEffect),
     /// S3M format-specific effects
     S3m(S3mEffect),
     /// IT format-specific effects
     It(ItEffect),
+    /// 669 format-specific effects
+    C669(C669Effect),
+    /// MMD format-specific effects
+    Mmd(MmdEffect),
+    /// ULT format-specific effects
+    Ult(UltEffect),
+    /// STM format-specific effects
+    Stm(StmEffect),
 }
 
 impl FormatEffect {
@@ -123,6 +131,44 @@ pub enum S3mEffect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ItEffect {
     SetSampleOffset(u16),
+    Raw { effect: u8, param: u8 },
+}
+
+/// 669-specific effects (Composer 669 / UNIS 669)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum C669Effect {
+    PortamentoUp { speed: u8 },
+    PortamentoDown { speed: u8 },
+    TonePortamento { speed: u8 },
+    Finetune { tune: u8 },
+    Vibrato { speed: u8, depth: u8 },
+    SetSpeed { speed: u8 },
+    Raw { effect: u8, param: u8 },
+}
+
+/// MMD (OctaMED) format-specific effects
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MmdEffect {
+    SetTempo(u8),
+    Retrigger(u8),
+    VolumeSlide { up: bool, amount: u8 },
+    Finetune { tune: u8 },
+    Raw { effect: u8, param: u8 },
+}
+
+/// Ultra Tracker format-specific effects
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum UltEffect {
+    TonePortamento { speed: u8 },
+    SampleOffset(u16),
+    Panning { pan: u8 },
+    SpeedBPM { value: u8 },
+    Raw { effect: u8, param: u8 },
+}
+
+/// Scream Tracker 2 format-specific effects
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum StmEffect {
     Raw { effect: u8, param: u8 },
 }
 

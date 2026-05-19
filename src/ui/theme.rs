@@ -95,6 +95,8 @@ pub struct TrackerTheme {
     pub transport_bg: Color32,
     pub transport_fg: Color32,
     pub transport_active: Color32,
+
+    pub sample_len_shift: f32,
 }
 
 impl Default for TrackerTheme {
@@ -136,6 +138,8 @@ impl Default for TrackerTheme {
             transport_bg: Color32::from_rgb(30, 30, 42),
             transport_fg: Color32::from_rgb(200, 200, 240),
             transport_active: Color32::from_rgb(80, 200, 80),
+
+            sample_len_shift: 0.15,
         }
     }
 }
@@ -175,6 +179,7 @@ impl TrackerTheme {
                 transport_bg: Color32::from_rgb(0, 0, 16),
                 transport_fg: Color32::from_rgb(0, 160, 0),
                 transport_active: Color32::from_rgb(0, 255, 0),
+                sample_len_shift: 0.15,
             },
             ThemePreset::Light => TrackerTheme {
                 bg_default: Color32::from_rgb(240, 240, 240),
@@ -207,6 +212,7 @@ impl TrackerTheme {
                 transport_bg: Color32::from_rgb(220, 220, 240),
                 transport_fg: Color32::from_rgb(40, 40, 80),
                 transport_active: Color32::from_rgb(0, 128, 0),
+                sample_len_shift: 0.12,
             },
             ThemePreset::AmberTerminal => TrackerTheme {
                 bg_default: Color32::from_rgb(0, 0, 0),
@@ -239,6 +245,7 @@ impl TrackerTheme {
                 transport_bg: Color32::from_rgb(0, 0, 0),
                 transport_fg: Color32::from_rgb(200, 140, 0),
                 transport_active: Color32::from_rgb(255, 176, 0),
+                sample_len_shift: 0.18,
             },
             ThemePreset::BlueFusion => TrackerTheme {
                 bg_default: Color32::from_rgb(10, 10, 26),
@@ -271,6 +278,7 @@ impl TrackerTheme {
                 transport_bg: Color32::from_rgb(10, 10, 26),
                 transport_fg: Color32::from_rgb(0, 140, 200),
                 transport_active: Color32::from_rgb(0, 221, 255),
+                sample_len_shift: 0.15,
             },
             ThemePreset::HighContrast => TrackerTheme {
                 bg_default: Color32::from_rgb(0, 0, 0),
@@ -303,6 +311,7 @@ impl TrackerTheme {
                 transport_bg: Color32::from_rgb(0, 0, 0),
                 transport_fg: Color32::from_rgb(200, 200, 200),
                 transport_active: Color32::from_rgb(80, 255, 80),
+                sample_len_shift: 0.20,
             },
             ThemePreset::MatrixGreen => TrackerTheme {
                 bg_default: Color32::from_rgb(0, 4, 0),
@@ -335,6 +344,7 @@ impl TrackerTheme {
                 transport_bg: Color32::from_rgb(0, 4, 0),
                 transport_fg: Color32::from_rgb(0, 128, 0),
                 transport_active: Color32::from_rgb(0, 255, 0),
+                sample_len_shift: 0.25,
             },
             ThemePreset::Ft2Classic => TrackerTheme {
                 bg_default: Color32::from_rgb(0, 0, 128),
@@ -367,6 +377,7 @@ impl TrackerTheme {
                 transport_bg: Color32::from_rgb(0, 0, 96),
                 transport_fg: Color32::from_rgb(200, 200, 255),
                 transport_active: Color32::from_rgb(80, 255, 80),
+                sample_len_shift: 0.10,
             },
         }
     }

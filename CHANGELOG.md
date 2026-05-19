@@ -2,6 +2,35 @@
 
 All notable changes to htrk will be documented in this file.
 
+## [0.10.0] - 2026-05-19
+
+### Added
+
+#### Automation Curves
+- **Data model**: `AutomationTrack`, `AutomationPoint`, `AutomationTarget`, `InterpolationMode` types in `src/sequencer/automation.rs`. Each track has a target (per-channel or global), optional channel assignment, ordered points with (order, row, value, interpolation), and enable/disable toggle.
+- **Interpolation engine**: `evaluate()` method on `AutomationTrack` with 4 modes — Hold (step), Linear, Smooth (cosine ease), Exponential. Song-level addressing using (order, row) pairs. 14 unit tests covering all modes and edge cases.
+- **Sequencer integration**: `evaluate_automation()` called at top of every tick in `process_tick()`. Per-channel auto-factor fields (`auto_volume_factor`, `auto_panning_offset`, `auto_filter_cutoff_factor`, `auto_filter_resonance_factor`, `auto_send_a_factor`, `auto_send_b_factor`) on `ChannelState`. Global fields (`auto_global_volume_factor`, `auto_tempo_factor`, `auto_speed_factor`) on `SequencerState`. Applied as multipliers/offsets to channel and global parameters.
+- **HTK persistence**: Module version bump 4→5. `automation_tracks` and `next_automation_id` fields added with `#[serde(default)]` for backward compatibility. Two integration tests (round-trip and backward compat).
+- **Per-channel automation UI**: Channel header cycle-button selects automation target per channel (left-click forward, right-click backward through Vol→Pan→FltCut→FltRes→SendA→SendB→...). Effect column renders automation overlay when target is set — shows curve points with hex values and interpolation indicators.
+- **Mouse interaction in overlay**: Click to create points, Shift+drag for freehand drawing. Points stored in the matching `AutomationTrack`.
+- **Hex keyboard entry**: When cursor is in automation overlay column, hex digits (0-9, A-F) set point values. Delete key removes points at cursor position.
+- **Global Automation tab**: New `AppView::Automation` tab alongside Pattern/Sample/Instrument/SendFx/Playback. Track list sidebar shows all automation tracks with enable/disable toggle, select, and delete. Lane editor renders curve with all 4 interpolation modes (Hold=step, Linear=straight line, Smooth=cosine ease, Exponential). Points displayed as dots with hex value labels.
+- **Lane editor click-to-create**: Clicking in the lane editor creates automation points at the computed row/value. Drag to move existing points. Right-click to delete points.
+- **Channel picker**: Per-channel track creation from the Automation tab uses a `DragValue` spinner for channel selection (0-indexed). Per-channel targets now correctly receive `Some(channel)` instead of `None`.
+- **Interpolation mode UI**: Selectable buttons in lane editor change `default_interp` on the selected track. Ctrl+5/6/7/8 keybindings switch default interpolation mode (Hold/Linear/Smooth/Exponential) when Automation tab is active.
+- **Song-level order tracking**: `AutomationEditorState.selected_order` synced from `HtrkApp.selected_order` so lane editor creates points at the correct song position.
+- **`remap_automation_orders()`**: Utility function to renumber automation point orders when order list or patterns change.
+
+#### Format Loaders
+- **669 (Composer 669)**: Full loader with pattern, instrument, and effect parsing. 8-bit samples with loop support. Effects mapped: portamento, volume slide, vibrato, tempo.
+- **MMD (Medley Module Description)**: Loader for MMD0/MMD1/MMD2/MMD3 variants used by OctaMED. Multi-mode patterns, block/song structures, instrument and sample parsing with precise and approximate BPM calculations.
+- **STM (ScreamTracker 2)**: Full loader with pattern, sample, and effect mapping. Supports both v1 and v2 header formats.
+- **ULT (UltraTracker)**: Full loader with multi-pattern tracks, sample parsing, and extended effect mapping including retrigger and multi-note support.
+
+### Changed
+- **Version**: 0.9.0 → 0.10.0
+- **HTK format version**: 4 → 5 (backward compatible)
+
 ## [0.9.0] - 2026-05-17
 
 ### Added

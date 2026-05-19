@@ -1,8 +1,12 @@
 pub mod common;
+pub mod c669;
 pub mod htk;
 pub mod hti;
 pub mod it;
+pub mod mmd;
 pub mod s3m;
+pub mod stm;
+pub mod ult;
 pub mod wav;
 pub mod xm;
 pub mod modfile;
@@ -31,6 +35,10 @@ pub fn detect_format(data: &[u8]) -> Option<ModuleFormat> {
         return Some(ModuleFormat::IT);
     }
 
+    if magic == b"MMD0" || magic == b"MMD1" {
+        return Some(ModuleFormat::Mmd);
+    }
+
     if data.len() > 4 && magic == b"HTRA" {
         return Some(ModuleFormat::HTK);
     }
@@ -41,6 +49,18 @@ pub fn detect_format(data: &[u8]) -> Option<ModuleFormat> {
 
     if data.len() > 48 && &data[44..48] == b"SCRM" {
         return Some(ModuleFormat::S3M);
+    }
+
+    if magic == b"if" || magic == b"JN" {
+        return Some(ModuleFormat::C669);
+    }
+
+    if data.len() >= 15 && &data[0..12] == b"MAS_UTrack_V" {
+        return Some(ModuleFormat::Ult);
+    }
+
+    if data.len() >= 29 && &data[20..28] == b"!Scream!" {
+        return Some(ModuleFormat::Stm);
     }
 
     if data.len() > 1084 {
@@ -108,6 +128,22 @@ pub fn load_module(data: &[u8]) -> FormatResult<Module> {
         }
         ModuleFormat::HTK => {
             htk::load_module(data)
+        }
+        ModuleFormat::C669 => {
+            let handler = c669::C669Handler;
+            handler.load(data)
+        }
+        ModuleFormat::Mmd => {
+            let handler = mmd::MmdHandler;
+            handler.load(data)
+        }
+        ModuleFormat::Ult => {
+            let handler = ult::UltHandler;
+            handler.load(data)
+        }
+        ModuleFormat::Stm => {
+            let handler = stm::StmHandler;
+            handler.load(data)
         }
     }
 }
