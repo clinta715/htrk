@@ -1,13 +1,27 @@
 use eframe::egui::{self, Pos2, Rect, Stroke};
 
 use crate::app_config::SpacingMode;
+use crate::sequencer::automation::{AutomationPoint, AutomationTarget, AutomationTrack, InterpolationMode};
 use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect, C669Effect, MmdEffect, UltEffect, StmEffect};
 use crate::sequencer::note::{Note, TONE_NAMES};
 use crate::sequencer::pattern::Cell;
 
 use super::theme::TrackerTheme;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutomationOverlayInfo {
+    pub target: AutomationTarget,
+    pub track: Option<std::sync::Arc<AutomationTrack>>,
+    pub current_order: u16,
+    pub speed: u8,
+}
+
+pub enum AutomationInteraction {
+    PointCreated { channel: usize, order: u16, row: u16, value: f32 },
+    PointMoved { channel: usize, order: u16, row: u16, value: f32 },
+    FreehandDraw { channel: usize, points: Vec<(u16, u16, f32)> },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ColumnVisibility {
     pub note: bool,
     pub instrument: bool,
@@ -36,10 +50,13 @@ pub struct GridMetrics {
     pub note_to_inst_gap: f32,
     pub inst_to_vol_gap: f32,
     pub vol_to_effect_gap: f32,
+    pub inst_x: f32,
+    pub vol_x: f32,
+    pub effect_type_x: f32,
 }
 
 impl GridMetrics {
-    pub fn new(font_size: f32, spacing_mode: SpacingMode) -> Self {
+    pub fn new(font_size: f32, spacing_mode: SpacingMode, col_vis: ColumnVisibility) -> Self {
         let char_width = font_size * 0.6;
         let (row_spacing, col_gap) = match spacing_mode {
             SpacingMode::Compact => (0.0, 0.0),
@@ -47,14 +64,22 @@ impl GridMetrics {
             SpacingMode::Wide => (0.5, 0.6),
             SpacingMode::ExtraWide => (0.8, 1.0),
         };
-        let note_width = char_width * 3.5;
-        let inst_width = char_width * 2.5;
-        let vol_width = char_width * 2.5;
-        let effect_width = char_width * 3.0;
-        let note_to_inst_gap = char_width * col_gap;
-        let inst_to_vol_gap = char_width * col_gap;
-        let vol_to_effect_gap = char_width * col_gap;
+
+        let note_width = if col_vis.note { char_width * 3.5 } else { 0.0 };
+        let inst_width = if col_vis.instrument { char_width * 2.5 } else { 0.0 };
+        let vol_width = if col_vis.volume { char_width * 2.5 } else { 0.0 };
+        let effect_width = if col_vis.effect { char_width * 3.0 } else { 0.0 };
+
+        let note_to_inst_gap = if col_vis.note && col_vis.instrument { char_width * col_gap } else { 0.0 };
+        let inst_to_vol_gap = if col_vis.instrument && col_vis.volume { char_width * col_gap } else { 0.0 };
+        let vol_to_effect_gap = if col_vis.volume && col_vis.effect { char_width * col_gap } else { 0.0 };
+
         let channel_width = note_width + note_to_inst_gap + inst_width + inst_to_vol_gap + vol_width + vol_to_effect_gap + effect_width;
+
+        let inst_x = note_width + note_to_inst_gap;
+        let vol_x = inst_x + inst_width + inst_to_vol_gap;
+        let effect_type_x = vol_x + vol_width + vol_to_effect_gap;
+
         Self {
             font_size,
             row_height: font_size * 1.3 + font_size * row_spacing,
@@ -69,28 +94,22 @@ impl GridMetrics {
             note_to_inst_gap,
             inst_to_vol_gap,
             vol_to_effect_gap,
+            inst_x,
+            vol_x,
+            effect_type_x,
         }
     }
 
     pub fn calculate_visible_channels(ui: &egui::Ui, metrics: GridMetrics) -> usize {
+        if metrics.channel_width < 1.0 {
+            return 0;
+        }
         let available_size = ui.available_size();
         ((available_size.x - metrics.row_num_width) / metrics.channel_width).floor() as usize
     }
 
-    pub fn inst_x(&self) -> f32 {
-        self.note_width + self.note_to_inst_gap
-    }
-
-    pub fn vol_x(&self) -> f32 {
-        self.inst_x() + self.inst_width + self.inst_to_vol_gap
-    }
-
-    pub fn effect_type_x(&self) -> f32 {
-        self.vol_x() + self.vol_width + self.vol_to_effect_gap
-    }
-
     pub fn effect_param1_x(&self) -> f32 {
-        self.effect_type_x() + self.char_width
+        self.effect_type_x + self.char_width
     }
 
     pub fn effect_param2_x(&self) -> f32 {
@@ -163,6 +182,37 @@ impl SubColumn {
 
     pub fn accepts_note(self) -> bool {
         matches!(self, SubColumn::Note)
+    }
+
+    pub fn is_visible(self, col_vis: ColumnVisibility) -> bool {
+        match self {
+            SubColumn::Note => col_vis.note,
+            SubColumn::InstrumentTens | SubColumn::InstrumentOnes => col_vis.instrument,
+            SubColumn::VolumeTens | SubColumn::VolumeOnes => col_vis.volume,
+            SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => col_vis.effect,
+        }
+    }
+
+    pub fn next_visible(self, col_vis: ColumnVisibility) -> Option<SubColumn> {
+        let mut current = self.next();
+        while let Some(sc) = current {
+            if sc.is_visible(col_vis) {
+                return Some(sc);
+            }
+            current = sc.next();
+        }
+        None
+    }
+
+    pub fn prev_visible(self, col_vis: ColumnVisibility) -> Option<SubColumn> {
+        let mut current = self.prev();
+        while let Some(sc) = current {
+            if sc.is_visible(col_vis) {
+                return Some(sc);
+            }
+            current = sc.prev();
+        }
+        None
     }
 }
 
@@ -243,6 +293,8 @@ pub struct PatternGridResponse {
     pub drag_position: Option<CursorPosition>,
     pub context_menu_action: Option<ContextMenuAction>,
     pub effect_tooltip: Option<String>,
+    pub toggle_sample_length_bg: bool,
+    pub automation_interaction: Option<AutomationInteraction>,
 }
 
 pub fn draw_pattern_grid(
@@ -258,6 +310,10 @@ pub fn draw_pattern_grid(
     theme: &TrackerTheme,
     highlight_minor: u8,
     highlight_major: u8,
+    sample_length_bg: bool,
+    col_vis: ColumnVisibility,
+    module: Option<&crate::sequencer::module::Module>,
+    automation_overlays: &[Option<AutomationOverlayInfo>],
 ) -> PatternGridResponse {
     let available_size = ui.available_size();
     
@@ -278,6 +334,31 @@ pub fn draw_pattern_grid(
     let painter = ui.painter_at(rect);
     let mut context_menu_action: Option<ContextMenuAction> = None;
     let mut effect_tooltip: Option<String> = None;
+    let mut toggle_sample_length_bg = false;
+
+    let toggle_btn_rect = Rect::from_min_size(
+        Pos2::new(rect.left(), rect.top()),
+        egui::vec2(metrics.row_num_width, metrics.row_height),
+    );
+    if toggle_btn_rect.contains(response.interact_pointer_pos().unwrap_or(Pos2::ZERO)) && response.clicked() {
+        if let Some(pos) = response.interact_pointer_pos() {
+            if pos.y < rect.top() + metrics.row_height && pos.x < rect.left() + metrics.row_num_width {
+                toggle_sample_length_bg = true;
+            }
+        }
+    }
+    let toggle_rect = Rect::from_min_max(rect.min, Pos2::new(rect.min.x + metrics.row_num_width, rect.min.y + metrics.row_height));
+    let toggle_resp = ui.interact(toggle_rect, egui::Id::new("sample_len_bg_toggle"), egui::Sense::hover());
+    toggle_resp.on_hover_text("Sample Length BG (Ctrl+Shift+L)");
+    let toggle_icon = if sample_length_bg { "▣" } else { "□" };
+    let toggle_color = if sample_length_bg { theme.fg_instrument } else { theme.fg_note_empty };
+    painter.text(
+        Pos2::new(toggle_btn_rect.left() + 2.0, toggle_btn_rect.top() + metrics.row_height * 0.5),
+        egui::Align2::LEFT_CENTER,
+        toggle_icon,
+        egui::FontId::monospace(metrics.font_size),
+        toggle_color,
+    );
 
     let first_row = scroll_row;
     let last_row = (first_row + visible_rows).min(pattern.num_rows);
@@ -346,7 +427,54 @@ pub fn draw_pattern_grid(
             }
 
             let cell = pattern.cell(row, ch);
-            draw_cell(&painter, x, y, cell, metrics, theme);
+
+            if sample_length_bg {
+                if let Some(inst_idx) = cell.instrument {
+                    if let Some(m) = module {
+                        if let Some(instrument) = m.instruments.get(inst_idx as usize) {
+                            let sample_idx = instrument.sample_map[0];
+                            if let Some(sample) = m.samples.get(sample_idx as usize) {
+                                if !sample.data.is_empty() && sample.sample_rate > 0 {
+                                    let bpm = m.initial_bpm as f32;
+                                    let speed = m.initial_speed as f32;
+                                    let samples_per_row = (sample.sample_rate as f32 * 60.0 / bpm) / speed;
+                                    let row_duration = sample.data.len() as f32 / samples_per_row;
+
+                                    let shift = if row_duration < 1.0 {
+                                        0.0
+                                    } else if row_duration < 4.0 {
+                                        theme.sample_len_shift * 0.3
+                                    } else if row_duration < 16.0 {
+                                        theme.sample_len_shift * 0.6
+                                    } else if row_duration < 64.0 {
+                                        theme.sample_len_shift * 0.9
+                                    } else {
+                                        theme.sample_len_shift
+                                    };
+
+                                    if shift > 0.0 {
+                                        let shifted_bg = shift_color_saturation(bg, shift);
+                                        let cell_rect = Rect::from_min_max(
+                                            Pos2::new(x, y),
+                                            Pos2::new(x + metrics.channel_width - 2.0, y + metrics.row_height),
+                                        );
+                                        painter.rect_filled(cell_rect, 0.0, shifted_bg);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let auto_overlay = automation_overlays.get(ch).and_then(|o| o.as_ref());
+            draw_cell(&painter, x, y, cell, metrics, theme, col_vis, auto_overlay.is_some());
+
+            if let Some(info) = auto_overlay {
+                draw_automation_cell(
+                    &painter, x, y, row, ch, metrics, theme, info,
+                );
+            }
 
             if let Some(hover_pos) = ui.input(|i| i.pointer.hover_pos()) {
                 let cell_rect = Rect::from_min_size(
@@ -404,7 +532,7 @@ pub fn draw_pattern_grid(
             let ch = first_ch + display_ch.min(visible_channels.saturating_sub(1));
 
             let sub_col_x = col_x - display_ch as f32 * metrics.channel_width;
-            let sub_column = position_to_sub_column(sub_col_x, metrics);
+            let sub_column = position_to_sub_column(sub_col_x, metrics, col_vis);
 
             let cursor_pos = CursorPosition {
                 row,
@@ -454,112 +582,216 @@ pub fn draw_pattern_grid(
         drag_position,
         context_menu_action,
         effect_tooltip,
+        toggle_sample_length_bg,
+        automation_interaction: None,
     }
 }
 
-fn position_to_sub_column(x: f32, metrics: GridMetrics) -> SubColumn {
-    if x < metrics.note_width {
-        SubColumn::Note
-    } else if x < metrics.inst_x() + metrics.char_width * 0.5 {
-        SubColumn::InstrumentTens
-    } else if x < metrics.inst_x() + metrics.inst_width {
-        SubColumn::InstrumentOnes
-    } else if x < metrics.vol_x() + metrics.char_width * 0.5 {
-        SubColumn::VolumeTens
-    } else if x < metrics.vol_x() + metrics.vol_width {
-        SubColumn::VolumeOnes
-    } else if x < metrics.effect_type_x() + metrics.char_width * 0.5 {
-        SubColumn::EffectType
-    } else if x < metrics.effect_param1_x() + metrics.char_width * 0.5 {
-        SubColumn::EffectParamHigh
-    } else {
-        SubColumn::EffectParamLow
+fn position_to_sub_column(x: f32, metrics: GridMetrics, col_vis: ColumnVisibility) -> SubColumn {
+    let mut pos = x;
+
+    if col_vis.note {
+        if pos < metrics.note_width {
+            return SubColumn::Note;
+        }
+        pos -= metrics.note_width + metrics.note_to_inst_gap;
     }
+
+    if col_vis.instrument {
+        if pos < metrics.inst_width + metrics.char_width * 0.5 {
+            return SubColumn::InstrumentTens;
+        }
+        if pos < metrics.inst_width {
+            return SubColumn::InstrumentOnes;
+        }
+        pos -= metrics.inst_width + metrics.inst_to_vol_gap;
+    }
+
+    if col_vis.volume {
+        if pos < metrics.vol_width + metrics.char_width * 0.5 {
+            return SubColumn::VolumeTens;
+        }
+        if pos < metrics.vol_width {
+            return SubColumn::VolumeOnes;
+        }
+        pos -= metrics.vol_width + metrics.vol_to_effect_gap;
+    }
+
+    if col_vis.effect {
+        if pos < metrics.effect_width * 0.33 {
+            return SubColumn::EffectType;
+        }
+        if pos < metrics.effect_width * 0.66 {
+            return SubColumn::EffectParamHigh;
+        }
+        return SubColumn::EffectParamLow;
+    }
+
+    SubColumn::Note
 }
 
-fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: GridMetrics, theme: &TrackerTheme) {
+fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: GridMetrics, theme: &TrackerTheme, col_vis: ColumnVisibility, suppress_effect: bool) {
     let font = egui::FontId::monospace(metrics.font_size);
     let center_y = y + metrics.row_height * 0.5;
 
-    let note_text = match cell.note {
-        Note::On(key) => {
-            let tone = key % 12;
-            let octave = key / 12;
-            format!("{}{}", TONE_NAMES[tone as usize], octave)
+    if col_vis.note {
+        let note_text = match cell.note {
+            Note::On(key) => {
+                let tone = key % 12;
+                let octave = key / 12;
+                format!("{}{}", TONE_NAMES[tone as usize], octave)
+            }
+            Note::Off => "===".to_string(),
+            Note::Cut => "^^^".to_string(),
+            Note::Fade => "~~~".to_string(),
+            Note::None => "---".to_string(),
+        };
+        let note_color = match cell.note {
+            Note::On(_) => theme.fg_note,
+            Note::Off => theme.fg_note_off,
+            Note::Cut => theme.fg_note_cut,
+            Note::Fade => theme.fg_note_off,
+            Note::None => theme.fg_note_empty,
+        };
+        painter.text(Pos2::new(x, center_y), egui::Align2::LEFT_CENTER, note_text, font.clone(), note_color);
+    }
+
+    if col_vis.instrument {
+        let ins_text = match cell.instrument {
+            Some(i) => format!("{:02}", i),
+            None => "..".to_string(),
+        };
+        let ins_color = if cell.instrument.is_some() {
+            theme.fg_instrument
+        } else {
+            theme.fg_note_empty
+        };
+        painter.text(
+            Pos2::new(x + metrics.inst_x, center_y),
+            egui::Align2::LEFT_CENTER,
+            ins_text,
+            font.clone(),
+            ins_color,
+        );
+    }
+
+    if col_vis.volume {
+        let vol_text = match cell.volume {
+            Some(v) => format!("{:02}", v),
+            None => "..".to_string(),
+        };
+        let vol_color = if cell.volume.is_some() {
+            theme.fg_volume
+        } else {
+            theme.fg_note_empty
+        };
+        painter.text(
+            Pos2::new(x + metrics.vol_x, center_y),
+            egui::Align2::LEFT_CENTER,
+            vol_text,
+            font.clone(),
+            vol_color,
+        );
+    }
+
+    if col_vis.effect && !suppress_effect {
+        let (fx_type, fx_param) = format_effect(&cell.effect);
+        let fx_type_color = if cell.effect != Effect::None {
+            theme.fg_effect
+        } else {
+            theme.fg_note_empty
+        };
+        let fx_param_color = if cell.effect != Effect::None {
+            theme.fg_effect_param
+        } else {
+            theme.fg_note_empty
+        };
+        painter.text(
+            Pos2::new(x + metrics.effect_type_x, center_y),
+            egui::Align2::LEFT_CENTER,
+            fx_type,
+            font.clone(),
+            fx_type_color,
+        );
+        painter.text(
+            Pos2::new(x + metrics.effect_param1_x(), center_y),
+            egui::Align2::LEFT_CENTER,
+            fx_param,
+            font,
+            fx_param_color,
+        );
+    }
+}
+
+fn draw_automation_cell(
+    painter: &egui::Painter,
+    x: f32,
+    y: f32,
+    row: usize,
+    ch: usize,
+    metrics: GridMetrics,
+    theme: &TrackerTheme,
+    info: &AutomationOverlayInfo,
+) {
+    let fx_x = x + metrics.effect_type_x;
+    let fx_w = metrics.char_width * 4.0;
+    let center_y = y + metrics.row_height * 0.5;
+    let cell_rect = Rect::from_min_size(Pos2::new(fx_x, y), egui::vec2(fx_w, metrics.row_height));
+
+    let order = info.current_order;
+    let row_u16 = row as u16;
+
+    let (has_point, point_value, interp) = match &info.track {
+        Some(track) => {
+            let pt = track.points.iter().find(|p| p.order == order && p.row == row_u16);
+            match pt {
+                Some(p) => (true, p.value, p.interp_to_next),
+                None => (false, track.evaluate(order, row_u16, 0, info.speed), InterpolationMode::Hold),
+            }
         }
-        Note::Off => "===".to_string(),
-        Note::Cut => "^^^".to_string(),
-        Note::Fade => "~~~".to_string(),
-        Note::None => "---".to_string(),
+        None => (false, 0.5, InterpolationMode::Hold),
     };
-    let note_color = match cell.note {
-        Note::On(_) => theme.fg_note,
-        Note::Off => theme.fg_note_off,
-        Note::Cut => theme.fg_note_cut,
-        Note::Fade => theme.fg_note_off,
-        Note::None => theme.fg_note_empty,
-    };
-    painter.text(Pos2::new(x, center_y), egui::Align2::LEFT_CENTER, note_text, font.clone(), note_color);
 
-    let ins_text = match cell.instrument {
-        Some(i) => format!("{:02}", i),
-        None => "..".to_string(),
-    };
-    let ins_color = if cell.instrument.is_some() {
-        theme.fg_instrument
-    } else {
-        theme.fg_note_empty
-    };
-    painter.text(
-        Pos2::new(x + metrics.inst_x(), center_y),
-        egui::Align2::LEFT_CENTER,
-        ins_text,
-        font.clone(),
-        ins_color,
-    );
+    let normalized = point_value.clamp(0.0, 1.0);
+    let dot_y = y + metrics.row_height * (1.0 - normalized);
 
-    let vol_text = match cell.volume {
-        Some(v) => format!("{:02}", v),
-        None => "..".to_string(),
-    };
-    let vol_color = if cell.volume.is_some() {
-        theme.fg_volume
-    } else {
-        theme.fg_note_empty
-    };
-    painter.text(
-        Pos2::new(x + metrics.vol_x(), center_y),
-        egui::Align2::LEFT_CENTER,
-        vol_text,
-        font.clone(),
-        vol_color,
-    );
+    painter.rect_filled(cell_rect, 0.0, egui::Color32::from_rgba_premultiplied(15, 25, 40, 180));
 
-    let (fx_type, fx_param) = format_effect(&cell.effect);
-    let fx_type_color = if cell.effect != Effect::None {
-        theme.fg_effect
+    if has_point {
+        painter.circle_filled(Pos2::new(fx_x + fx_w * 0.5, dot_y), 3.0, egui::Color32::from_rgb(120, 200, 255));
+        let hex_val = (normalized * 255.0) as u8;
+        let val_text = format!("{:02X}", hex_val);
+        let val_color = egui::Color32::from_rgb(160, 220, 255);
+        painter.text(
+            Pos2::new(fx_x, center_y),
+            egui::Align2::LEFT_CENTER,
+            val_text,
+            egui::FontId::monospace(metrics.font_size * 0.85),
+            val_color,
+        );
+
+        let interp_char = match interp {
+            InterpolationMode::Hold => "·",
+            InterpolationMode::Linear => "/",
+            InterpolationMode::Smooth => "~",
+            InterpolationMode::Exponential => "^",
+        };
+        painter.text(
+            Pos2::new(fx_x + metrics.char_width * 2.5, center_y),
+            egui::Align2::LEFT_CENTER,
+            interp_char,
+            egui::FontId::monospace(metrics.font_size * 0.7),
+            egui::Color32::from_rgb(100, 140, 180),
+        );
     } else {
-        theme.fg_note_empty
-    };
-    let fx_param_color = if cell.effect != Effect::None {
-        theme.fg_effect_param
-    } else {
-        theme.fg_note_empty
-    };
-    painter.text(
-        Pos2::new(x + metrics.effect_type_x(), center_y),
-        egui::Align2::LEFT_CENTER,
-        fx_type,
-        font.clone(),
-        fx_type_color,
-    );
-    painter.text(
-        Pos2::new(x + metrics.effect_param1_x(), center_y),
-        egui::Align2::LEFT_CENTER,
-        fx_param,
-        font,
-        fx_param_color,
-    );
+        let line_x = fx_x + fx_w * 0.5;
+        let line_color = egui::Color32::from_rgba_premultiplied(80, 120, 160, 100);
+        painter.line_segment(
+            [Pos2::new(line_x, y), Pos2::new(line_x, y + metrics.row_height)],
+            Stroke::new(0.5, line_color),
+        );
+        painter.circle_filled(Pos2::new(line_x, dot_y), 1.5, egui::Color32::from_rgba_premultiplied(80, 140, 200, 120));
+    }
 }
 
 fn format_effect(effect: &Effect) -> (String, String) {
@@ -738,4 +970,50 @@ fn effect_tooltip_text(effect: &Effect) -> String {
         Effect::SetSendBusParam { bus, param, value } => format!("Send Param: bus {} param {} value {}", bus, param, value),
         _ => String::new(),
     }
+}
+
+fn shift_color_saturation(color: egui::Color32, shift: f32) -> egui::Color32 {
+    let (r, g, b, a) = color.to_tuple();
+    let r = r as f32 / 255.0;
+    let g = g as f32 / 255.0;
+    let b = b as f32 / 255.0;
+
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+
+    if max == min {
+        return color;
+    }
+
+    let d = max - min;
+    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+
+    let new_s = (s + shift).clamp(0.0, 1.0);
+
+    let hue = if max == r {
+        ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
+    } else if max == g {
+        ((b - r) / d + 2.0) / 6.0
+    } else {
+        ((r - g) / d + 4.0) / 6.0
+    };
+
+    let q = if l < 0.5 { l * (1.0 + new_s) } else { l + s - l * s };
+    let p = 2.0 * l - q;
+
+    fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
+        if t < 0.0 { t += 1.0; }
+        if t > 1.0 { t -= 1.0; }
+        if t < 1.0 / 6.0 { return p + (q - p) * 6.0 * t; }
+        if t < 1.0 / 2.0 { return q; }
+        if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+        p
+    }
+
+    let new_r = (hue_to_rgb(p, q, hue + 1.0 / 3.0) * 255.0).round() as u8;
+    let new_g = (hue_to_rgb(p, q, hue) * 255.0).round() as u8;
+    let new_b = (hue_to_rgb(p, q, hue - 1.0 / 3.0) * 255.0).round() as u8;
+
+    egui::Color32::from_rgba_premultiplied(new_r, new_g, new_b, a)
 }

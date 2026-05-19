@@ -137,6 +137,8 @@ pub struct HtrkApp {
     send_levels: Vec<[f32; 4]>,
     send_bus_effect_types: [SendEffectType; NUM_SEND_BUSES],
     send_bus_params: [[f32; 5]; NUM_SEND_BUSES],
+    automation_targets: Vec<Option<crate::sequencer::AutomationTarget>>,
+    automation_dragging: Option<(usize, f32)>,
 }
 
 impl Default for HtrkApp {
@@ -203,8 +205,8 @@ impl Default for HtrkApp {
             sample_selection: None,
             sample_clipboard: None,
             amplify_factor: config.default_amplify_factor,
+            col_vis: config.get_col_vis(),
             config,
-            col_vis: ColumnVisibility::all(),
             last_visible_rows: VISIBLE_ROWS,
             last_visible_channels: 16,
             send_levels: vec![[0.0f32; NUM_SEND_BUSES]; DEFAULT_CHANNELS],
@@ -220,6 +222,8 @@ impl Default for HtrkApp {
                 [0.0, 0.0, 0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0, 0.0],
             ],
+            automation_targets: vec![None; crate::sequencer::module::DEFAULT_CHANNELS],
+            automation_dragging: None,
         }
     }
 }
@@ -461,6 +465,7 @@ impl HtrkApp {
         self.muted_channels.resize(count, false);
         self.solo_channels.resize(count, false);
         self.multichannel_channels.resize(count, false);
+        self.automation_targets.resize(count, None);
         if self.channel_names.len() < count {
             let old = self.channel_names.len();
             self.channel_names.resize_with(count, || String::new());
@@ -754,6 +759,38 @@ impl HtrkApp {
                                 self.step_sub_column_backward();
                                 handled = true;
                             }
+                            egui::Key::Num1 => {
+                                let mut col_vis = self.config.get_col_vis();
+                                col_vis.note = !col_vis.note;
+                                self.config.set_col_vis(col_vis);
+                                self.col_vis = self.config.get_col_vis();
+                                self.config.save();
+                                handled = true;
+                            }
+                            egui::Key::Num2 => {
+                                let mut col_vis = self.config.get_col_vis();
+                                col_vis.instrument = !col_vis.instrument;
+                                self.config.set_col_vis(col_vis);
+                                self.col_vis = self.config.get_col_vis();
+                                self.config.save();
+                                handled = true;
+                            }
+                            egui::Key::Num3 => {
+                                let mut col_vis = self.config.get_col_vis();
+                                col_vis.volume = !col_vis.volume;
+                                self.config.set_col_vis(col_vis);
+                                self.col_vis = self.config.get_col_vis();
+                                self.config.save();
+                                handled = true;
+                            }
+                            egui::Key::Num4 => {
+                                let mut col_vis = self.config.get_col_vis();
+                                col_vis.effect = !col_vis.effect;
+                                self.config.set_col_vis(col_vis);
+                                self.col_vis = self.config.get_col_vis();
+                                self.config.save();
+                                handled = true;
+                            }
                             _ => {}
                         }
                     }
@@ -779,6 +816,9 @@ impl HtrkApp {
                             }
                             egui::Key::Space => {
                                 self.cycle_spacing_mode();
+                            }
+                            egui::Key::L => {
+                                self.config.toggle_sample_length_bg();
                             }
                             _ => {}
                         }
@@ -1167,10 +1207,11 @@ impl HtrkApp {
 
                 self.set_cell_at_cursor(cell);
 
-                if let Some(next) = self.cursor.sub_column.next() {
+                let col_vis = self.config.get_col_vis();
+                if let Some(next) = self.cursor.sub_column.next_visible(col_vis) {
                     self.cursor.sub_column = next;
                 } else {
-                    self.cursor.sub_column = SubColumn::Note;
+                    self.cursor.sub_column = Self::first_visible_sub_column(col_vis);
                     self.advance_cursor_down(self.cursor_skip as usize);
                 }
                 return;
@@ -1194,10 +1235,11 @@ impl HtrkApp {
             };
             if changed {
                 self.set_cell_at_cursor(cell);
-                if let Some(next) = self.cursor.sub_column.next() {
+                let col_vis = self.config.get_col_vis();
+                if let Some(next) = self.cursor.sub_column.next_visible(col_vis) {
                     self.cursor.sub_column = next;
                 } else {
-                    self.cursor.sub_column = SubColumn::Note;
+                    self.cursor.sub_column = Self::first_visible_sub_column(col_vis);
                     self.advance_cursor_down(self.cursor_skip as usize);
                 }
                 return;
@@ -1224,10 +1266,11 @@ impl HtrkApp {
                     _ => unreachable!(),
                 }
                 self.set_cell_at_cursor(cell);
-                if let Some(next) = self.cursor.sub_column.next() {
+                let col_vis = self.config.get_col_vis();
+                if let Some(next) = self.cursor.sub_column.next_visible(col_vis) {
                     self.cursor.sub_column = next;
                 } else {
-                    self.cursor.sub_column = SubColumn::Note;
+                    self.cursor.sub_column = Self::first_visible_sub_column(col_vis);
                     self.advance_cursor_down(self.cursor_skip as usize);
                 }
             }
@@ -1268,14 +1311,25 @@ impl HtrkApp {
         self.ensure_cursor_visible();
     }
 
+    fn first_visible_sub_column(col_vis: crate::ui::pattern_grid::ColumnVisibility) -> crate::ui::pattern_grid::SubColumn {
+        use crate::ui::pattern_grid::SubColumn;
+        if col_vis.note { return SubColumn::Note; }
+        if col_vis.instrument { return SubColumn::InstrumentTens; }
+        if col_vis.volume { return SubColumn::VolumeTens; }
+        if col_vis.effect { return SubColumn::EffectType; }
+        SubColumn::Note
+    }
+
     fn step_sub_column_forward(&mut self) {
-        if let Some(next) = self.cursor.sub_column.next() {
+        let col_vis = self.config.get_col_vis();
+        if let Some(next) = self.cursor.sub_column.next_visible(col_vis) {
             self.cursor.sub_column = next;
         }
     }
 
     fn step_sub_column_backward(&mut self) {
-        if let Some(prev) = self.cursor.sub_column.prev() {
+        let col_vis = self.config.get_col_vis();
+        if let Some(prev) = self.cursor.sub_column.prev_visible(col_vis) {
             self.cursor.sub_column = prev;
         }
     }
@@ -2716,6 +2770,7 @@ impl eframe::App for HtrkApp {
                 self.selection.is_some(),
                 self.follow_playback,
                 self.theme_preset,
+                self.config.get_spacing_mode(),
                 &self.theme,
                 self.current_sample_rate,
                 &self.current_sample_format,
@@ -2782,8 +2837,14 @@ impl eframe::App for HtrkApp {
                 self.config.theme_preset = preset.config_key().to_string();
                 self.config.save();
             }
+            if let Some(mode) = menu_resp.spacing_mode_changed {
+                self.config.set_spacing_mode(mode);
+                self.config.save();
+            }
             if let Some(col_vis) = menu_resp.col_vis {
                 self.col_vis = col_vis;
+                self.config.set_col_vis(col_vis);
+                self.config.save();
             }
             if menu_resp.show_shortcuts {
                 self.show_shortcuts = true;
@@ -2975,7 +3036,7 @@ impl eframe::App for HtrkApp {
                 AppView::Pattern => {
                     let num_channels = self.num_channels();
 
-                    let metrics = crate::ui::pattern_grid::GridMetrics::new(self.config.editor_font_size as f32, self.config.get_spacing_mode());
+                    let metrics = crate::ui::pattern_grid::GridMetrics::new(self.config.editor_font_size as f32, self.config.get_spacing_mode(), self.config.get_col_vis());
                     let visible_channels = crate::ui::pattern_grid::GridMetrics::calculate_visible_channels(ui, metrics);
                     let visible_channels = visible_channels.min(num_channels - self.scroll_channel).max(1);
 
@@ -3030,6 +3091,7 @@ impl eframe::App for HtrkApp {
                         &self.theme,
                         &self.playback_state,
                         metrics,
+                        &self.automation_targets,
                     );
 
                     if let Some(ch) = ch_resp.toggle_mute {
@@ -3061,6 +3123,29 @@ impl eframe::App for HtrkApp {
                             self.channel_names[ch] = name;
                         }
                     }
+                    if let Some((ch, target)) = ch_resp.automation_target_changed {
+                        if ch < self.automation_targets.len() {
+                            self.automation_targets[ch] = target;
+                            if let Some(ref t) = target {
+                                self.ensure_module_ownership();
+                                if let Some(ref mut module) = self.module {
+                                    if let Some(arc_module) = Arc::get_mut(module) {
+                                        let exists = arc_module.automation_tracks.iter().any(
+                                            |tr| tr.channel == Some(ch) && tr.target == *t
+                                        );
+                                        if !exists {
+                                            let id = arc_module.next_automation_id;
+                                            arc_module.next_automation_id += 1;
+                                            arc_module.automation_tracks.push(
+                                                crate::sequencer::AutomationTrack::new(id, *t, Some(ch))
+                                            );
+                                        }
+                                    }
+                                }
+                                self.sync_module_to_audio();
+                            }
+                        }
+                    }
 
                     if let Some(module) = &self.module {
                         if !module.order_list.is_empty() {
@@ -3068,6 +3153,20 @@ impl eframe::App for HtrkApp {
                             let pat_idx = module.order_list[order_idx] as usize;
                             let grid_playback_row = if playback_pattern == Some(pat_idx) { playback_row } else { None };
                             if let Some(pattern) = module.patterns.get(pat_idx) {
+                                let auto_overlays: Vec<Option<crate::ui::pattern_grid::AutomationOverlayInfo>> = (0..num_channels).map(|ch| {
+                                    self.automation_targets.get(ch).and_then(|t| t.as_ref()).map(|target| {
+                                        let track = module.automation_tracks.iter()
+                                            .find(|tr| tr.channel == Some(ch) && tr.target == *target)
+                                            .map(|tr| std::sync::Arc::new(tr.clone()));
+                                        crate::ui::pattern_grid::AutomationOverlayInfo {
+                                            target: *target,
+                                            track,
+                                            current_order: self.selected_order as u16,
+                                            speed: module.initial_speed,
+                                        }
+                                    })
+                                }).collect();
+
                                 let grid_resp = crate::ui::pattern_grid::draw_pattern_grid(
                                     ui,
                                     pattern,
@@ -3081,6 +3180,10 @@ impl eframe::App for HtrkApp {
                                     &self.theme,
                                     self.config.row_highlight_minor,
                                     self.config.row_highlight_major,
+                                    self.config.get_sample_length_bg(),
+                                    self.config.get_col_vis(),
+                                    self.module.as_ref().map(|v| &**v),
+                                    &auto_overlays,
                                 );
 
                                 self.last_visible_rows = grid_resp.visible_rows;
@@ -3107,6 +3210,9 @@ impl eframe::App for HtrkApp {
                                 }
                                 if let Some(action) = grid_resp.context_menu_action {
                                     self.handle_context_menu_action(action);
+                                }
+                                if grid_resp.toggle_sample_length_bg {
+                                    self.config.toggle_sample_length_bg();
                                 }
                                 if let Some(tooltip) = grid_resp.effect_tooltip {
                                     ui.label(egui::RichText::new(&tooltip).size(10.0).color(egui::Color32::GRAY));
