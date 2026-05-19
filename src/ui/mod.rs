@@ -1,3 +1,4 @@
+pub mod automation_editor;
 pub mod channel_headers;
 pub mod envelope_editor;
 pub mod file_browser;

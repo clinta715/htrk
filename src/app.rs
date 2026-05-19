@@ -67,6 +67,7 @@ pub enum AppView {
     Instrument,
     SendFx,
     Playback,
+    Automation,
 }
 
 pub struct HtrkApp {
@@ -140,6 +141,7 @@ pub struct HtrkApp {
     send_bus_params: [[f32; 5]; NUM_SEND_BUSES],
     automation_targets: Vec<Option<crate::sequencer::AutomationTarget>>,
     automation_dragging: Option<(usize, f32)>,
+    automation_editor_state: crate::ui::automation_editor::AutomationEditorState,
 }
 
 impl Default for HtrkApp {
@@ -225,6 +227,7 @@ impl Default for HtrkApp {
             ],
             automation_targets: vec![None; crate::sequencer::module::DEFAULT_CHANNELS],
             automation_dragging: None,
+            automation_editor_state: crate::ui::automation_editor::AutomationEditorState::default(),
         }
     }
 }
@@ -3179,6 +3182,7 @@ impl eframe::App for HtrkApp {
             ui.selectable_value(&mut self.current_view, AppView::Instrument, "Instrument");
             ui.selectable_value(&mut self.current_view, AppView::SendFx, "Send FX");
             ui.selectable_value(&mut self.current_view, AppView::Playback, "Playback");
+            ui.selectable_value(&mut self.current_view, AppView::Automation, "Automation");
             });
             ui.separator();
 
@@ -3432,6 +3436,39 @@ impl eframe::App for HtrkApp {
                         &self.theme,
                         num_channels,
                     );
+                }
+                AppView::Automation => {
+                    self.ensure_module_ownership();
+                    if let Some(ref mut module) = self.module {
+                        if let Some(arc_module) = Arc::get_mut(module) {
+                            let auto_resp = crate::ui::automation_editor::draw_automation_editor(
+                                ui,
+                                arc_module,
+                                &mut self.automation_editor_state,
+                                &self.theme,
+                            );
+                            if let Some((target, channel)) = auto_resp.track_added {
+                                let id = arc_module.next_automation_id;
+                                arc_module.next_automation_id += 1;
+                                arc_module.automation_tracks.push(
+                                    crate::sequencer::AutomationTrack::new(id, target, channel)
+                                );
+                                self.automation_editor_state.selected_track_id = Some(id);
+                            }
+                            if let Some(tid) = auto_resp.track_removed {
+                                arc_module.automation_tracks.retain(|t| t.id != tid);
+                                if self.automation_editor_state.selected_track_id == Some(tid) {
+                                    self.automation_editor_state.selected_track_id = None;
+                                }
+                            }
+                            if let Some(tid) = auto_resp.track_toggled {
+                                if let Some(t) = arc_module.automation_tracks.iter_mut().find(|t| t.id == tid) {
+                                    t.enabled = !t.enabled;
+                                }
+                            }
+                            self.sync_module_to_audio();
+                        }
+                    }
                 }
             }
         });
