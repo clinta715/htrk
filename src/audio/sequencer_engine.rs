@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::audio::voice::{EnvelopeState, Voice};
 use crate::audio::filter::StateVariableFilter;
+use crate::sequencer::automation::AutomationTarget;
 use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect, FilterType, NUM_SEND_BUSES};
 use crate::sequencer::instrument::{
     DuplicateCheckAction, DuplicateCheckType, NewNoteAction,
@@ -237,6 +238,8 @@ impl SequencerEngine {
     }
 
     pub fn process_tick(&mut self) {
+        self.evaluate_automation();
+
         let tick = self.state.current_tick;
 
         if tick == 0 {
@@ -254,6 +257,75 @@ impl SequencerEngine {
 
         if self.state.current_tick >= self.state.speed {
             self.advance_row();
+        }
+    }
+
+    // ─── Automation evaluation ──────────────────────────────────
+
+    fn evaluate_automation(&mut self) {
+        let module = match &self.module {
+            Some(m) => m.clone(),
+            None => return,
+        };
+
+        let order = self.state.current_order;
+        let row = self.state.current_row;
+        let tick = self.state.current_tick;
+        let speed = self.state.speed;
+
+        for track in &module.automation_tracks {
+            if !track.enabled || track.points.is_empty() {
+                continue;
+            }
+
+            let value = track.evaluate(order, row as u16, tick, speed);
+
+            match track.channel {
+                Some(ch) => {
+                    if ch >= self.state.channels.len() {
+                        continue;
+                    }
+                    self.apply_automation_to_channel(ch, &track.target, value);
+                }
+                None => {
+                    self.apply_automation_global(&track.target, value);
+                }
+            }
+        }
+    }
+
+    fn apply_automation_to_channel(&mut self, ch: usize, target: &AutomationTarget, value: f32) {
+        match target {
+            AutomationTarget::ChannelVolume => {
+                self.state.channels[ch].auto_volume_factor = value;
+            }
+            AutomationTarget::ChannelPanning => {
+                self.state.channels[ch].auto_pan_offset = (value - 0.5) * 2.0;
+            }
+            AutomationTarget::FilterCutoff => {
+                self.state.channels[ch].auto_filter_cutoff = value;
+            }
+            AutomationTarget::FilterResonance => {
+                self.state.channels[ch].auto_filter_resonance = value;
+            }
+            AutomationTarget::SendLevel { bus } => {
+                if (*bus as usize) < NUM_SEND_BUSES {
+                    self.state.channels[ch].auto_send_factor[*bus as usize] = value;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_automation_global(&mut self, target: &AutomationTarget, value: f32) {
+        match target {
+            AutomationTarget::GlobalVolume => {
+                self.state.auto_global_vol_factor = value;
+            }
+            AutomationTarget::Tempo => {
+                self.state.auto_tempo_factor = value;
+            }
+            _ => {}
         }
     }
 

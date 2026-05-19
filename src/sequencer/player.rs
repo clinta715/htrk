@@ -107,6 +107,12 @@ pub struct ChannelState {
 
     pub send_levels: [f32; 4],
     pub last_send_param_value: [u8; NUM_SEND_BUSES * 4],
+
+    pub auto_volume_factor: f32,
+    pub auto_pan_offset: f32,
+    pub auto_filter_cutoff: f32,
+    pub auto_filter_resonance: f32,
+    pub auto_send_factor: [f32; NUM_SEND_BUSES],
 }
 
 impl Default for ChannelState {
@@ -185,6 +191,11 @@ impl Default for ChannelState {
             karplus_param: 0,
             send_levels: [0.0; NUM_SEND_BUSES],
             last_send_param_value: [0; NUM_SEND_BUSES * 4],
+            auto_volume_factor: 1.0,
+            auto_pan_offset: 0.0,
+            auto_filter_cutoff: 1.0,
+            auto_filter_resonance: 0.0,
+            auto_send_factor: [1.0; NUM_SEND_BUSES],
         }
     }
 }
@@ -237,6 +248,9 @@ pub struct SequencerState {
     pub channels: Vec<ChannelState>,
 
     pub play_mode: PlayMode,
+
+    pub auto_global_vol_factor: f32,
+    pub auto_tempo_factor: f32,
 }
 
 impl Default for SequencerState {
@@ -268,6 +282,8 @@ impl Default for SequencerState {
             pattern_loop_jump_target: None,
             channels: vec![ChannelState::default(); crate::sequencer::module::DEFAULT_CHANNELS],
             play_mode: PlayMode::Once,
+            auto_global_vol_factor: 1.0,
+            auto_tempo_factor: 1.0,
         }
     }
 }

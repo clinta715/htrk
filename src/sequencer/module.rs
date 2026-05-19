@@ -52,6 +52,10 @@ pub enum ModuleFormat {
     S3M,
     MOD,
     HTK,
+    C669,
+    Mmd,
+    Ult,
+    Stm,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -110,6 +114,11 @@ pub struct Module {
     pub send_bus_config: [SendEffectType; NUM_SEND_BUSES],
     #[serde(default = "default_send_return_levels")]
     pub send_return_levels: [f32; NUM_SEND_BUSES],
+
+    #[serde(default)]
+    pub automation_tracks: Vec<crate::sequencer::automation::AutomationTrack>,
+    #[serde(default)]
+    pub next_automation_id: u32,
 }
 
 impl Default for Module {
@@ -133,6 +142,8 @@ impl Default for Module {
             flags: ModuleFlags::default(),
             send_bus_config: [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None],
             send_return_levels: [0.5, 0.0, 0.0, 0.0],
+            automation_tracks: Vec::new(),
+            next_automation_id: 0,
         }
     }
 }

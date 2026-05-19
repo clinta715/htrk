@@ -351,6 +351,8 @@ let file_type = read_u8(data, &mut offset)?;
             flags: module_flags,
             send_bus_config: Default::default(),
             send_return_levels: Default::default(),
+            automation_tracks: Vec::new(),
+            next_automation_id: 0,
         })
     }
 }

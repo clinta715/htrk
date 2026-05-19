@@ -173,6 +173,8 @@ impl FormatHandler for ItHandler {
                 crate::sequencer::effect::SendEffectType::None,
             ],
             send_return_levels: [0.5, 0.0, 0.0, 0.0],
+            automation_tracks: Vec::new(),
+            next_automation_id: 0,
         })
     }
 }

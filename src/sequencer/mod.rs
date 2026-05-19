@@ -1,3 +1,4 @@
+pub mod automation;
 pub mod effect;
 pub mod instrument;
 pub mod module;
@@ -7,6 +8,10 @@ pub mod period;
 pub mod player;
 pub mod sample;
 
+pub use automation::{
+    AutomationPoint, AutomationTarget, AutomationTrack, InterpolationMode,
+    remap_automation_orders,
+};
 pub use effect::Effect;
 pub use instrument::{
     DuplicateCheckAction, DuplicateCheckType, Envelope, EnvelopeFlags, EnvelopePoint, Instrument,

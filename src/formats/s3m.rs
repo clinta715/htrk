@@ -468,6 +468,8 @@ impl FormatHandler for S3mHandler {
             flags: crate::sequencer::ModuleFlags::default(),
             send_bus_config: Default::default(),
             send_return_levels: Default::default(),
+            automation_tracks: Vec::new(),
+            next_automation_id: 0,
         })
     }
 }
