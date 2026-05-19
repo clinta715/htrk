@@ -1,5 +1,4 @@
 use eframe::egui;
-use std::sync::Arc;
 
 use crate::sequencer::automation::{
     AutomationPoint, AutomationTarget, AutomationTrack, InterpolationMode,
@@ -10,7 +9,6 @@ use super::theme::TrackerTheme;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaneDragState {
     None,
-    Creating { channel: Option<usize>, order: u16 },
     Moving { track_id: u32, point_idx: usize },
 }
 
@@ -18,6 +16,8 @@ pub struct AutomationEditorState {
     pub selected_track_id: Option<u32>,
     pub scroll_offset: f32,
     pub drag: LaneDragState,
+    pub selected_order: u16,
+    pub add_channel: usize,
 }
 
 impl Default for AutomationEditorState {
@@ -26,6 +26,8 @@ impl Default for AutomationEditorState {
             selected_track_id: None,
             scroll_offset: 0.0,
             drag: LaneDragState::None,
+            selected_order: 0,
+            add_channel: 0,
         }
     }
 }
@@ -36,6 +38,7 @@ pub struct AutomationEditorResponse {
     pub track_toggled: Option<u32>,
     pub point_changed: Option<(u32, AutomationPoint)>,
     pub point_removed: Option<(u32, u16, u16)>,
+    pub interp_changed: Option<(u32, InterpolationMode)>,
 }
 
 pub fn draw_automation_editor(
@@ -50,10 +53,10 @@ pub fn draw_automation_editor(
         track_toggled: None,
         point_changed: None,
         point_removed: None,
+        interp_changed: None,
     };
 
     let sidebar_width = 200.0;
-    let lane_height = 120.0;
 
     ui.horizontal_top(|ui| {
         egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -83,8 +86,8 @@ pub fn draw_automation_editor(
                         egui::Color32::from_rgb(30, 30, 40)
                     };
 
-ui.horizontal(|ui| {
-                        let mut enabled = track.enabled;
+                    ui.horizontal(|ui| {
+                        let enabled = track.enabled;
                         let cb_size = 14.0;
                         let (cb_rect, cb_resp) = ui.allocate_exact_size(
                             egui::vec2(cb_size, cb_size),
@@ -100,7 +103,6 @@ ui.horizontal(|ui| {
                             cb_color,
                         );
                         if cb_resp.clicked() {
-                            enabled = !enabled;
                             resp.track_toggled = Some(tid);
                         }
 
@@ -142,10 +144,17 @@ ui.horizontal(|ui| {
 
                 ui.add_space(8.0);
                 ui.label(egui::RichText::new("+ Add Track").size(11.0).color(egui::Color32::from_rgb(100, 160, 255)));
+
+                ui.add_space(4.0);
                 ui.label(egui::RichText::new("Per-Channel:").size(10.0).color(egui::Color32::GRAY));
+                ui.horizontal(|ui| {
+                    ui.label("Ch:");
+                    let max_ch = if module.channel_volume.is_empty() { 0 } else { module.channel_volume.len().saturating_sub(1) };
+                    ui.add(egui::DragValue::new(&mut state.add_channel).range(0..=max_ch).speed(1.0));
+                });
                 for target in AutomationTarget::all_per_channel() {
                     if ui.small_button(target.label()).clicked() {
-                        resp.track_added = Some((target, None));
+                        resp.track_added = Some((target, Some(state.add_channel)));
                     }
                 }
                 ui.add_space(4.0);
@@ -168,7 +177,7 @@ ui.horizontal(|ui| {
                 match selected_track {
                     Some(idx) => {
                         let track = &module.automation_tracks[idx];
-                        draw_lane_editor(ui, track, state, theme, module);
+                        draw_lane_editor(ui, track, state, theme, module, &mut resp);
                     }
                     None => {
                         ui.vertical_centered(|ui| {
@@ -191,16 +200,11 @@ fn draw_lane_editor(
     state: &mut AutomationEditorState,
     theme: &TrackerTheme,
     module: &Module,
+    resp: &mut AutomationEditorResponse,
 ) {
     let label = track.label();
     ui.label(egui::RichText::new(&label).strong().size(14.0));
 
-    let interp_label = match track.default_interp {
-        InterpolationMode::Hold => "Hold",
-        InterpolationMode::Linear => "Linear",
-        InterpolationMode::Smooth => "Smooth",
-        InterpolationMode::Exponential => "Exponential",
-    };
     ui.horizontal(|ui| {
         ui.label("Interp:");
         for mode in [InterpolationMode::Hold, InterpolationMode::Linear, InterpolationMode::Smooth, InterpolationMode::Exponential] {
@@ -211,7 +215,7 @@ fn draw_lane_editor(
                 InterpolationMode::Exponential => "Exp",
             };
             if ui.selectable_label(track.default_interp == mode, name).clicked() {
-                state.selected_track_id = Some(track.id);
+                resp.interp_changed = Some((track.id, mode));
             }
         }
     });
@@ -237,8 +241,7 @@ fn draw_lane_editor(
         );
     }
 
-    let y_scale = 300.0 / total_height.max(1.0);
-    let order = 0u16;
+    let order = state.selected_order;
 
     if track.points.is_empty() {
         painter.text(
@@ -249,19 +252,17 @@ fn draw_lane_editor(
             egui::Color32::from_rgb(80, 80, 100),
         );
     } else {
-        let speed = module.initial_speed;
-        let points = &track.points;
         let point_radius = 4.0;
         let curve_color = egui::Color32::from_rgb(100, 200, 255);
         let dim_color = egui::Color32::from_rgba_premultiplied(60, 120, 160, 80);
 
-        for i in 0..points.len() {
-            let pt = &points[i];
+        for i in 0..track.points.len() {
+            let pt = &track.points[i];
             let px = rect.left() + (pt.row as f32 / num_rows as f32) * rect.width();
             let py = rect.bottom() - (pt.value * rect.height());
 
-            let next_val = if i + 1 < points.len() {
-                let next = &points[i + 1];
+            if i + 1 < track.points.len() {
+                let next = &track.points[i + 1];
                 let next_px = rect.left() + (next.row as f32 / num_rows as f32) * rect.width();
                 let next_py = rect.bottom() - (next.value * rect.height());
 
@@ -308,10 +309,7 @@ fn draw_lane_editor(
                         }
                     }
                 }
-                Some(next_py)
-            } else {
-                None
-            };
+            }
 
             painter.circle_filled(egui::pos2(px, py), point_radius, egui::Color32::WHITE);
             painter.circle_stroke(egui::pos2(px, py), point_radius, egui::Stroke::new(1.0, egui::Color32::BLACK));
@@ -327,21 +325,53 @@ fn draw_lane_editor(
         }
     }
 
-    let playback_row: Option<usize> = None;
-    if let Some(pr) = playback_row {
-        let py = rect.top() + (pr as f32 / num_rows as f32) * rect.height();
-        painter.line_segment(
-            [egui::pos2(rect.left(), py), egui::pos2(rect.right(), py)],
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 255, 80)),
-        );
-    }
-
     if response.clicked() || response.dragged() {
         if let Some(pos) = response.interact_pointer_pos() {
             let rel_x = (pos.x - rect.left()).clamp(0.0, rect.width());
             let rel_y = (rect.bottom() - pos.y).clamp(0.0, rect.height());
-            let row = ((rel_x / rect.width()) * num_rows as f32) as u16;
+            let row = ((rel_x / rect.width()) * num_rows as f32).round() as u16;
             let value = (rel_y / rect.height()).clamp(0.0, 1.0);
+
+            let clicked_existing = track.points.iter().position(|p| {
+                (p.row as f32 - row as f32).abs() < 2.0
+                && (p.value - value).abs() < 0.05
+            });
+
+            if response.secondary_clicked() {
+                if track.points.iter().any(|p| p.order == order && p.row == row) {
+                    resp.point_removed = Some((track.id, order, row));
+                }
+            } else if response.dragged() {
+                if let LaneDragState::Moving { track_id, point_idx: _ } = state.drag {
+                    if track_id == track.id {
+                        resp.point_changed = Some((track.id, AutomationPoint {
+                            order,
+                            row,
+                            value,
+                            interp_to_next: track.default_interp,
+                        }));
+                    }
+                } else if let Some(idx) = clicked_existing {
+                    state.drag = LaneDragState::Moving { track_id: track.id, point_idx: idx };
+                }
+            } else {
+                resp.point_changed = Some((track.id, AutomationPoint {
+                    order,
+                    row,
+                    value,
+                    interp_to_next: track.default_interp,
+                }));
+            }
         }
+    } else if response.hovered() && response.secondary_clicked() {
+        if let Some(pos) = response.interact_pointer_pos() {
+            let rel_x = (pos.x - rect.left()).clamp(0.0, rect.width());
+            let row = ((rel_x / rect.width()) * num_rows as f32).round() as u16;
+            resp.point_removed = Some((track.id, order, row));
+        }
+    }
+
+    if ui.input(|i| i.pointer.any_released()) {
+        state.drag = LaneDragState::None;
     }
 }

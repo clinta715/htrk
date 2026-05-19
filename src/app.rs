@@ -829,6 +829,37 @@ impl HtrkApp {
                     }
                 }
             });
+
+            if self.current_view == AppView::Automation {
+                if let Some(tid) = self.automation_editor_state.selected_track_id {
+                    let mode = ctx.input(|i| {
+                        for event in &i.events {
+                            if let egui::Event::Key { key, pressed: true, .. } = event {
+                                match key {
+                                    egui::Key::Num5 => return Some(InterpolationMode::Hold),
+                                    egui::Key::Num6 => return Some(InterpolationMode::Linear),
+                                    egui::Key::Num7 => return Some(InterpolationMode::Smooth),
+                                    egui::Key::Num8 => return Some(InterpolationMode::Exponential),
+                                    _ => {}
+                                }
+                            }
+                        }
+                        None
+                    });
+                    if let Some(mode) = mode {
+                        self.ensure_module_ownership();
+                        if let Some(ref mut module) = self.module {
+                            if let Some(arc_module) = Arc::get_mut(module) {
+                                if let Some(t) = arc_module.automation_tracks.iter_mut().find(|t| t.id == tid) {
+                                    t.default_interp = mode;
+                                    self.sync_module_to_audio();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             return;
         }
 
@@ -3438,6 +3469,7 @@ impl eframe::App for HtrkApp {
                     );
                 }
                 AppView::Automation => {
+                    self.automation_editor_state.selected_order = self.selected_order as u16;
                     self.ensure_module_ownership();
                     if let Some(ref mut module) = self.module {
                         if let Some(arc_module) = Arc::get_mut(module) {
@@ -3464,6 +3496,21 @@ impl eframe::App for HtrkApp {
                             if let Some(tid) = auto_resp.track_toggled {
                                 if let Some(t) = arc_module.automation_tracks.iter_mut().find(|t| t.id == tid) {
                                     t.enabled = !t.enabled;
+                                }
+                            }
+                            if let Some((track_id, point)) = auto_resp.point_changed {
+                                if let Some(t) = arc_module.automation_tracks.iter_mut().find(|t| t.id == track_id) {
+                                    t.insert_point(point);
+                                }
+                            }
+                            if let Some((track_id, order, row)) = auto_resp.point_removed {
+                                if let Some(t) = arc_module.automation_tracks.iter_mut().find(|t| t.id == track_id) {
+                                    t.remove_point_at(order, row);
+                                }
+                            }
+                            if let Some((track_id, mode)) = auto_resp.interp_changed {
+                                if let Some(t) = arc_module.automation_tracks.iter_mut().find(|t| t.id == track_id) {
+                                    t.default_interp = mode;
                                 }
                             }
                             self.sync_module_to_audio();
