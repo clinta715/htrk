@@ -482,11 +482,10 @@ impl SequencerEngine {
                         ch.portamento_target_period = Some(target_period);
                         ch.portamento_target_frequency = Some(target_freq);
                     }
-                } else if is_xm {
-                    let inst = instrument_idx;
-                    self.trigger_channel_note_period(channel, key, remapped_key, sample, sample_idx, cell, &module, inst);
                 } else {
-                    self.trigger_channel_note(channel, key, remapped_key, sample, sample_idx, cell, &module);
+                    let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
+                    processor.trigger_note(self, channel, key, remapped_key, sample, sample_idx, cell, instrument_idx);
+                    self.processor = processor;
                 }
             }
             Note::Off => {
@@ -516,192 +515,7 @@ impl SequencerEngine {
     }
 }
 
-    fn trigger_channel_note_period(
-        &mut self,
-        channel: usize,
-        note_key: u8,
-        _remapped_key: u8,
-        sample: Option<&Sample>,
-        sample_idx: usize,
-        cell: &Cell,
-        module: &Module,
-        instrument_idx: usize,
-    ) {
-        if sample.is_none() || sample_idx == 0 {
-            return;
-        }
-        let sample = sample.unwrap();
-
-        // Extract values before mutating
-        let (_rel_ton, _fine_tune, period, linear) = {
-            let ch_state = &mut self.state.channels[channel];
-            ch_state.rel_ton = sample.relative_note;
-
-            let fine_tune = if let Effect::SetFineTune { tune } = &cell.effect {
-                ch_state.fine_tune_offset = (((*tune & 0x0F) << 4) as u8).wrapping_sub(128) as i8;
-                ch_state.fine_tune_offset
-            } else {
-                ch_state.fine_tune_offset = sample.fine_tune;
-                sample.fine_tune
-            };
-
-            let note_with_rel = note_key.saturating_add(sample.relative_note as u8);
-            if note_with_rel >= 120 {
-                return;
-            }
-            let period = get_note_period(note_with_rel, fine_tune, module.flags.linear_slides);
-            ch_state.real_period = period;
-            ch_state.out_period = period;
-
-            ch_state.real_vol = sample.default_volume.min(64);
-            ch_state.old_vol = sample.default_volume.min(64);
-            ch_state.old_pan = sample.default_panning;
-
-            (ch_state.rel_ton, ch_state.fine_tune_offset, period, module.flags.linear_slides)
-        };
-
-        let playback_freq = period_to_frequency(period, linear, 8363);
-
-        let nna = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].nna
-        } else {
-            NewNoteAction::NoteCut
-        };
-let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].duplicate_check_type
-        } else {
-            DuplicateCheckType::Disabled
-        };
-        let _dca = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].duplicate_check_action
-        } else {
-            DuplicateCheckAction::NoteCut
-        };
-        let fade_out = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].fade_out
-        } else {
-            0
-        };
-
-        let sample_offset = self.calculate_sample_offset(channel, cell, sample);
-
-        self.handle_nna(channel, NewNoteAction::NoteCut,
-            DuplicateCheckType::Disabled, DuplicateCheckAction::NoteCut,
-            instrument_idx as usize, sample_idx as usize);
-
-        let voice_idx = self.allocate_voice(channel);
-        let vol = self.compute_channel_volume(channel);
-        let pan = self.compute_channel_panning(channel);
-
-        let voice = &mut self.voices[voice_idx];
-        voice.trigger(
-            sample.data.clone(),
-            sample.sample_rate as f64,
-            sample.loop_type,
-            sample.loop_start,
-            sample.loop_end,
-            playback_freq,
-            self.output_sample_rate,
-            vol,
-            pan,
-            sample_offset,
-            Some(instrument_idx as u8),
-            Some(sample_idx as u8),
-            Note::On(note_key),
-            nna,
-            fade_out,
-        );
-        voice.channel = Some(channel);
-        if sample.loop_type == LoopType::Backward {
-            voice.direction = -1.0;
-            let max_pos = sample.data.len().max(1) - 1;
-            if sample_offset == 0 {
-                voice.position = max_pos as f64;
-            }
-        }
-
-        // Setup envelopes for XM
-        if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            let inst = &module.instruments[instrument_idx];
-            let voice = &mut self.voices[voice_idx];
-
-            voice.fade_out_rate = fade_out;
-            voice.fade_out_amp = 32768i32;
-            voice.fade_out_speed_i32 = fade_out as i32;
-            voice.env_sustain_active = true;
-
-            if let Some(ref vol_env) = inst.volume_envelope {
-                if vol_env.flags.enabled {
-                    voice.vol_env = Some(EnvelopeState {
-                        envelope: Arc::new(vol_env.clone()),
-                        current_point: 0,
-                        position: -1.0,
-                        released: false,
-                        finished: false,
-                    });
-                }
-            }
-            if let Some(ref pan_env) = inst.panning_envelope {
-                if pan_env.flags.enabled {
-                    voice.pan_env = Some(EnvelopeState {
-                        envelope: Arc::new(pan_env.clone()),
-                        current_point: 0,
-                        position: -1.0,
-                        released: false,
-                        finished: false,
-                    });
-                }
-            }
-            if let Some(ref filter_env) = inst.filter_envelope {
-                if filter_env.flags.enabled {
-                    voice.filter_env = Some(EnvelopeState {
-                        envelope: Arc::new(filter_env.clone()),
-                        current_point: 0,
-                        position: -1.0,
-                        released: false,
-                        finished: false,
-                    });
-                }
-            }
-
-            // Set filter from instrument defaults
-            voice.filter_cutoff = inst.filter_cutoff as f32;
-            voice.filter_resonance = inst.filter_resonance as f32 / 128.0;
-            voice.filter_type = inst.filter_type;
-            voice.svf = StateVariableFilter { low: 0.0, band: 0.0, high: 0.0, filter_type: inst.filter_type };
-            voice.envelope_filter_cutoff = 1.0;
-
-            // Auto-vibrato init
-            if inst.vib_depth > 0 {
-                voice.auto_vib_pos = 0;
-                voice.auto_vib_period_base = period;
-                if inst.vib_sweep > 0 {
-                    voice.auto_vib_amp = 0;
-                    voice.auto_vib_sweep = (inst.vib_depth as i32) * 256 / (inst.vib_sweep as i32).max(1);
-                } else {
-                    voice.auto_vib_amp = (inst.vib_depth as i32) * 256;
-                    voice.auto_vib_sweep = 0;
-                }
-            }
-
-            voice.instrument_index = Some(instrument_idx as u8);
-        }
-
-        // Update last_sample_offset based on current effect
-        if let Effect::SetSampleOffset { offset } = &cell.effect {
-            if *offset > 0 {
-                self.state.channels[channel].last_sample_offset = *offset;
-            }
-        } else if let Effect::FormatSpecific(fe) = &cell.effect {
-            if let Some(offset) = fe.sample_offset() {
-                if offset > 0 {
-                    self.state.channels[channel].last_sample_offset = offset;
-                }
-            }
-        }
-    }
-
-    fn calculate_sample_offset(&self, channel: usize, cell: &Cell, sample: &Sample) -> usize {
+    pub(crate) fn calculate_sample_offset(&self, channel: usize, cell: &Cell, sample: &Sample) -> usize {
         let ch = &self.state.channels[channel];
         let offset = match &cell.effect {
             Effect::SetSampleOffset { offset } => {
@@ -730,7 +544,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         offset.min(sample.data.len().saturating_sub(1))
     }
 
-    fn handle_note_off_period(&mut self, channel: usize) {
+    pub(crate) fn handle_note_off_period(&mut self, channel: usize) {
         let module = match self.module.as_ref() {
             Some(m) => m.clone(),
             None => return,
@@ -1254,222 +1068,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn trigger_channel_note(
-        &mut self,
-        channel: usize,
-        note_key: u8,
-        remapped_key: u8,
-        sample: Option<&Sample>,
-        sample_idx: usize,
-        cell: &Cell,
-        module: &Module,
-    ) {
-        if sample.is_none() || sample_idx == 0 {
-            return;
-        }
-        let sample = sample.unwrap();
-
-        let instrument_idx = self.state.channels[channel].last_instrument as usize;
-        let nna = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].nna
-        } else {
-            NewNoteAction::NoteCut
-        };
-        let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].duplicate_check_type
-        } else {
-            DuplicateCheckType::Disabled
-        };
-        let dca = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].duplicate_check_action
-        } else {
-            DuplicateCheckAction::NoteCut
-        };
-        let fade_out_rate = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].fade_out
-        } else {
-            0
-        };
-        self.handle_nna(channel, nna, dct, dca, instrument_idx, sample_idx);
-
-        let freq = match Note::On(remapped_key).frequency() {
-            Some(f) => f,
-            None => return,
-        };
-
-        let fine_tune_offset = if channel < self.state.channels.len() {
-            self.state.channels[channel].fine_tune_offset
-        } else {
-            0
-        };
-        let playback_freq = compute_playback_frequency(
-            freq,
-            sample.sample_rate,
-            sample.relative_note,
-            sample.fine_tune.saturating_add(fine_tune_offset),
-        );
-
-        if !module.flags.linear_slides {
-            let period = (8363.0 * 428.0 / playback_freq) as u16;
-            self.state.channels[channel].real_period = period;
-            self.state.channels[channel].out_period = period;
-        }
-
-        let mut vol = self.compute_channel_volume(channel);
-        let mut pan = self.compute_channel_panning(channel);
-
-        if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            let inst = &module.instruments[instrument_idx];
-            if inst.random_volume > 0 {
-                let r = fastrand();
-                vol *= 1.0 - (inst.random_volume as f32 / 100.0) * r;
-            }
-            if inst.random_panning > 0 {
-                let r = fastrand();
-                pan += (r - 0.5) * 2.0 * (inst.random_panning as f32 / 100.0);
-                pan = pan.clamp(0.0, 1.0);
-            }
-            if inst.pitch_pan_separation != 0 {
-                let center = inst.pitch_pan_center as i16;
-                let sep = inst.pitch_pan_separation as f32 / 96.0;
-                pan += (note_key as i16 - center) as f32 * sep;
-                pan = pan.clamp(0.0, 1.0);
-            }
-        }
-
-        let sample_offset = self.calculate_sample_offset(channel, cell, sample);
-
-        let voice_idx = self.allocate_voice(channel);
-        self.voices[voice_idx].trigger(
-            sample.data.clone(),
-            sample.sample_rate as f64,
-            sample.loop_type,
-            sample.loop_start,
-            sample.loop_end,
-            playback_freq,
-            self.output_sample_rate,
-            vol,
-            pan,
-            sample_offset,
-            Some(instrument_idx as u8),
-            Some(sample_idx as u8),
-            Note::On(note_key),
-            nna,
-            fade_out_rate,
-        );
-        self.voices[voice_idx].channel = Some(channel);
-        if sample.loop_type == LoopType::Backward {
-            self.voices[voice_idx].direction = -1.0;
-            if sample_offset == 0 {
-                self.voices[voice_idx].position = (sample.data.len().max(1) - 1) as f64;
-            }
-        }
-
-        if let Effect::SetSampleOffset { offset } = cell.effect {
-            if offset > 0 {
-                self.state.channels[channel].last_sample_offset = offset;
-            }
-        } else if let Effect::FormatSpecific(fe) = cell.effect {
-            if let Some(offset) = fe.sample_offset() {
-                if offset > 0 {
-                    self.state.channels[channel].last_sample_offset = offset;
-                }
-            }
-        }
-
-        if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            let inst = &module.instruments[instrument_idx];
-            let carry_vol = inst.volume_envelope.as_ref().map_or(false, |e| e.flags.carry);
-            let carry_pan = inst.panning_envelope.as_ref().map_or(false, |e| e.flags.carry);
-            let carry_pitch = inst.pitch_envelope.as_ref().map_or(false, |e| e.flags.carry);
-
-            let mut prev_vol_pos = None;
-            let mut prev_pan_pos = None;
-            if carry_vol || carry_pan || carry_pitch {
-                for v in &self.voices {
-                    if v.active && v.channel == Some(channel) {
-                        if carry_vol { prev_vol_pos = v.vol_env.as_ref().map(|e| e.position); }
-                        if carry_pan { prev_pan_pos = v.pan_env.as_ref().map(|e| e.position); }
-                        break;
-                    }
-                }
-            }
-
-            if let Some(ref vol_env) = inst.volume_envelope {
-                if vol_env.flags.enabled {
-                    let pos = if carry_vol { prev_vol_pos.unwrap_or(0.0) } else { 0.0 };
-                    self.voices[voice_idx].vol_env = Some(EnvelopeState {
-                        envelope: Arc::new(vol_env.clone()),
-                        current_point: 0,
-                        position: pos,
-                        released: false,
-                        finished: false,
-                    });
-                }
-            }
-            if let Some(ref pan_env) = inst.panning_envelope {
-                if pan_env.flags.enabled {
-                    let pos = if carry_pan { prev_pan_pos.unwrap_or(0.0) } else { 0.0 };
-                    self.voices[voice_idx].pan_env = Some(EnvelopeState {
-                        envelope: Arc::new(pan_env.clone()),
-                        current_point: 0,
-                        position: pos,
-                        released: false,
-                        finished: false,
-                    });
-                }
-            }
-            if let Some(ref pitch_env) = inst.pitch_envelope {
-                if pitch_env.flags.enabled {
-                    self.voices[voice_idx].pitch_env = Some(EnvelopeState {
-                        envelope: Arc::new(pitch_env.clone()),
-                        current_point: 0,
-                        position: 0.0,
-                        released: false,
-                        finished: false,
-                    });
-                }
-            }
-            if let Some(ref filter_env) = inst.filter_envelope {
-                if filter_env.flags.enabled {
-                    self.voices[voice_idx].filter_env = Some(EnvelopeState {
-                        envelope: Arc::new(filter_env.clone()),
-                        current_point: 0,
-                        position: 0.0,
-                        released: false,
-                        finished: false,
-                    });
-                }
-            }
-
-            // Set filter from instrument defaults
-            self.voices[voice_idx].filter_cutoff = inst.filter_cutoff as f32;
-            self.voices[voice_idx].filter_resonance = inst.filter_resonance as f32 / 128.0;
-            self.voices[voice_idx].filter_type = inst.filter_type;
-            self.voices[voice_idx].svf = StateVariableFilter { low: 0.0, band: 0.0, high: 0.0, filter_type: inst.filter_type };
-            self.voices[voice_idx].envelope_filter_cutoff = 0.0;
-
-            self.voices[voice_idx].fade_out_rate = inst.fade_out;
-        }
-
-        // Karplus-Strong setup
-        let kp = self.state.channels[channel].karplus_param;
-        if kp > 0 {
-            let delay_len = (self.output_sample_rate / playback_freq) as usize;
-            if delay_len > 0 {
-                let mut ks_delay = Vec::with_capacity(delay_len);
-                for _ in 0..delay_len {
-                    ks_delay.push(fastrand() * 2.0 - 1.0);
-                }
-                self.voices[voice_idx].ks_delay_line = ks_delay;
-                self.voices[voice_idx].ks_pos = 0;
-                self.voices[voice_idx].karplus_strong = true;
-                self.voices[voice_idx].ks_feedback = if kp > 0 { (kp as f32) / 16.0 } else { 0.5 };
-            }
-        }
-    }
-
-    fn handle_nna(&mut self, channel: usize, nna: NewNoteAction,
+    pub(crate) fn handle_nna(&mut self, channel: usize, nna: NewNoteAction,
         dct: DuplicateCheckType, dca: DuplicateCheckAction,
         instr_idx: usize, sample_idx: usize) {
         let mut indices: Vec<usize> = Vec::new();
@@ -1551,7 +1150,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn handle_note_off(&mut self, channel: usize) {
+    pub(crate) fn handle_note_off(&mut self, channel: usize) {
         for voice in &mut self.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.note_off = true;
@@ -2040,7 +1639,9 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         self.state.channels[channel].note_delay_ticks = 0;
 
         if let Note::On(key) = note {
-            self.trigger_channel_note(channel, key, remapped_key, Some(&module.samples[sample_idx]), sample_idx, &cell, &module);
+            let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
+            processor.trigger_note(self, channel, key, remapped_key, Some(&module.samples[sample_idx]), sample_idx, &cell, instrument_idx);
+            self.processor = processor;
 
             if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 let voice = self.voices.iter_mut().find(|v| v.active && v.channel == Some(channel));
@@ -2437,7 +2038,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         self.module.as_ref().map_or(0, |m| m.order_list.len())
     }
 
-    fn allocate_voice(&mut self, channel: usize) -> usize {
+    pub(crate) fn allocate_voice(&mut self, channel: usize) -> usize {
         let start = self.next_voice;
 
         for i in 0..MAX_VOICES {
@@ -2502,7 +2103,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn compute_channel_panning(&self, channel: usize) -> f32 {
+    pub(crate) fn compute_channel_panning(&self, channel: usize) -> f32 {
         if channel >= self.state.channels.len() {
             return 0.5;
         }

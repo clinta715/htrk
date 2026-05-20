@@ -1,9 +1,14 @@
+use std::sync::Arc;
+
 use super::compute_samples_per_tick;
+use crate::audio::filter::StateVariableFilter;
+use crate::audio::voice::EnvelopeState;
 use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, S3mEffect, ItEffect, FilterType, NUM_SEND_BUSES};
+use crate::sequencer::instrument::{DuplicateCheckAction, DuplicateCheckType, NewNoteAction};
 use crate::sequencer::note::Note;
 use crate::sequencer::period::{get_note_period, period_to_frequency};
 use crate::sequencer::pattern::Cell;
-use crate::sequencer::sample::Sample;
+use crate::sequencer::sample::{LoopType, Sample};
 
 pub struct XmProcessor;
 
@@ -647,15 +652,173 @@ impl XmProcessor {
 
     pub fn trigger_note(
         &mut self,
-        _engine: &mut crate::audio::sequencer_engine::SequencerEngine,
-        _channel: usize,
-        _note_key: u8,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        channel: usize,
+        note_key: u8,
         _remapped_key: u8,
-        _sample: Option<&Sample>,
-        _sample_idx: usize,
-        _cell: &Cell,
-        _instrument_idx: usize,
+        sample: Option<&Sample>,
+        sample_idx: usize,
+        cell: &Cell,
+        instrument_idx: usize,
     ) {
+        if sample.is_none() || sample_idx == 0 {
+            return;
+        }
+        let sample = sample.unwrap();
+
+        let (period, linear) = {
+            let ch_state = &mut engine.state.channels[channel];
+            ch_state.rel_ton = sample.relative_note;
+
+            let fine_tune = if let Effect::SetFineTune { tune } = &cell.effect {
+                ch_state.fine_tune_offset = (((*tune & 0x0F) << 4) as u8).wrapping_sub(128) as i8;
+                ch_state.fine_tune_offset
+            } else {
+                ch_state.fine_tune_offset = sample.fine_tune;
+                sample.fine_tune
+            };
+
+            let note_with_rel = note_key.saturating_add(sample.relative_note as u8);
+            if note_with_rel >= 120 {
+                return;
+            }
+            let module = engine.module.as_ref().unwrap().clone();
+            let period = get_note_period(note_with_rel, fine_tune, module.flags.linear_slides);
+            ch_state.real_period = period;
+            ch_state.out_period = period;
+
+            ch_state.real_vol = sample.default_volume.min(64);
+            ch_state.old_vol = sample.default_volume.min(64);
+            ch_state.old_pan = sample.default_panning;
+
+            (period, module.flags.linear_slides)
+        };
+
+        let module = engine.module.as_ref().unwrap().clone();
+        let playback_freq = period_to_frequency(period, linear, 8363);
+
+        let nna = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+            module.instruments[instrument_idx].nna
+        } else {
+            NewNoteAction::NoteCut
+        };
+        let fade_out = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+            module.instruments[instrument_idx].fade_out
+        } else {
+            0
+        };
+
+        let sample_offset = engine.calculate_sample_offset(channel, cell, sample);
+        engine.handle_nna(channel, NewNoteAction::NoteCut,
+            DuplicateCheckType::Disabled, DuplicateCheckAction::NoteCut,
+            instrument_idx, sample_idx);
+
+        let voice_idx = engine.allocate_voice(channel);
+        let vol = engine.compute_channel_volume(channel);
+        let pan = engine.compute_channel_panning(channel);
+
+        let voice = &mut engine.voices[voice_idx];
+        voice.trigger(
+            sample.data.clone(),
+            sample.sample_rate as f64,
+            sample.loop_type,
+            sample.loop_start,
+            sample.loop_end,
+            playback_freq,
+            engine.output_sample_rate,
+            vol,
+            pan,
+            sample_offset,
+            Some(instrument_idx as u8),
+            Some(sample_idx as u8),
+            Note::On(note_key),
+            nna,
+            fade_out,
+        );
+        voice.channel = Some(channel);
+        if sample.loop_type == LoopType::Backward {
+            voice.direction = -1.0;
+            let max_pos = sample.data.len().max(1) - 1;
+            if sample_offset == 0 {
+                voice.position = max_pos as f64;
+            }
+        }
+
+        if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+            let inst = &module.instruments[instrument_idx];
+            let voice = &mut engine.voices[voice_idx];
+
+            voice.fade_out_rate = fade_out;
+            voice.fade_out_amp = 32768i32;
+            voice.fade_out_speed_i32 = fade_out as i32;
+            voice.env_sustain_active = true;
+
+            if let Some(ref vol_env) = inst.volume_envelope {
+                if vol_env.flags.enabled {
+                    voice.vol_env = Some(EnvelopeState {
+                        envelope: Arc::new(vol_env.clone()),
+                        current_point: 0,
+                        position: -1.0,
+                        released: false,
+                        finished: false,
+                    });
+                }
+            }
+            if let Some(ref pan_env) = inst.panning_envelope {
+                if pan_env.flags.enabled {
+                    voice.pan_env = Some(EnvelopeState {
+                        envelope: Arc::new(pan_env.clone()),
+                        current_point: 0,
+                        position: -1.0,
+                        released: false,
+                        finished: false,
+                    });
+                }
+            }
+            if let Some(ref filter_env) = inst.filter_envelope {
+                if filter_env.flags.enabled {
+                    voice.filter_env = Some(EnvelopeState {
+                        envelope: Arc::new(filter_env.clone()),
+                        current_point: 0,
+                        position: -1.0,
+                        released: false,
+                        finished: false,
+                    });
+                }
+            }
+
+            voice.filter_cutoff = inst.filter_cutoff as f32;
+            voice.filter_resonance = inst.filter_resonance as f32 / 128.0;
+            voice.filter_type = inst.filter_type;
+            voice.svf = StateVariableFilter { low: 0.0, band: 0.0, high: 0.0, filter_type: inst.filter_type };
+            voice.envelope_filter_cutoff = 1.0;
+
+            if inst.vib_depth > 0 {
+                voice.auto_vib_pos = 0;
+                voice.auto_vib_period_base = period;
+                if inst.vib_sweep > 0 {
+                    voice.auto_vib_amp = 0;
+                    voice.auto_vib_sweep = (inst.vib_depth as i32) * 256 / (inst.vib_sweep as i32).max(1);
+                } else {
+                    voice.auto_vib_amp = (inst.vib_depth as i32) * 256;
+                    voice.auto_vib_sweep = 0;
+                }
+            }
+
+            voice.instrument_index = Some(instrument_idx as u8);
+        }
+
+        if let Effect::SetSampleOffset { offset } = &cell.effect {
+            if *offset > 0 {
+                engine.state.channels[channel].last_sample_offset = *offset;
+            }
+        } else if let Effect::FormatSpecific(fe) = &cell.effect {
+            if let Some(offset) = fe.sample_offset() {
+                if offset > 0 {
+                    engine.state.channels[channel].last_sample_offset = offset;
+                }
+            }
+        }
     }
 
     pub fn trigger_delayed_note(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _channel: usize) {
