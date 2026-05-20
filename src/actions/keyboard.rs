@@ -1,0 +1,721 @@
+use std::sync::Arc;
+
+use eframe::egui;
+
+use crate::app::HtrkApp;
+use crate::app::AppView;
+use crate::edit::InsertRowCommand;
+use crate::edit::DeleteRowCommand;
+use crate::sequencer::automation::InterpolationMode;
+use crate::sequencer::effect::Effect;
+use crate::sequencer::pattern::Cell;
+use crate::sequencer::Note;
+use crate::sequencer::player::PlayMode;
+use crate::ui::file_browser::BrowserMode;
+use crate::ui::pattern_grid::{ContextMenuAction, SubColumn};
+
+const NOTE_KEYS_LOWER: [(egui::Key, u8); 12] = [
+    (egui::Key::Z, 0),
+    (egui::Key::S, 1),
+    (egui::Key::X, 2),
+    (egui::Key::D, 3),
+    (egui::Key::C, 4),
+    (egui::Key::V, 5),
+    (egui::Key::G, 6),
+    (egui::Key::B, 7),
+    (egui::Key::H, 8),
+    (egui::Key::N, 9),
+    (egui::Key::J, 10),
+    (egui::Key::M, 11),
+];
+
+const NOTE_KEYS_UPPER: [(egui::Key, u8); 12] = [
+    (egui::Key::Q, 0),
+    (egui::Key::Num2, 1),
+    (egui::Key::W, 2),
+    (egui::Key::Num3, 3),
+    (egui::Key::E, 4),
+    (egui::Key::R, 5),
+    (egui::Key::Num5, 6),
+    (egui::Key::T, 7),
+    (egui::Key::Num6, 8),
+    (egui::Key::Y, 9),
+    (egui::Key::Num7, 10),
+    (egui::Key::U, 11),
+];
+
+pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
+    let modifiers = ctx.input(|i| i.modifiers);
+
+    if modifiers.ctrl && !modifiers.shift {
+        let mut handled = false;
+        ctx.input(|i| {
+            for event in &i.events {
+                if let egui::Event::Key { key, pressed: true, .. } = event {
+                    match key {
+                        egui::Key::Z if app.edit_mode => {
+                            app.ensure_module_ownership();
+                            if let Some(ref mut module) = app.core.module {
+                                if let Some(arc_module) = Arc::get_mut(module) {
+                                    let _ = app.core.undo_manager.undo(arc_module);
+                                }
+                            }
+                            app.sync_module_to_audio();
+                            handled = true;
+                        }
+                        egui::Key::Y if app.edit_mode => {
+                            app.ensure_module_ownership();
+                            if let Some(ref mut module) = app.core.module {
+                                if let Some(arc_module) = Arc::get_mut(module) {
+                                    let _ = app.core.undo_manager.redo(arc_module);
+                                }
+                            }
+                            app.sync_module_to_audio();
+                            handled = true;
+                        }
+                        egui::Key::C => {
+                            app.copy_selection();
+                            handled = true;
+                        }
+                        egui::Key::X if app.edit_mode => {
+                            app.copy_selection();
+                            app.delete_selection();
+                            handled = true;
+                        }
+                        egui::Key::V if app.edit_mode => {
+                            app.paste_at_cursor();
+                            handled = true;
+                        }
+                        egui::Key::A => {
+                            app.select_all();
+                            handled = true;
+                        }
+                        egui::Key::N => {
+                            app.new_song();
+                            handled = true;
+                        }
+                        egui::Key::O => {
+                            match app.current_view {
+                                AppView::Sample => app.file_browser.open(BrowserMode::Samples, &mut app.config),
+                                AppView::Instrument => app.file_browser.open(BrowserMode::Instruments, &mut app.config),
+                                _ => app.open_file_dialog(),
+                            }
+                            handled = true;
+                        }
+                        egui::Key::I => {
+                            app.file_browser.open(BrowserMode::Samples, &mut app.config);
+                            handled = true;
+                        }
+                        egui::Key::ArrowRight => {
+                            app.step_sub_column_forward();
+                            handled = true;
+                        }
+                        egui::Key::ArrowLeft => {
+                            app.step_sub_column_backward();
+                            handled = true;
+                        }
+                        egui::Key::Num1 => {
+                            let mut col_vis = app.config.get_col_vis();
+                            col_vis.note = !col_vis.note;
+                            app.config.set_col_vis(col_vis);
+                            app.col_vis = app.config.get_col_vis();
+                            app.config.save();
+                            handled = true;
+                        }
+                        egui::Key::Num2 => {
+                            let mut col_vis = app.config.get_col_vis();
+                            col_vis.instrument = !col_vis.instrument;
+                            app.config.set_col_vis(col_vis);
+                            app.col_vis = app.config.get_col_vis();
+                            app.config.save();
+                            handled = true;
+                        }
+                        egui::Key::Num3 => {
+                            let mut col_vis = app.config.get_col_vis();
+                            col_vis.volume = !col_vis.volume;
+                            app.config.set_col_vis(col_vis);
+                            app.col_vis = app.config.get_col_vis();
+                            app.config.save();
+                            handled = true;
+                        }
+                        egui::Key::Num4 => {
+                            let mut col_vis = app.config.get_col_vis();
+                            col_vis.effect = !col_vis.effect;
+                            app.config.set_col_vis(col_vis);
+                            app.col_vis = app.config.get_col_vis();
+                            app.config.save();
+                            handled = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        });
+        if handled {
+            return;
+        }
+    }
+
+    if modifiers.ctrl && modifiers.shift {
+        ctx.input(|i| {
+            for event in &i.events {
+                if let egui::Event::Key { key, pressed: true, .. } = event {
+                    match key {
+                        egui::Key::S => app.save_as_dialog(),
+                        egui::Key::I => app.file_browser.open(BrowserMode::Instruments, &mut app.config),
+                        egui::Key::ArrowUp => {
+                            if app.current_octave < 9 { app.current_octave += 1; }
+                        }
+                        egui::Key::ArrowDown => {
+                            if app.current_octave > 0 { app.current_octave -= 1; }
+                        }
+                        egui::Key::Space => {
+                            app.cycle_spacing_mode();
+                        }
+                        egui::Key::L => {
+                            app.config.toggle_sample_length_bg();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        });
+
+        if app.current_view == AppView::Automation {
+            if let Some(tid) = app.automation_editor_state.selected_track_id {
+                let mode = ctx.input(|i| {
+                    for event in &i.events {
+                        if let egui::Event::Key { key, pressed: true, .. } = event {
+                            match key {
+                                egui::Key::Num5 => return Some(InterpolationMode::Hold),
+                                egui::Key::Num6 => return Some(InterpolationMode::Linear),
+                                egui::Key::Num7 => return Some(InterpolationMode::Smooth),
+                                egui::Key::Num8 => return Some(InterpolationMode::Exponential),
+                                _ => {}
+                            }
+                        }
+                    }
+                    None
+                });
+                if let Some(mode) = mode {
+                    app.ensure_module_ownership();
+                    if let Some(ref mut module) = app.core.module {
+                        if let Some(arc_module) = Arc::get_mut(module) {
+                            if let Some(t) = arc_module.automation_tracks.iter_mut().find(|t| t.id == tid) {
+                                t.default_interp = mode;
+                                app.sync_module_to_audio();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return;
+    }
+
+    if modifiers.ctrl {
+        return;
+    }
+
+    ctx.input(|i| {
+        for event in &i.events {
+            match event {
+                egui::Event::Key { key, pressed: true, .. } => match key {
+                    egui::Key::ArrowDown => {
+                        if modifiers.ctrl {
+                            if app.current_octave > 0 {
+                                app.current_octave -= 1;
+                            }
+                        } else if modifiers.shift {
+                            app.extend_selection_down();
+                        } else if modifiers.alt && app.edit_mode {
+                            app.transpose_selection(-1);
+                        } else {
+                            app.core.selection = None;
+                            app.advance_cursor_down(1);
+                        }
+                    }
+                    egui::Key::ArrowUp => {
+                        if modifiers.ctrl {
+                            if app.current_octave < 9 {
+                                app.current_octave += 1;
+                            }
+                        } else if modifiers.shift {
+                            app.extend_selection_up();
+                        } else if modifiers.alt && app.edit_mode {
+                            app.transpose_selection(1);
+                        } else {
+                            app.core.selection = None;
+                            app.advance_cursor_up(1);
+                        }
+                    }
+                    egui::Key::ArrowRight => {
+                        if modifiers.alt {
+                            app.core.selection = None;
+                            let num_ch = app.num_channels();
+                            if app.core.cursor.channel < num_ch - 1 {
+                                app.core.cursor.channel += 1;
+                                app.core.cursor.sub_column = SubColumn::Note;
+                                app.ensure_cursor_visible();
+                            }
+                        } else if modifiers.shift {
+                            app.extend_selection_right();
+                        } else {
+                            app.core.selection = None;
+                            app.move_cursor_right();
+                        }
+                    }
+                    egui::Key::ArrowLeft => {
+                        if modifiers.alt {
+                            app.core.selection = None;
+                            if app.core.cursor.channel > 0 {
+                                app.core.cursor.channel -= 1;
+                                app.core.cursor.sub_column = SubColumn::Note;
+                                app.ensure_cursor_visible();
+                            }
+                        } else if modifiers.shift {
+                            app.extend_selection_left();
+                        } else {
+                            app.core.selection = None;
+                            app.move_cursor_left();
+                        }
+                    }
+                    egui::Key::Tab => {
+                        app.core.selection = None;
+                        if modifiers.shift {
+                            app.core.cursor.channel = app.core.cursor.channel.saturating_sub(1);
+                        } else {
+                            app.core.cursor.channel += 1;
+                            app.core.cursor.channel = app.core.cursor.channel.min(app.num_channels_checked() - 1);
+                        }
+                        app.ensure_cursor_visible();
+                    }
+                    egui::Key::M if modifiers.alt => {
+                        app.core.toggle_mute(app.core.cursor.channel);
+                    }
+                    egui::Key::S if modifiers.alt => {
+                        app.core.toggle_solo(app.core.cursor.channel);
+                    }
+                    egui::Key::N if modifiers.alt => {
+                        let ch = app.core.cursor.channel;
+                        if ch < app.multichannel_channels.len() {
+                            app.multichannel_channels[ch] = !app.multichannel_channels[ch];
+                            app.multichannel_enabled = app.multichannel_channels.iter().any(|&v| v);
+                        }
+                    }
+                    egui::Key::PageUp => {
+                        app.core.selection = None;
+                        app.advance_cursor_up(16);
+                    }
+                    egui::Key::PageDown => {
+                        app.core.selection = None;
+                        app.advance_cursor_down(16);
+                    }
+                    egui::Key::Home => {
+                        app.core.selection = None;
+                        app.core.cursor.row = 0;
+                        app.ensure_cursor_visible();
+                    }
+                    egui::Key::End => {
+                        app.core.selection = None;
+                        if let Some(pattern) = app.current_pattern() {
+                            app.core.cursor.row = pattern.num_rows - 1;
+                            app.ensure_cursor_visible();
+                        }
+                    }
+                    egui::Key::Backspace if app.edit_mode => {
+                        app.clear_cell_at_cursor();
+                    }
+                    egui::Key::Delete if app.edit_mode => {
+                        if modifiers.alt {
+                            let selected_order = app.core.selected_order;
+                            let row = app.core.cursor.row;
+                            let can_delete = app.current_pattern().map_or(false, |p| p.num_rows > 1);
+                            if can_delete {
+                                let deleted_data: Vec<Cell> = app.current_pattern()
+                                    .map(|p| p.data[row].to_vec())
+                                    .unwrap_or_default();
+                                let pat_idx = app.core.module.as_ref()
+                                    .and_then(|m| m.order_list.get(selected_order).copied())
+                                    .unwrap_or(0) as usize;
+                                app.ensure_module_ownership();
+                                if let Some(ref mut module) = app.core.module {
+                                        if let Some(arc_module) = Arc::get_mut(module) {
+                                            let cmd = Box::new(DeleteRowCommand {
+                                                pattern_index: pat_idx,
+                                                row,
+                                                _channel: None,
+                                                deleted_data,
+                                            });
+                                            let _ = app.core.undo_manager.execute(cmd, arc_module);
+                                        }
+                                    }
+                                    app.sync_module_to_audio();
+                                }
+                            } else {
+                            let auto_target = app.core.automation_targets.get(app.core.cursor.channel).copied().flatten();
+                            if auto_target.is_some()
+                                && matches!(app.core.cursor.sub_column,
+                                    SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow)
+                            {
+                                app.delete_automation_point(app.core.cursor.channel, app.core.cursor.row);
+                                app.advance_cursor_down(1);
+                            } else {
+                                app.clear_cell_at_cursor();
+                                app.advance_cursor_down(1);
+                            }
+                        }
+                    }
+                    egui::Key::Insert if app.edit_mode => {
+                        let selected_order = app.core.selected_order;
+                        let row = app.core.cursor.row;
+                        app.ensure_module_ownership();
+                        if let Some(ref mut module) = app.core.module {
+                            let pat_idx = *module.order_list.get(selected_order).unwrap_or(&0) as usize;
+                            if let Some(arc_module) = Arc::get_mut(module) {
+                                let cmd = Box::new(InsertRowCommand {
+                                    pattern_index: pat_idx,
+                                    row,
+                                    _channel: None,
+                                });
+                                let _ = app.core.undo_manager.execute(cmd, arc_module);
+                            }
+                        }
+                        app.sync_module_to_audio();
+                    }
+                    egui::Key::Space => {
+                        if app.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
+                            app.send_command(crate::audio::commands::AudioCommand::Stop);
+                        } else if app.edit_mode {
+                            if let Some(last_cell) = app.core.last_entered_cell.clone() {
+                                app.set_cell_at_cursor(last_cell);
+                                app.advance_cursor_down(app.cursor_skip as usize);
+                            }
+                        }
+                    }
+                    egui::Key::F1 => {
+                        app.show_shortcuts = !app.show_shortcuts;
+                    }
+                    egui::Key::F2 => {
+                        app.edit_mode = !app.edit_mode;
+                    }
+                    egui::Key::F5 => {
+                        app.send_command(crate::audio::commands::AudioCommand::Play);
+                    }
+                    egui::Key::F6 => {
+                        app.send_command(crate::audio::commands::AudioCommand::SetPlayMode(PlayMode::Pattern));
+                    }
+                    egui::Key::F7 => {
+                        app.send_command(crate::audio::commands::AudioCommand::SetPlayMode(PlayMode::Order));
+                    }
+                    egui::Key::F8 => {
+                        app.send_command(crate::audio::commands::AudioCommand::Stop);
+                    }
+                    egui::Key::F9 => {
+                        let order = app.core.playback_state.current_order.load(std::sync::atomic::Ordering::Relaxed);
+                        let row = app.core.playback_state.current_row.load(std::sync::atomic::Ordering::Relaxed);
+                        app.send_command(crate::audio::commands::AudioCommand::PlayFrom { order, row });
+                    }
+                    egui::Key::F10 => {
+                        let should_open = !app.settings_state.open;
+                        if should_open {
+                            app.settings_state = crate::ui::settings_window::SettingsState::from_config(&app.config);
+                            app.settings_state.open = true;
+                        } else {
+                            app.settings_state.open = false;
+                        }
+                    }
+                    egui::Key::Escape => {
+                        app.core.selection = None;
+                    }
+                    egui::Key::OpenBracket => {
+                        app.skip_to_prev_pattern();
+                    }
+                    egui::Key::CloseBracket => {
+                        app.skip_to_next_pattern();
+                    }
+                    egui::Key::Comma => {
+                        app.edit_mask_instrument = !app.edit_mask_instrument;
+                        app.edit_mask_volume = app.edit_mask_instrument;
+                    }
+                    egui::Key::Num0 if modifiers.alt => { app.cursor_skip = 0; }
+                    egui::Key::Num1 if modifiers.alt => { app.cursor_skip = 1; }
+                    egui::Key::Num2 if modifiers.alt => { app.cursor_skip = 2; }
+                    egui::Key::Num3 if modifiers.alt => { app.cursor_skip = 3; }
+                    egui::Key::Num4 if modifiers.alt => { app.cursor_skip = 4; }
+                    egui::Key::Num5 if modifiers.alt => { app.cursor_skip = 5; }
+                    egui::Key::Num6 if modifiers.alt => { app.cursor_skip = 6; }
+                    egui::Key::Num7 if modifiers.alt => { app.cursor_skip = 7; }
+                    egui::Key::Num8 if modifiers.alt => { app.cursor_skip = 8; }
+                    egui::Key::Num9 if modifiers.alt => { app.cursor_skip = 9; }
+                    egui::Key::Minus if !modifiers.alt => { app.skip_to_prev_pattern(); }
+                    egui::Key::Equals if !modifiers.alt => { app.skip_to_next_pattern(); }
+                    egui::Key::C if modifiers.alt && app.edit_mode => { app.copy_selection(); }
+                    egui::Key::P if modifiers.alt && app.edit_mode => { app.paste_at_cursor(); }
+                    egui::Key::Z if modifiers.alt && app.edit_mode => {
+                        if app.core.selection.is_some() {
+                            app.handle_context_menu_action(ContextMenuAction::Reverse);
+                        }
+                    }
+                    egui::Key::F if modifiers.alt && app.edit_mode => {
+                        if app.core.selection.is_some() {
+                            app.handle_context_menu_action(ContextMenuAction::FillInstrument);
+                        }
+                    }
+                    egui::Key::I if modifiers.alt && app.edit_mode => {
+                        if app.core.selection.is_some() {
+                            app.handle_context_menu_action(ContextMenuAction::InterpolateVolume);
+                        }
+                    }
+                    egui::Key::K if modifiers.alt && app.edit_mode => {
+                        if app.core.selection.is_some() {
+                            app.handle_context_menu_action(ContextMenuAction::InterpolateEffect);
+                        }
+                    }
+                    egui::Key::R if modifiers.alt && app.edit_mode => {
+                        if app.core.selection.is_some() {
+                            app.handle_context_menu_action(ContextMenuAction::Randomize);
+                        }
+                    }
+                    _ => {}
+                },
+                egui::Event::Text(text) => {
+                    if app.core.module.is_none() {
+                        return;
+                    }
+                    let ch = text.chars().next().unwrap_or('\0');
+                    handle_text_input(app, ch);
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
+fn handle_text_input(app: &mut HtrkApp, ch: char) {
+    if app.current_pattern().is_none() {
+        return;
+    }
+
+    if app.core.cursor.sub_column.accepts_note() {
+        for (key, tone) in NOTE_KEYS_LOWER.iter() {
+            let key_char = key.name();
+            if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
+                let note_key = app.current_octave as u8 * 12 + tone;
+                preview_note(app, note_key);
+                if app.edit_mode {
+                    let note = Note::On(note_key);
+                    let mut new_cell = app.get_cell_at_cursor();
+                    new_cell.note = note;
+                    app.set_cell_at_cursor(new_cell);
+                    app.core.last_entered_cell = Some(new_cell);
+                    app.advance_cursor_down(app.cursor_skip as usize);
+                }
+                return;
+            }
+        }
+        for (key, tone) in NOTE_KEYS_UPPER.iter() {
+            let key_char = key.name();
+            if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
+                let note_key = (app.current_octave as u8 + 1) * 12 + tone;
+                preview_note(app, note_key);
+                if app.edit_mode {
+                    let note = Note::On(note_key);
+                    let mut new_cell = app.get_cell_at_cursor();
+                    new_cell.note = note;
+                    app.set_cell_at_cursor(new_cell);
+                    app.core.last_entered_cell = Some(new_cell);
+                    app.advance_cursor_down(app.cursor_skip as usize);
+                }
+                return;
+            }
+        }
+        if ch == '.' && app.edit_mode {
+            let mut new_cell = app.get_cell_at_cursor();
+            new_cell.note = Note::Off;
+            app.set_cell_at_cursor(new_cell);
+            app.core.last_entered_cell = Some(new_cell);
+            app.advance_cursor_down(app.cursor_skip as usize);
+            return;
+        }
+    }
+
+    if !app.edit_mode {
+        return;
+    }
+
+    let col_vis = app.config.get_col_vis();
+    let first_sub = crate::app::HtrkApp::first_visible_sub_column(col_vis);
+
+    if app.core.cursor.sub_column.accepts_decimal() {
+        if let Some(d) = ch.to_digit(10) {
+            let d = d as u8;
+            let mut cell = app.get_cell_at_cursor();
+
+            match app.core.cursor.sub_column {
+                SubColumn::InstrumentTens => {
+                    let current = cell.instrument.unwrap_or(0);
+                    cell.instrument = Some(d * 10 + (current % 10));
+                }
+                SubColumn::InstrumentOnes => {
+                    let current = cell.instrument.unwrap_or(0);
+                    cell.instrument = Some((current / 10 * 10) + d);
+                }
+                SubColumn::VolumeTens => {
+                    let current = cell.volume.unwrap_or(0);
+                    let val = d * 10 + (current % 10);
+                    cell.volume = Some(val.min(64));
+                }
+                SubColumn::VolumeOnes => {
+                    let current = cell.volume.unwrap_or(0);
+                    let val = (current / 10 * 10) + d;
+                    cell.volume = Some(val.min(64));
+                }
+                SubColumn::Note | SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => return,
+            }
+
+            app.set_cell_at_cursor(cell);
+
+            if let Some(next) = app.core.cursor.sub_column.next_visible(col_vis) {
+                app.core.cursor.sub_column = next;
+            } else {
+                app.core.cursor.sub_column = first_sub;
+                app.advance_cursor_down(app.cursor_skip as usize);
+            }
+            return;
+        }
+    }
+
+    if app.core.cursor.sub_column == SubColumn::EffectType {
+        let auto_target = app.core.automation_targets.get(app.core.cursor.channel).copied().flatten();
+        if auto_target.is_some() {
+            if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
+                app.enter_automation_hex(app.core.cursor.channel, app.core.cursor.row, d as u8);
+                app.advance_cursor_down(app.cursor_skip as usize);
+                return;
+            }
+        }
+        let mut cell = app.get_cell_at_cursor();
+        let changed = if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
+            cell.effect = hex_to_effect(d as u8);
+            true
+        } else {
+            match ch.to_ascii_uppercase() {
+                'P' => { cell.effect = Effect::SetSendBusParam { bus: 0, param: 0, value: 0 }; true }
+                'Z' => { cell.effect = Effect::SetFilterCutoff { cutoff: 0 }; true }
+                'S' => { cell.effect = Effect::SetSendLevel { send_index: 0, level: 0 }; true }
+                'R' => { cell.effect = Effect::SetFilterResonance { resonance: 0 }; true }
+                'X' => { cell.effect = Effect::SetFilterType { filter_type: 0 }; true }
+                _ => false,
+            }
+        };
+        if changed {
+            app.set_cell_at_cursor(cell);
+            if let Some(next) = app.core.cursor.sub_column.next_visible(col_vis) {
+                app.core.cursor.sub_column = next;
+            } else {
+                app.core.cursor.sub_column = first_sub;
+                app.advance_cursor_down(app.cursor_skip as usize);
+            }
+            return;
+        }
+    }
+
+    if app.core.cursor.sub_column == SubColumn::EffectParamHigh
+        || app.core.cursor.sub_column == SubColumn::EffectParamLow
+    {
+        let auto_target = app.core.automation_targets.get(app.core.cursor.channel).copied().flatten();
+        if auto_target.is_some() {
+            if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
+                app.enter_automation_hex(app.core.cursor.channel, app.core.cursor.row, d as u8);
+                app.advance_cursor_down(app.cursor_skip as usize);
+                return;
+            }
+        }
+        if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
+            let d = d as u8;
+            let mut cell = app.get_cell_at_cursor();
+            match app.core.cursor.sub_column {
+                SubColumn::EffectParamHigh => {
+                    let param = effect_param(&cell.effect);
+                    let new_param = (d << 4) | (param & 0x0F);
+                    cell.effect = set_effect_param(&cell.effect, new_param);
+                }
+                SubColumn::EffectParamLow => {
+                    let param = effect_param(&cell.effect);
+                    let new_param = (param & 0xF0) | d;
+                    cell.effect = set_effect_param(&cell.effect, new_param);
+                }
+                _ => unreachable!(),
+            }
+            app.set_cell_at_cursor(cell);
+            if let Some(next) = app.core.cursor.sub_column.next_visible(col_vis) {
+                app.core.cursor.sub_column = next;
+            } else {
+                app.core.cursor.sub_column = first_sub;
+                app.advance_cursor_down(app.cursor_skip as usize);
+            }
+        }
+    }
+
+    if ch == '.' && !app.core.cursor.sub_column.accepts_note() {
+        let mut cell = app.get_cell_at_cursor();
+        match app.core.cursor.sub_column {
+            SubColumn::InstrumentTens | SubColumn::InstrumentOnes => {
+                cell.instrument = None;
+            }
+            SubColumn::VolumeTens | SubColumn::VolumeOnes => {
+                cell.volume = None;
+            }
+            SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => {
+                cell.effect = Effect::None;
+            }
+            SubColumn::Note => {}
+        }
+        app.set_cell_at_cursor(cell);
+    }
+}
+
+fn preview_note(app: &mut HtrkApp, note_key: u8) {
+    let vol = 0.75;
+    let sample_idx = app.core.selected_sample;
+    app.send_command(crate::audio::commands::AudioCommand::TriggerPreviewNote {
+        sample_index: sample_idx,
+        note_key,
+        volume: vol,
+        panning: 0.5,
+    });
+}
+
+fn hex_to_effect(d: u8) -> Effect {
+    match d {
+        0 => Effect::Arpeggio { note1: 0, note2: 0 },
+        1 => Effect::PortamentoUp { speed: 0 },
+        2 => Effect::PortamentoDown { speed: 0 },
+        3 => Effect::TonePortamento { speed: 0 },
+        4 => Effect::Vibrato { speed: 0, depth: 0 },
+        5 => Effect::TonePortamentoVolumeSlide { up: 0 },
+        6 => Effect::VibratoVolumeSlide { up: 0 },
+        7 => Effect::Tremolo { speed: 0, depth: 0 },
+        8 => Effect::SetPanning { pan: 0 },
+        9 => Effect::SetSampleOffset { offset: 0 },
+        0xA => Effect::VolumeSlide { up: 0, down: 0 },
+        0xB => Effect::PositionJump { order: 0 },
+        0xC => Effect::SetVolume { volume: 0 },
+        0xD => Effect::PatternBreak { row: 0 },
+        0xE => Effect::ExtendedEffect { param: 0 },
+        0xF => Effect::SetSpeed { speed: 0 },
+        _ => Effect::None,
+    }
+}
+
+fn effect_param(effect: &Effect) -> u8 {
+    crate::sequencer::effect::effect_param_value(effect).unwrap_or(0)
+}
+
+fn set_effect_param(effect: &Effect, param: u8) -> Effect {
+    let mut fake_cell = Cell::default();
+    fake_cell.effect = *effect;
+    crate::sequencer::effect::set_effect_param_value(fake_cell, param).effect
+}

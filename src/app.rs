@@ -8,9 +8,7 @@ use crate::audio::commands::AudioCommand;
 use crate::audio::engine::create_engine_and_sender;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::audio::renderer::WavRenderer;
-use crate::edit::InsertRowCommand;
 use crate::formats;
-use crate::sequencer::automation::InterpolationMode;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::pattern::Cell;
@@ -19,36 +17,6 @@ use crate::ui::file_browser::{BrowserMode, FileBrowser};
 use crate::ui::pattern_grid::{ColumnVisibility, Selection, SubColumn, VISIBLE_ROWS};
 use crate::ui::theme::ThemePreset;
 use crate::ui::TrackerTheme;
-
-const NOTE_KEYS_LOWER: [(egui::Key, u8); 12] = [
-    (egui::Key::Z, 0),
-    (egui::Key::S, 1),
-    (egui::Key::X, 2),
-    (egui::Key::D, 3),
-    (egui::Key::C, 4),
-    (egui::Key::V, 5),
-    (egui::Key::G, 6),
-    (egui::Key::B, 7),
-    (egui::Key::H, 8),
-    (egui::Key::N, 9),
-    (egui::Key::J, 10),
-    (egui::Key::M, 11),
-];
-
-const NOTE_KEYS_UPPER: [(egui::Key, u8); 12] = [
-    (egui::Key::Q, 0),
-    (egui::Key::Num2, 1),
-    (egui::Key::W, 2),
-    (egui::Key::Num3, 3),
-    (egui::Key::E, 4),
-    (egui::Key::R, 5),
-    (egui::Key::Num5, 6),
-    (egui::Key::T, 7),
-    (egui::Key::Num6, 8),
-    (egui::Key::Y, 9),
-    (egui::Key::Num7, 10),
-    (egui::Key::U, 11),
-];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppView {
@@ -62,53 +30,53 @@ pub enum AppView {
 
 pub struct HtrkApp {
     pub(crate) core: crate::core::HtrkCore,
-    stream: Option<cpal::Stream>,
+    pub(crate) stream: Option<cpal::Stream>,
 
-    output_device_names: Vec<String>,
-    selected_device_name: Option<String>,
-    current_sample_rate: u32,
-    current_sample_format: String,
-    pending_device_switch: Option<String>,
-    pending_reinit: bool,
+    pub(crate) output_device_names: Vec<String>,
+    pub(crate) selected_device_name: Option<String>,
+    pub(crate) current_sample_rate: u32,
+    pub(crate) current_sample_format: String,
+    pub(crate) pending_device_switch: Option<String>,
+    pub(crate) pending_reinit: bool,
 
-    file_browser: FileBrowser,
+    pub(crate) file_browser: FileBrowser,
 
-    current_view: AppView,
+    pub(crate) current_view: AppView,
 
-    scroll_row: usize,
-    scroll_channel: usize,
+    pub(crate) scroll_row: usize,
+    pub(crate) scroll_channel: usize,
 
-    current_octave: u8,
-    edit_mode: bool,
-    follow_playback: bool,
-    cursor_skip: u8,
-    edit_mask_instrument: bool,
-    edit_mask_volume: bool,
-    multichannel_enabled: bool,
-    multichannel_channels: Vec<bool>,
+    pub(crate) current_octave: u8,
+    pub(crate) edit_mode: bool,
+    pub(crate) follow_playback: bool,
+    pub(crate) cursor_skip: u8,
+    pub(crate) edit_mask_instrument: bool,
+    pub(crate) edit_mask_volume: bool,
+    pub(crate) multichannel_enabled: bool,
+    pub(crate) multichannel_channels: Vec<bool>,
 
-    channel_names: Vec<String>,
-    channel_rename_state: crate::ui::channel_headers::ChannelRenameState,
+    pub(crate) channel_names: Vec<String>,
+    pub(crate) channel_rename_state: crate::ui::channel_headers::ChannelRenameState,
 
-    theme: TrackerTheme,
-    theme_preset: crate::ui::theme::ThemePreset,
-    show_shortcuts: bool,
-    show_about: bool,
-    settings_state: crate::ui::settings_window::SettingsState,
-    wav_export_state: crate::ui::wav_export_window::WavExportState,
+    pub(crate) theme: TrackerTheme,
+    pub(crate) theme_preset: crate::ui::theme::ThemePreset,
+    pub(crate) show_shortcuts: bool,
+    pub(crate) show_about: bool,
+    pub(crate) settings_state: crate::ui::settings_window::SettingsState,
+    pub(crate) wav_export_state: crate::ui::wav_export_window::WavExportState,
     pub(crate) sample_export_dialog: Option<crate::ui::sample_export_dialog::SampleExportDialog>,
-    audio_init_failed: bool,
-    sample_selection: Option<(usize, usize)>,
+    pub(crate) audio_init_failed: bool,
+    pub(crate) sample_selection: Option<(usize, usize)>,
     pub(crate) sample_clipboard: Option<Arc<Vec<f32>>>,
-    amplify_factor: f32,
+    pub(crate) amplify_factor: f32,
     pub(crate) config: AppConfig,
-    col_vis: ColumnVisibility,
-    last_visible_rows: usize,
-    last_visible_channels: usize,
-    send_bus_effect_types: [SendEffectType; NUM_SEND_BUSES],
-    send_bus_params: [[f32; 5]; NUM_SEND_BUSES],
-    automation_dragging: Option<(usize, f32)>,
-    automation_editor_state: crate::ui::automation_editor::AutomationEditorState,
+    pub(crate) col_vis: ColumnVisibility,
+    pub(crate) last_visible_rows: usize,
+    pub(crate) last_visible_channels: usize,
+    pub(crate) send_bus_effect_types: [SendEffectType; NUM_SEND_BUSES],
+    pub(crate) send_bus_params: [[f32; 5]; NUM_SEND_BUSES],
+    pub(crate) automation_dragging: Option<(usize, f32)>,
+    pub(crate) automation_editor_state: crate::ui::automation_editor::AutomationEditorState,
 }
 
 impl Default for HtrkApp {
@@ -375,7 +343,7 @@ impl HtrkApp {
         self.init_audio();
     }
 
-    fn send_command(&mut self, cmd: AudioCommand) {
+    pub(crate) fn send_command(&mut self, cmd: AudioCommand) {
         self.core.send_command(cmd);
     }
 
@@ -476,7 +444,7 @@ impl HtrkApp {
         self.sync_channel_fields();
     }
 
-    fn current_pattern(&self) -> Option<&crate::sequencer::Pattern> {
+    pub(crate) fn current_pattern(&self) -> Option<&crate::sequencer::Pattern> {
         self.core.current_pattern()
     }
 
@@ -485,23 +453,23 @@ impl HtrkApp {
         self.core.current_pattern_mut()
     }
 
-    fn num_channels(&self) -> usize {
+    pub(crate) fn num_channels(&self) -> usize {
         self.core.num_channels()
     }
 
-    fn num_channels_checked(&self) -> usize {
+    pub(crate) fn num_channels_checked(&self) -> usize {
         self.core.num_channels_checked()
     }
 
-    fn get_cell_at_cursor(&self) -> Cell {
+    pub(crate) fn get_cell_at_cursor(&self) -> Cell {
         self.core.get_cell_at_cursor()
     }
 
-    fn set_cell_at_cursor(&mut self, new_cell: Cell) {
+    pub(crate) fn set_cell_at_cursor(&mut self, new_cell: Cell) {
         self.core.set_cell_at_cursor(new_cell, &self.multichannel_channels, self.multichannel_enabled);
     }
 
-    fn advance_cursor_down(&mut self, step: usize) {
+    pub(crate) fn advance_cursor_down(&mut self, step: usize) {
         if let Some(pattern) = self.current_pattern() {
             let max_row = pattern.num_rows.max(1);
             self.core.cursor.row = (self.core.cursor.row + step).min(max_row - 1);
@@ -509,12 +477,12 @@ impl HtrkApp {
         self.ensure_cursor_visible();
     }
 
-    fn advance_cursor_up(&mut self, step: usize) {
+    pub(crate) fn advance_cursor_up(&mut self, step: usize) {
         self.core.cursor.row = self.core.cursor.row.saturating_sub(step);
         self.ensure_cursor_visible();
     }
 
-    fn ensure_cursor_visible(&mut self) {
+    pub(crate) fn ensure_cursor_visible(&mut self) {
         if self.core.cursor.row < self.scroll_row {
             self.scroll_row = self.core.cursor.row;
         }
@@ -530,658 +498,11 @@ impl HtrkApp {
         }
     }
 
-    fn clear_cell_at_cursor(&mut self) {
+    pub(crate) fn clear_cell_at_cursor(&mut self) {
         self.core.clear_cell_at_cursor();
     }
 
-    fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
-        let modifiers = ctx.input(|i| i.modifiers);
-
-        if modifiers.ctrl && !modifiers.shift {
-            let mut handled = false;
-            ctx.input(|i| {
-                for event in &i.events {
-                    if let egui::Event::Key { key, pressed: true, .. } = event {
-                        match key {
-                            egui::Key::Z if self.edit_mode => {
-                                self.ensure_module_ownership();
-                                if let Some(ref mut module) = self.core.module {
-                                    if let Some(arc_module) = Arc::get_mut(module) {
-                                        let _ = self.core.undo_manager.undo(arc_module);
-                                    }
-                                }
-                                self.sync_module_to_audio();
-                                handled = true;
-                            }
-                            egui::Key::Y if self.edit_mode => {
-                                self.ensure_module_ownership();
-                                if let Some(ref mut module) = self.core.module {
-                                    if let Some(arc_module) = Arc::get_mut(module) {
-                                        let _ = self.core.undo_manager.redo(arc_module);
-                                    }
-                                }
-                                self.sync_module_to_audio();
-                                handled = true;
-                            }
-                            egui::Key::C => {
-                                self.copy_selection();
-                                handled = true;
-                            }
-                            egui::Key::X if self.edit_mode => {
-                                self.copy_selection();
-                                self.delete_selection();
-                                handled = true;
-                            }
-                            egui::Key::V if self.edit_mode => {
-                                self.paste_at_cursor();
-                                handled = true;
-                            }
-                            egui::Key::A => {
-                                self.select_all();
-                                handled = true;
-                            }
-                            egui::Key::N => {
-                                self.new_song();
-                                handled = true;
-                            }
-                            egui::Key::O => {
-                                match self.current_view {
-                                    AppView::Sample => self.file_browser.open(BrowserMode::Samples, &mut self.config),
-                                    AppView::Instrument => self.file_browser.open(BrowserMode::Instruments, &mut self.config),
-                                    _ => self.open_file_dialog(),
-                                }
-                                handled = true;
-                            }
-                            egui::Key::I => {
-                                self.file_browser.open(BrowserMode::Samples, &mut self.config);
-                                handled = true;
-                            }
-                            egui::Key::ArrowRight => {
-                                self.step_sub_column_forward();
-                                handled = true;
-                            }
-                            egui::Key::ArrowLeft => {
-                                self.step_sub_column_backward();
-                                handled = true;
-                            }
-                            egui::Key::Num1 => {
-                                let mut col_vis = self.config.get_col_vis();
-                                col_vis.note = !col_vis.note;
-                                self.config.set_col_vis(col_vis);
-                                self.col_vis = self.config.get_col_vis();
-                                self.config.save();
-                                handled = true;
-                            }
-                            egui::Key::Num2 => {
-                                let mut col_vis = self.config.get_col_vis();
-                                col_vis.instrument = !col_vis.instrument;
-                                self.config.set_col_vis(col_vis);
-                                self.col_vis = self.config.get_col_vis();
-                                self.config.save();
-                                handled = true;
-                            }
-                            egui::Key::Num3 => {
-                                let mut col_vis = self.config.get_col_vis();
-                                col_vis.volume = !col_vis.volume;
-                                self.config.set_col_vis(col_vis);
-                                self.col_vis = self.config.get_col_vis();
-                                self.config.save();
-                                handled = true;
-                            }
-                            egui::Key::Num4 => {
-                                let mut col_vis = self.config.get_col_vis();
-                                col_vis.effect = !col_vis.effect;
-                                self.config.set_col_vis(col_vis);
-                                self.col_vis = self.config.get_col_vis();
-                                self.config.save();
-                                handled = true;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            });
-            if handled {
-                return;
-            }
-        }
-
-        if modifiers.ctrl && modifiers.shift {
-            ctx.input(|i| {
-                for event in &i.events {
-                    if let egui::Event::Key { key, pressed: true, .. } = event {
-                        match key {
-                            egui::Key::S => self.save_as_dialog(),
-                            egui::Key::I => self.file_browser.open(BrowserMode::Instruments, &mut self.config),
-                            egui::Key::ArrowUp => {
-                                if self.current_octave < 9 { self.current_octave += 1; }
-                            }
-                            egui::Key::ArrowDown => {
-                                if self.current_octave > 0 { self.current_octave -= 1; }
-                            }
-                            egui::Key::Space => {
-                                self.cycle_spacing_mode();
-                            }
-                            egui::Key::L => {
-                                self.config.toggle_sample_length_bg();
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            });
-
-            if self.current_view == AppView::Automation {
-                if let Some(tid) = self.automation_editor_state.selected_track_id {
-                    let mode = ctx.input(|i| {
-                        for event in &i.events {
-                            if let egui::Event::Key { key, pressed: true, .. } = event {
-                                match key {
-                                    egui::Key::Num5 => return Some(InterpolationMode::Hold),
-                                    egui::Key::Num6 => return Some(InterpolationMode::Linear),
-                                    egui::Key::Num7 => return Some(InterpolationMode::Smooth),
-                                    egui::Key::Num8 => return Some(InterpolationMode::Exponential),
-                                    _ => {}
-                                }
-                            }
-                        }
-                        None
-                    });
-                    if let Some(mode) = mode {
-                        self.ensure_module_ownership();
-                        if let Some(ref mut module) = self.core.module {
-                            if let Some(arc_module) = Arc::get_mut(module) {
-                                if let Some(t) = arc_module.automation_tracks.iter_mut().find(|t| t.id == tid) {
-                                    t.default_interp = mode;
-                                    self.sync_module_to_audio();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            return;
-        }
-
-        if modifiers.ctrl {
-            return;
-        }
-
-        ctx.input(|i| {
-            for event in &i.events {
-                match event {
-                    egui::Event::Key { key, pressed: true, .. } => match key {
-                        egui::Key::ArrowDown => {
-                            if modifiers.ctrl {
-                                if self.current_octave > 0 {
-                                    self.current_octave -= 1;
-                                }
-                            } else if modifiers.shift {
-                                self.extend_selection_down();
-                            } else if modifiers.alt && self.edit_mode {
-                                self.transpose_selection(-1);
-                            } else {
-                                self.core.selection = None;
-                                self.advance_cursor_down(1);
-                            }
-                        }
-                        egui::Key::ArrowUp => {
-                            if modifiers.ctrl {
-                                if self.current_octave < 9 {
-                                    self.current_octave += 1;
-                                }
-                            } else if modifiers.shift {
-                                self.extend_selection_up();
-                            } else if modifiers.alt && self.edit_mode {
-                                self.transpose_selection(1);
-                            } else {
-                                self.core.selection = None;
-                                self.advance_cursor_up(1);
-                            }
-                        }
-                        egui::Key::ArrowRight => {
-                            if modifiers.alt {
-                                self.core.selection = None;
-                                let num_ch = self.num_channels();
-                                if self.core.cursor.channel < num_ch - 1 {
-                                    self.core.cursor.channel += 1;
-                                    self.core.cursor.sub_column = SubColumn::Note;
-                                    self.ensure_cursor_visible();
-                                }
-                            } else if modifiers.shift {
-                                self.extend_selection_right();
-                            } else {
-                                self.core.selection = None;
-                                self.move_cursor_right();
-                            }
-                        }
-                        egui::Key::ArrowLeft => {
-                            if modifiers.alt {
-                                self.core.selection = None;
-                                if self.core.cursor.channel > 0 {
-                                    self.core.cursor.channel -= 1;
-                                    self.core.cursor.sub_column = SubColumn::Note;
-                                    self.ensure_cursor_visible();
-                                }
-                            } else if modifiers.shift {
-                                self.extend_selection_left();
-                            } else {
-                                self.core.selection = None;
-                                self.move_cursor_left();
-                            }
-                        }
-                        egui::Key::Tab => {
-                            self.core.selection = None;
-                            if modifiers.shift {
-                                self.core.cursor.channel = self.core.cursor.channel.saturating_sub(1);
-                            } else {
-                                self.core.cursor.channel += 1;
-                                self.core.cursor.channel = self.core.cursor.channel.min(self.num_channels_checked() - 1);
-                            }
-                            self.ensure_cursor_visible();
-                        }
-                        egui::Key::M if modifiers.alt => {
-                            self.core.toggle_mute(self.core.cursor.channel);
-                        }
-                        egui::Key::S if modifiers.alt => {
-                            self.core.toggle_solo(self.core.cursor.channel);
-                        }
-                        egui::Key::N if modifiers.alt => {
-                            let ch = self.core.cursor.channel;
-                            if ch < self.multichannel_channels.len() {
-                                self.multichannel_channels[ch] = !self.multichannel_channels[ch];
-                                self.multichannel_enabled = self.multichannel_channels.iter().any(|&v| v);
-                            }
-                        }
-                        egui::Key::PageUp => {
-                            self.core.selection = None;
-                            self.advance_cursor_up(16);
-                        }
-                        egui::Key::PageDown => {
-                            self.core.selection = None;
-                            self.advance_cursor_down(16);
-                        }
-                        egui::Key::Home => {
-                            self.core.selection = None;
-                            self.core.cursor.row = 0;
-                            self.ensure_cursor_visible();
-                        }
-                        egui::Key::End => {
-                            self.core.selection = None;
-                            if let Some(pattern) = self.current_pattern() {
-                                self.core.cursor.row = pattern.num_rows - 1;
-                                self.ensure_cursor_visible();
-                            }
-                        }
-                        egui::Key::Backspace if self.edit_mode => {
-                            self.clear_cell_at_cursor();
-                        }
-                        egui::Key::Delete if self.edit_mode => {
-                            if modifiers.alt {
-                                let selected_order = self.core.selected_order;
-                                let row = self.core.cursor.row;
-                                let can_delete = self.current_pattern().map_or(false, |p| p.num_rows > 1);
-                                if can_delete {
-                                    let deleted_data: Vec<Cell> = self.current_pattern()
-                                        .map(|p| p.data[row].to_vec())
-                                        .unwrap_or_default();
-                                    let pat_idx = self.core.module.as_ref()
-                                        .and_then(|m| m.order_list.get(selected_order).copied())
-                                        .unwrap_or(0) as usize;
-                                    self.ensure_module_ownership();
-                                    if let Some(ref mut module) = self.core.module {
-                                        if let Some(arc_module) = Arc::get_mut(module) {
-                                            let cmd = Box::new(crate::edit::DeleteRowCommand {
-                                                pattern_index: pat_idx,
-                                                row,
-                                                _channel: None,
-                                                deleted_data,
-                                            });
-                                            let _ = self.core.undo_manager.execute(cmd, arc_module);
-                                        }
-                                    }
-                                    self.sync_module_to_audio();
-                                }
-                            } else {
-                                let auto_target = self.core.automation_targets.get(self.core.cursor.channel).copied().flatten();
-                                if auto_target.is_some()
-                                    && matches!(self.core.cursor.sub_column,
-                                        SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow)
-                                {
-                                    self.delete_automation_point(self.core.cursor.channel, self.core.cursor.row);
-                                    self.advance_cursor_down(1);
-                                } else {
-                                    self.clear_cell_at_cursor();
-                                    self.advance_cursor_down(1);
-                                }
-                            }
-                        }
-                        egui::Key::Insert if self.edit_mode => {
-                            let selected_order = self.core.selected_order;
-                            let row = self.core.cursor.row;
-                            self.ensure_module_ownership();
-                            if let Some(ref mut module) = self.core.module {
-                                let pat_idx = *module.order_list.get(selected_order).unwrap_or(&0) as usize;
-                                if let Some(arc_module) = Arc::get_mut(module) {
-                                    let cmd = Box::new(InsertRowCommand {
-                                        pattern_index: pat_idx,
-                                        row,
-                                        _channel: None,
-                                    });
-                                    let _ = self.core.undo_manager.execute(cmd, arc_module);
-                                }
-                            }
-                            self.sync_module_to_audio();
-                        }
-                        egui::Key::Space => {
-                            if self.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
-                                self.send_command(AudioCommand::Stop);
-                            } else if self.edit_mode {
-                                if let Some(last_cell) = self.core.last_entered_cell.clone() {
-                                    self.set_cell_at_cursor(last_cell);
-                                    self.advance_cursor_down(self.cursor_skip as usize);
-                                }
-                            }
-                        }
-                        egui::Key::F1 => {
-                            self.show_shortcuts = !self.show_shortcuts;
-                        }
-                        egui::Key::F2 => {
-                            self.edit_mode = !self.edit_mode;
-                        }
-                        egui::Key::F5 => {
-                            self.send_command(AudioCommand::Play);
-                        }
-                        egui::Key::F6 => {
-                            self.send_command(AudioCommand::SetPlayMode(crate::sequencer::player::PlayMode::Pattern));
-                        }
-                        egui::Key::F7 => {
-                            self.send_command(AudioCommand::SetPlayMode(crate::sequencer::player::PlayMode::Order));
-                        }
-                        egui::Key::F8 => {
-                            self.send_command(AudioCommand::Stop);
-                        }
-                        egui::Key::F9 => {
-                            let order = self.core.playback_state.current_order.load(std::sync::atomic::Ordering::Relaxed);
-                            let row = self.core.playback_state.current_row.load(std::sync::atomic::Ordering::Relaxed);
-                            self.send_command(AudioCommand::PlayFrom { order, row });
-                        }
-                        egui::Key::F10 => {
-                            let should_open = !self.settings_state.open;
-                            if should_open {
-                                self.settings_state = crate::ui::settings_window::SettingsState::from_config(&self.config);
-                                self.settings_state.open = true;
-                            } else {
-                                self.settings_state.open = false;
-                            }
-                        }
-                        egui::Key::Escape => {
-                            self.core.selection = None;
-                        }
-                        egui::Key::OpenBracket => {
-                            self.skip_to_prev_pattern();
-                        }
-                        egui::Key::CloseBracket => {
-                            self.skip_to_next_pattern();
-                        }
-                        egui::Key::Comma => {
-                            self.edit_mask_instrument = !self.edit_mask_instrument;
-                            self.edit_mask_volume = self.edit_mask_instrument;
-                        }
-                        egui::Key::Num0 if modifiers.alt => { self.cursor_skip = 0; }
-                        egui::Key::Num1 if modifiers.alt => { self.cursor_skip = 1; }
-                        egui::Key::Num2 if modifiers.alt => { self.cursor_skip = 2; }
-                        egui::Key::Num3 if modifiers.alt => { self.cursor_skip = 3; }
-                        egui::Key::Num4 if modifiers.alt => { self.cursor_skip = 4; }
-                        egui::Key::Num5 if modifiers.alt => { self.cursor_skip = 5; }
-                        egui::Key::Num6 if modifiers.alt => { self.cursor_skip = 6; }
-                        egui::Key::Num7 if modifiers.alt => { self.cursor_skip = 7; }
-                        egui::Key::Num8 if modifiers.alt => { self.cursor_skip = 8; }
-                        egui::Key::Num9 if modifiers.alt => { self.cursor_skip = 9; }
-                        egui::Key::Minus if !modifiers.alt => { self.skip_to_prev_pattern(); }
-                        egui::Key::Equals if !modifiers.alt => { self.skip_to_next_pattern(); }
-                        egui::Key::C if modifiers.alt && self.edit_mode => { self.copy_selection(); }
-                        egui::Key::P if modifiers.alt && self.edit_mode => { self.paste_at_cursor(); }
-                        egui::Key::Z if modifiers.alt && self.edit_mode => {
-                            if self.core.selection.is_some() {
-                                self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::Reverse);
-                            }
-                        }
-                        egui::Key::F if modifiers.alt && self.edit_mode => {
-                            if self.core.selection.is_some() {
-                                self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::FillInstrument);
-                            }
-                        }
-                        egui::Key::I if modifiers.alt && self.edit_mode => {
-                            if self.core.selection.is_some() {
-                                self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::InterpolateVolume);
-                            }
-                        }
-                        egui::Key::K if modifiers.alt && self.edit_mode => {
-                            if self.core.selection.is_some() {
-                                self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::InterpolateEffect);
-                            }
-                        }
-                        egui::Key::R if modifiers.alt && self.edit_mode => {
-                            if self.core.selection.is_some() {
-                                self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::Randomize);
-                            }
-                        }
-                        _ => {}
-                    },
-                    egui::Event::Text(text) => {
-                        if self.core.module.is_none() {
-                            return;
-                        }
-                        let ch = text.chars().next().unwrap_or('\0');
-                        self.handle_text_input(ch);
-                    }
-                    _ => {}
-                }
-            }
-        });
-    }
-
-    fn preview_note(&mut self, note_key: u8) {
-        let vol = 0.75;
-        let sample_idx = self.core.selected_sample;
-        self.send_command(crate::audio::commands::AudioCommand::TriggerPreviewNote {
-            sample_index: sample_idx,
-            note_key,
-            volume: vol,
-            panning: 0.5,
-        });
-    }
-
-    fn handle_text_input(&mut self, ch: char) {
-        if self.current_pattern().is_none() {
-            return;
-        }
-
-        if self.core.cursor.sub_column.accepts_note() {
-            for (key, tone) in NOTE_KEYS_LOWER.iter() {
-                let key_char = key.name();
-                if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
-                    let note_key = self.current_octave as u8 * 12 + tone;
-                    self.preview_note(note_key);
-                    if self.edit_mode {
-                        let note = Note::On(note_key);
-                        let mut new_cell = self.get_cell_at_cursor();
-                        new_cell.note = note;
-                        self.set_cell_at_cursor(new_cell);
-                        self.core.last_entered_cell = Some(new_cell);
-                        self.advance_cursor_down(self.cursor_skip as usize);
-                    }
-                    return;
-                }
-            }
-            for (key, tone) in NOTE_KEYS_UPPER.iter() {
-                let key_char = key.name();
-                if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
-                    let note_key = (self.current_octave as u8 + 1) * 12 + tone;
-                    self.preview_note(note_key);
-                    if self.edit_mode {
-                        let note = Note::On(note_key);
-                        let mut new_cell = self.get_cell_at_cursor();
-                        new_cell.note = note;
-                        self.set_cell_at_cursor(new_cell);
-                        self.core.last_entered_cell = Some(new_cell);
-                        self.advance_cursor_down(self.cursor_skip as usize);
-                    }
-                    return;
-                }
-            }
-            if ch == '.' && self.edit_mode {
-                let mut new_cell = self.get_cell_at_cursor();
-                new_cell.note = Note::Off;
-                self.set_cell_at_cursor(new_cell);
-                self.core.last_entered_cell = Some(new_cell);
-                self.advance_cursor_down(self.cursor_skip as usize);
-                return;
-            }
-        }
-
-        if !self.edit_mode {
-            return;
-        }
-
-        if self.core.cursor.sub_column.accepts_decimal() {
-            if let Some(d) = ch.to_digit(10) {
-                let d = d as u8;
-                let mut cell = self.get_cell_at_cursor();
-
-                match self.core.cursor.sub_column {
-                    SubColumn::InstrumentTens => {
-                        let current = cell.instrument.unwrap_or(0);
-                        cell.instrument = Some(d * 10 + (current % 10));
-                    }
-                    SubColumn::InstrumentOnes => {
-                        let current = cell.instrument.unwrap_or(0);
-                        cell.instrument = Some((current / 10 * 10) + d);
-                    }
-                    SubColumn::VolumeTens => {
-                        let current = cell.volume.unwrap_or(0);
-                        let val = d * 10 + (current % 10);
-                        cell.volume = Some(val.min(64));
-                    }
-                    SubColumn::VolumeOnes => {
-                        let current = cell.volume.unwrap_or(0);
-                        let val = (current / 10 * 10) + d;
-                        cell.volume = Some(val.min(64));
-                    }
-                    SubColumn::Note
-                    | SubColumn::EffectType
-                    | SubColumn::EffectParamHigh
-                    | SubColumn::EffectParamLow => return,
-                }
-
-                self.set_cell_at_cursor(cell);
-
-                let col_vis = self.config.get_col_vis();
-                if let Some(next) = self.core.cursor.sub_column.next_visible(col_vis) {
-                    self.core.cursor.sub_column = next;
-                } else {
-                    self.core.cursor.sub_column = Self::first_visible_sub_column(col_vis);
-                    self.advance_cursor_down(self.cursor_skip as usize);
-                }
-                return;
-            }
-        }
-
-        if self.core.cursor.sub_column == SubColumn::EffectType {
-            let auto_target = self.core.automation_targets.get(self.core.cursor.channel).copied().flatten();
-            if auto_target.is_some() {
-                if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
-                    self.enter_automation_hex(self.core.cursor.channel, self.core.cursor.row, d as u8);
-                    self.advance_cursor_down(self.cursor_skip as usize);
-                    return;
-                }
-            }
-            let mut cell = self.get_cell_at_cursor();
-            let changed = if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
-                cell.effect = hex_to_effect(d as u8);
-                true
-            } else {
-                match ch.to_ascii_uppercase() {
-                    'P' => { cell.effect = Effect::SetSendBusParam { bus: 0, param: 0, value: 0 }; true }
-                    'Z' => { cell.effect = Effect::SetFilterCutoff { cutoff: 0 }; true }
-                    'S' => { cell.effect = Effect::SetSendLevel { send_index: 0, level: 0 }; true }
-                    'R' => { cell.effect = Effect::SetFilterResonance { resonance: 0 }; true }
-                    'X' => { cell.effect = Effect::SetFilterType { filter_type: 0 }; true }
-                    _ => false,
-                }
-            };
-            if changed {
-                self.set_cell_at_cursor(cell);
-                let col_vis = self.config.get_col_vis();
-                if let Some(next) = self.core.cursor.sub_column.next_visible(col_vis) {
-                    self.core.cursor.sub_column = next;
-                } else {
-                    self.core.cursor.sub_column = Self::first_visible_sub_column(col_vis);
-                    self.advance_cursor_down(self.cursor_skip as usize);
-                }
-                return;
-            }
-        }
-
-        if self.core.cursor.sub_column == SubColumn::EffectParamHigh
-            || self.core.cursor.sub_column == SubColumn::EffectParamLow
-        {
-            let auto_target = self.core.automation_targets.get(self.core.cursor.channel).copied().flatten();
-            if auto_target.is_some() {
-                if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
-                    self.enter_automation_hex(self.core.cursor.channel, self.core.cursor.row, d as u8);
-                    self.advance_cursor_down(self.cursor_skip as usize);
-                    return;
-                }
-            }
-            if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
-                let d = d as u8;
-                let mut cell = self.get_cell_at_cursor();
-                match self.core.cursor.sub_column {
-                    SubColumn::EffectParamHigh => {
-                        let param = effect_param(&cell.effect);
-                        let new_param = (d << 4) | (param & 0x0F);
-                        cell.effect = set_effect_param(&cell.effect, new_param);
-                    }
-                    SubColumn::EffectParamLow => {
-                        let param = effect_param(&cell.effect);
-                        let new_param = (param & 0xF0) | d;
-                        cell.effect = set_effect_param(&cell.effect, new_param);
-                    }
-                    _ => unreachable!(),
-                }
-                self.set_cell_at_cursor(cell);
-                let col_vis = self.config.get_col_vis();
-                if let Some(next) = self.core.cursor.sub_column.next_visible(col_vis) {
-                    self.core.cursor.sub_column = next;
-                } else {
-                    self.core.cursor.sub_column = Self::first_visible_sub_column(col_vis);
-                    self.advance_cursor_down(self.cursor_skip as usize);
-                }
-            }
-        }
-
-        if ch == '.' && !self.core.cursor.sub_column.accepts_note() {
-            let mut cell = self.get_cell_at_cursor();
-            match self.core.cursor.sub_column {
-                SubColumn::InstrumentTens | SubColumn::InstrumentOnes => {
-                    cell.instrument = None;
-                }
-                SubColumn::VolumeTens | SubColumn::VolumeOnes => {
-                    cell.volume = None;
-                }
-                SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => {
-                    cell.effect = Effect::None;
-                }
-                SubColumn::Note => {}
-            }
-            self.set_cell_at_cursor(cell);
-        }
-    }
-
-    fn move_cursor_right(&mut self) {
+    pub(crate) fn move_cursor_right(&mut self) {
         let num_ch = self.num_channels();
         if self.core.cursor.channel < num_ch - 1 {
             self.core.cursor.channel += 1;
@@ -1190,7 +511,7 @@ impl HtrkApp {
         self.ensure_cursor_visible();
     }
 
-    fn move_cursor_left(&mut self) {
+    pub(crate) fn move_cursor_left(&mut self) {
         if self.core.cursor.channel > 0 {
             self.core.cursor.channel -= 1;
             self.core.cursor.sub_column = SubColumn::Note;
@@ -1198,7 +519,7 @@ impl HtrkApp {
         self.ensure_cursor_visible();
     }
 
-    fn first_visible_sub_column(col_vis: crate::ui::pattern_grid::ColumnVisibility) -> crate::ui::pattern_grid::SubColumn {
+    pub(crate) fn first_visible_sub_column(col_vis: crate::ui::pattern_grid::ColumnVisibility) -> crate::ui::pattern_grid::SubColumn {
         use crate::ui::pattern_grid::SubColumn;
         if col_vis.note { return SubColumn::Note; }
         if col_vis.instrument { return SubColumn::InstrumentTens; }
@@ -1207,21 +528,21 @@ impl HtrkApp {
         SubColumn::Note
     }
 
-    fn step_sub_column_forward(&mut self) {
+    pub(crate) fn step_sub_column_forward(&mut self) {
         let col_vis = self.config.get_col_vis();
         if let Some(next) = self.core.cursor.sub_column.next_visible(col_vis) {
             self.core.cursor.sub_column = next;
         }
     }
 
-    fn step_sub_column_backward(&mut self) {
+    pub(crate) fn step_sub_column_backward(&mut self) {
         let col_vis = self.config.get_col_vis();
         if let Some(prev) = self.core.cursor.sub_column.prev_visible(col_vis) {
             self.core.cursor.sub_column = prev;
         }
     }
 
-    fn cycle_spacing_mode(&mut self) {
+    pub(crate) fn cycle_spacing_mode(&mut self) {
         use crate::app_config::SpacingMode;
         let modes = [SpacingMode::Compact, SpacingMode::Normal, SpacingMode::Wide, SpacingMode::ExtraWide];
         let current = self.config.get_spacing_mode();
@@ -1230,7 +551,7 @@ impl HtrkApp {
         self.config.set_spacing_mode(next);
     }
 
-    fn extend_selection_down(&mut self) {
+    pub(crate) fn extend_selection_down(&mut self) {
         if self.core.selection.is_none() {
             self.core.selection_anchor = Some(self.core.cursor);
         }
@@ -1243,7 +564,7 @@ impl HtrkApp {
         }
     }
 
-    fn extend_selection_up(&mut self) {
+    pub(crate) fn extend_selection_up(&mut self) {
         if self.core.selection.is_none() {
             self.core.selection_anchor = Some(self.core.cursor);
         }
@@ -1256,7 +577,7 @@ impl HtrkApp {
         }
     }
 
-    fn extend_selection_right(&mut self) {
+    pub(crate) fn extend_selection_right(&mut self) {
         if self.core.selection.is_none() {
             self.core.selection_anchor = Some(self.core.cursor);
         }
@@ -1269,7 +590,7 @@ impl HtrkApp {
         }
     }
 
-    fn extend_selection_left(&mut self) {
+    pub(crate) fn extend_selection_left(&mut self) {
         if self.core.selection.is_none() {
             self.core.selection_anchor = Some(self.core.cursor);
         }
@@ -1282,15 +603,15 @@ impl HtrkApp {
         }
     }
 
-    fn select_all(&mut self) {
+    pub(crate) fn select_all(&mut self) {
         self.core.select_all();
     }
 
-    fn transpose_selection(&mut self, delta: i8) {
+    pub(crate) fn transpose_selection(&mut self, delta: i8) {
         self.core.transpose_selection(delta);
     }
 
-    fn handle_context_menu_action(&mut self, action: crate::ui::pattern_grid::ContextMenuAction) {
+    pub(crate) fn handle_context_menu_action(&mut self, action: crate::ui::pattern_grid::ContextMenuAction) {
         if !self.edit_mode {
             return;
         }
@@ -1301,37 +622,37 @@ impl HtrkApp {
         self.core.handle_automation_interaction(interaction);
     }
 
-    fn enter_automation_hex(&mut self, channel: usize, row: usize, digit: u8) {
+    pub(crate) fn enter_automation_hex(&mut self, channel: usize, row: usize, digit: u8) {
         self.core.enter_automation_hex(channel, row, digit);
     }
 
-    fn delete_automation_point(&mut self, channel: usize, row: usize) {
+    pub(crate) fn delete_automation_point(&mut self, channel: usize, row: usize) {
         self.core.delete_automation_point(channel, row);
     }
 
-    fn skip_to_prev_pattern(&mut self) {
+    pub(crate) fn skip_to_prev_pattern(&mut self) {
         self.core.skip_to_prev_pattern();
         self.ensure_cursor_visible();
     }
 
-    fn skip_to_next_pattern(&mut self) {
+    pub(crate) fn skip_to_next_pattern(&mut self) {
         self.core.skip_to_next_pattern();
         self.ensure_cursor_visible();
     }
 
-    fn copy_selection(&mut self) {
+    pub(crate) fn copy_selection(&mut self) {
         self.core.copy_selection();
     }
 
-    fn delete_selection(&mut self) {
+    pub(crate) fn delete_selection(&mut self) {
         self.core.delete_selection();
     }
 
-    fn paste_at_cursor(&mut self) {
+    pub(crate) fn paste_at_cursor(&mut self) {
         self.core.paste_at_cursor();
     }
 
-    fn open_file_dialog(&mut self) {
+    pub(crate) fn open_file_dialog(&mut self) {
         self.file_browser.open(BrowserMode::Modules, &mut self.config);
     }
 
@@ -1379,7 +700,7 @@ impl HtrkApp {
         self.core.save_file(path);
     }
 
-    fn save_as_dialog(&mut self) {
+    pub(crate) fn save_as_dialog(&mut self) {
         self.file_browser.open(BrowserMode::Projects, &mut self.config);
     }
 
@@ -1604,38 +925,6 @@ impl HtrkApp {
     }
 }
 
-fn hex_to_effect(d: u8) -> crate::sequencer::Effect {
-    match d {
-        0 => crate::sequencer::Effect::Arpeggio { note1: 0, note2: 0 },
-        1 => crate::sequencer::Effect::PortamentoUp { speed: 0 },
-        2 => crate::sequencer::Effect::PortamentoDown { speed: 0 },
-        3 => crate::sequencer::Effect::TonePortamento { speed: 0 },
-        4 => crate::sequencer::Effect::Vibrato { speed: 0, depth: 0 },
-        5 => crate::sequencer::Effect::TonePortamentoVolumeSlide { up: 0 },
-        6 => crate::sequencer::Effect::VibratoVolumeSlide { up: 0 },
-        7 => crate::sequencer::Effect::Tremolo { speed: 0, depth: 0 },
-        8 => crate::sequencer::Effect::SetPanning { pan: 0 },
-        9 => crate::sequencer::Effect::SetSampleOffset { offset: 0 },
-        0xA => crate::sequencer::Effect::VolumeSlide { up: 0, down: 0 },
-        0xB => crate::sequencer::Effect::PositionJump { order: 0 },
-        0xC => crate::sequencer::Effect::SetVolume { volume: 0 },
-        0xD => crate::sequencer::Effect::PatternBreak { row: 0 },
-        0xE => crate::sequencer::Effect::ExtendedEffect { param: 0 },
-        0xF => crate::sequencer::Effect::SetSpeed { speed: 0 },
-        _ => crate::sequencer::Effect::None,
-    }
-}
-
-fn effect_param(effect: &crate::sequencer::Effect) -> u8 {
-    crate::sequencer::effect::effect_param_value(effect).unwrap_or(0)
-}
-
-fn set_effect_param(effect: &crate::sequencer::Effect, param: u8) -> crate::sequencer::Effect {
-    let mut fake_cell = crate::sequencer::pattern::Cell::default();
-    fake_cell.effect = *effect;
-    crate::sequencer::effect::set_effect_param_value(fake_cell, param).effect
-}
-
 impl eframe::App for HtrkApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_zoom_factor(self.config.zoom_factor);
@@ -1644,7 +933,7 @@ impl eframe::App for HtrkApp {
             self.init_audio();
         }
 
-        self.handle_keyboard_input(ctx);
+        crate::actions::handle_keyboard_input(self, ctx);
 
         // Clamp cursor and scroll to active channel count
         let nch = self.num_channels();
