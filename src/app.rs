@@ -831,24 +831,10 @@ impl HtrkApp {
                             self.ensure_cursor_visible();
                         }
                         egui::Key::M if modifiers.alt => {
-                            let ch = self.core.cursor.channel;
-                            if ch < self.core.muted_channels.len() {
-                                self.core.muted_channels[ch] = !self.core.muted_channels[ch];
-                                self.send_command(AudioCommand::SetChannelMuted {
-                                    channel: ch,
-                                    muted: self.core.muted_channels[ch],
-                                });
-                            }
+                            self.core.toggle_mute(self.core.cursor.channel);
                         }
                         egui::Key::S if modifiers.alt => {
-                            let ch = self.core.cursor.channel;
-                            if ch < self.core.solo_channels.len() {
-                                self.core.solo_channels[ch] = !self.core.solo_channels[ch];
-                                self.send_command(AudioCommand::SetChannelSolo {
-                                    channel: ch,
-                                    solo: self.core.solo_channels[ch],
-                                });
-                            }
+                            self.core.toggle_solo(self.core.cursor.channel);
                         }
                         egui::Key::N if modifiers.alt => {
                             let ch = self.core.cursor.channel;
@@ -2730,28 +2716,13 @@ impl eframe::App for HtrkApp {
                     );
 
                     if let Some(ch) = ch_resp.toggle_mute {
-                        self.core.muted_channels[ch] = !self.core.muted_channels[ch];
-                        self.send_command(AudioCommand::SetChannelMuted {
-                            channel: ch,
-                            muted: self.core.muted_channels[ch],
-                        });
+                        self.core.toggle_mute(ch);
                     }
                     if let Some(ch) = ch_resp.toggle_solo {
-                        self.core.solo_channels[ch] = !self.core.solo_channels[ch];
-                        self.send_command(AudioCommand::SetChannelSolo {
-                            channel: ch,
-                            solo: self.core.solo_channels[ch],
-                        });
+                        self.core.toggle_solo(ch);
                     }
                     if let Some((ch, si, level)) = ch_resp.send_changed {
-                        if ch < self.core.send_levels.len() && si < NUM_SEND_BUSES {
-                            self.core.send_levels[ch][si] = level;
-                            self.send_command(crate::audio::commands::AudioCommand::SetSendLevel {
-                                channel: ch,
-                                send_index: si,
-                                level,
-                            });
-                        }
+                        self.core.set_send_level(ch, si, level);
                     }
                     if let Some((ch, name)) = ch_resp.rename_channel {
                         if ch < self.channel_names.len() {

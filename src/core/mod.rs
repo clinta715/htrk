@@ -1,5 +1,6 @@
 mod editing;
 mod automation;
+mod channels;
 
 use std::sync::Arc;
 
