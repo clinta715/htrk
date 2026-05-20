@@ -218,7 +218,7 @@ impl HtrkCore {
         }
     }
 
-    fn sync_channel_fields(&mut self) {
+    pub(crate) fn sync_channel_fields(&mut self) {
         let count = self.module.as_ref()
             .map(|m| m.channel_panning.len())
             .unwrap_or(DEFAULT_CHANNELS);
@@ -250,5 +250,76 @@ impl HtrkCore {
     pub(crate) fn num_channels_checked(&self) -> usize {
         let n = self.num_channels();
         if n == 0 { 1 } else { n }
+    }
+
+    pub fn load_module(&mut self, module: Module, name: String, path: Option<String>) {
+        let module = Arc::new(module);
+        self.module = Some(module.clone());
+        self.loaded_module_name = name;
+        self.file_path = path;
+        self.send_command(AudioCommand::Stop);
+        self.send_command(AudioCommand::LoadModule(module));
+        self.cursor = CursorPosition::default();
+        self.selection = None;
+        self.selected_order = 0;
+        self.selected_sample = 1;
+        self.selected_instrument = 1;
+        self.sync_channel_fields();
+        self.undo_manager.clear();
+    }
+
+    pub fn new_song(&mut self) {
+        let mut module = Module::default();
+        module.name = "Untitled".to_string();
+        module.order_list = vec![0];
+        module.patterns.push(crate::sequencer::Pattern::new(64));
+
+        let name = module.name.clone();
+        let module = Arc::new(module);
+        self.module = Some(module.clone());
+        self.loaded_module_name = name;
+        self.file_path = None;
+        self.send_command(AudioCommand::Stop);
+        self.send_command(AudioCommand::LoadModule(module));
+        self.cursor = CursorPosition::default();
+        self.selection = None;
+        self.selected_order = 0;
+        self.selected_sample = 1;
+        self.selected_instrument = 1;
+        self.sync_channel_fields();
+        self.undo_manager.clear();
+    }
+
+    pub fn save_file(&mut self, path: &str) -> bool {
+        let module = match &self.module {
+            Some(m) => m,
+            None => return false,
+        };
+        let data = crate::formats::save_module(module);
+        match std::fs::write(path, &data) {
+            Ok(()) => {
+                self.file_path = Some(path.to_string());
+                self.module_dirty = false;
+                self.last_backup_time = std::time::Instant::now();
+                true
+            }
+            Err(e) => {
+                eprintln!("Failed to save file: {}", e);
+                false
+            }
+        }
+    }
+
+    pub fn import_wav_to_sample(&mut self, sample_idx: usize, sample: crate::sequencer::Sample) {
+        self.ensure_module_ownership();
+        if let Some(ref mut module_arc) = self.module {
+            if let Some(m) = Arc::get_mut(module_arc) {
+                if sample_idx >= m.samples.len() {
+                    m.samples.resize(sample_idx + 1, crate::sequencer::Sample::default());
+                }
+                m.samples[sample_idx] = sample;
+            }
+        }
+        self.sync_to_audio();
     }
 }

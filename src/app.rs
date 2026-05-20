@@ -472,7 +472,6 @@ impl HtrkApp {
 
         match formats::load_module(&data) {
             Ok(mut module) => {
-                // Ensure minimum slots
                 if module.samples.len() < 65 {
                     module.samples.resize(65, crate::sequencer::Sample::default());
                 }
@@ -480,21 +479,11 @@ impl HtrkApp {
                     module.instruments.resize(17, crate::sequencer::Instrument::default());
                 }
 
-                self.core.loaded_module_name = module.name.clone();
-                self.core.file_path = Some(path.to_string());
-                let module = Arc::new(module);
-                self.core.module = Some(module.clone());
-                self.send_command(AudioCommand::Stop);
-                self.send_command(AudioCommand::LoadModule(module));
-                self.core.cursor = CursorPosition::default();
-                self.core.selection = None;
+                let name = module.name.clone();
+                self.core.load_module(module, name, Some(path.to_string()));
                 self.scroll_row = 0;
                 self.scroll_channel = 0;
-                self.core.selected_order = 0;
-                self.core.selected_sample = 1;
-                self.core.selected_instrument = 1;
                 self.sync_channel_fields();
-                self.core.undo_manager.clear();
             }
             Err(e) => {
                 eprintln!("Failed to load module: {}", e);
@@ -503,26 +492,10 @@ impl HtrkApp {
     }
 
     fn new_song(&mut self) {
-        let mut module = Module::default();
-        module.name = "Untitled".to_string();
-        module.order_list = vec![0];
-        module.patterns.push(crate::sequencer::Pattern::new(64));
-
-        self.core.loaded_module_name = module.name.clone();
-        self.core.file_path = None;
-        let module = Arc::new(module);
-        self.core.module = Some(module.clone());
-        self.send_command(AudioCommand::Stop);
-        self.send_command(AudioCommand::LoadModule(module));
-        self.core.cursor = CursorPosition::default();
-        self.core.selection = None;
+        self.core.new_song();
         self.scroll_row = 0;
         self.scroll_channel = 0;
-        self.core.selected_order = 0;
-        self.core.selected_sample = 1;
-        self.core.selected_instrument = 1;
         self.sync_channel_fields();
-        self.core.undo_manager.clear();
     }
 
     fn current_pattern(&self) -> Option<&crate::sequencer::Pattern> {
@@ -1394,30 +1367,18 @@ impl HtrkApp {
         };
         match crate::formats::wav::import_wav(&data) {
             Ok(mut sample) => {
-                // Set name from filename if empty
                 if sample.name.is_empty() {
                     if let Some(name) = std::path::Path::new(path).file_stem().and_then(|s| s.to_str()) {
                         sample.name = name.to_string();
                     }
                 }
 
-                // Create module if it doesn't exist
                 if self.core.module.is_none() {
                     self.new_song();
                 }
 
                 let sample_idx = self.core.selected_sample;
-                self.ensure_module_ownership();
-                if let Some(ref mut module_arc) = self.core.module {
-                    if let Some(m) = Arc::get_mut(module_arc) {
-                        // Ensure the sample vector is large enough
-                        if sample_idx >= m.samples.len() {
-                            m.samples.resize(sample_idx + 1, crate::sequencer::Sample::default());
-                        }
-                        m.samples[sample_idx] = sample;
-                    }
-                }
-                self.sync_module_to_audio();
+                self.core.import_wav_to_sample(sample_idx, sample);
             }
             Err(e) => {
                 eprintln!("Failed to import WAV: {}", e);
@@ -1437,21 +1398,7 @@ impl HtrkApp {
     }
 
     fn save_file(&mut self, path: &str) {
-        let module = match &self.core.module {
-            Some(m) => m,
-            None => return,
-        };
-        let data = formats::save_module(module);
-        match std::fs::write(path, &data) {
-            Ok(()) => {
-                self.core.file_path = Some(path.to_string());
-                self.core.module_dirty = false;
-                self.core.last_backup_time = std::time::Instant::now();
-            }
-            Err(e) => {
-                eprintln!("Failed to save file: {}", e);
-            }
-        }
+        self.core.save_file(path);
     }
 
     fn save_as_dialog(&mut self) {
