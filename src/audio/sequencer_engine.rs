@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::audio::effects::{EffectProcessor, EffectContext};
 use crate::audio::voice::{EnvelopeState, Voice};
 use crate::audio::filter::StateVariableFilter;
 use crate::sequencer::automation::AutomationTarget;
@@ -50,6 +51,7 @@ pub struct SequencerEngine {
     use_xm_model: bool,
     amiga_led_filter: bool,
     pub pending_send_fx_params: Vec<(usize, u32, f32)>,
+    processor: EffectProcessor,
 }
 
 fn quantize_to_semitone(freq: f64) -> f64 {
@@ -69,6 +71,8 @@ fn fastrand() -> f32 {
 
 impl SequencerEngine {
     pub fn new(output_sample_rate: f64) -> Self {
+        let default_module = Module::default();
+        let processor = EffectProcessor::from_module(&default_module);
         SequencerEngine {
             state: SequencerState::default(),
             voices: vec![Voice::default(); MAX_VOICES],
@@ -79,6 +83,7 @@ impl SequencerEngine {
             use_xm_model: false,
             amiga_led_filter: false,
             pending_send_fx_params: Vec::new(),
+            processor,
         }
     }
 
@@ -86,6 +91,7 @@ impl SequencerEngine {
         self.stop();
         self.use_xm_model = module.flags.xm_period_model;
         self.amiga_led_filter = module.format == ModuleFormat::MOD;
+        self.processor = EffectProcessor::from_module(&module);
         self.module = Some(module);
     }
 
