@@ -386,14 +386,7 @@ impl HtrkApp {
     }
 
     fn send_command(&mut self, cmd: AudioCommand) {
-        #[cfg(feature = "audio_debug")]
-        debug_log!("[CMD] {:?}", cmd);
-        if let Some(ref mut sender) = self.core.command_sender {
-            sender.send(cmd);
-        } else {
-            #[cfg(feature = "audio_debug")]
-            debug_log!("[CMD] Error: command_sender is None!");
-        }
+        self.core.send_command(cmd);
     }
 
     fn ensure_module_ownership(&mut self) {
@@ -405,14 +398,9 @@ impl HtrkApp {
     }
 
     fn sync_channel_fields(&mut self) {
-        let count = self.core.module.as_ref()
-            .map(|m| m.channel_panning.len())
-            .unwrap_or(DEFAULT_CHANNELS);
-        self.core.send_levels.resize(count, [0.0; NUM_SEND_BUSES]);
-        self.core.muted_channels.resize(count, false);
-        self.core.solo_channels.resize(count, false);
+        self.core.sync_channel_fields();
+        let count = self.core.num_channels();
         self.multichannel_channels.resize(count, false);
-        self.core.automation_targets.resize(count, None);
         if self.channel_names.len() < count {
             let old = self.channel_names.len();
             self.channel_names.resize_with(count, || String::new());

@@ -179,7 +179,7 @@ impl HtrkCore {
         &self.playback_state
     }
 
-    fn send_command(&mut self, cmd: AudioCommand) {
+    pub(crate) fn send_command(&mut self, cmd: AudioCommand) {
         #[cfg(feature = "audio_debug")]
         crate::debug_log!("[CMD] {:?}", cmd);
         if let Some(ref mut sender) = self.command_sender {
