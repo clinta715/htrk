@@ -1,4 +1,5 @@
 mod editing;
+mod automation;
 
 use std::sync::Arc;
 
@@ -6,6 +7,7 @@ use crate::audio::commands::AudioCommand;
 use crate::audio::engine::CommandSender;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::edit::UndoManager;
+use crate::sequencer::automation::AutomationTarget;
 use crate::sequencer::effect::{SendEffectType, NUM_SEND_BUSES};
 use crate::sequencer::module::{Module, DEFAULT_CHANNELS};
 use crate::sequencer::pattern::Cell;
@@ -32,6 +34,8 @@ pub struct HtrkCore {
     pub(crate) selected_order: usize,
     pub(crate) selected_sample: usize,
     pub(crate) selected_instrument: usize,
+
+    pub(crate) automation_targets: Vec<Option<AutomationTarget>>,
 
     pub(crate) command_sender: Option<CommandSender>,
     pub(crate) playback_state: Arc<AtomicPlaybackState>,
@@ -63,6 +67,8 @@ impl HtrkCore {
             selected_order: 0,
             selected_sample: 1,
             selected_instrument: 1,
+
+            automation_targets: vec![None; DEFAULT_CHANNELS],
 
             command_sender: None,
             playback_state,
@@ -218,6 +224,7 @@ impl HtrkCore {
         self.send_levels.resize(count, [0.0; NUM_SEND_BUSES]);
         self.muted_channels.resize(count, false);
         self.solo_channels.resize(count, false);
+        self.automation_targets.resize(count, None);
     }
 
     pub(crate) fn current_pattern(&self) -> Option<&crate::sequencer::Pattern> {

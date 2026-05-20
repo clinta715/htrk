@@ -428,4 +428,26 @@ impl HtrkCore {
         }
         self.sync_to_audio();
     }
+
+    pub fn execute_edit_command(&mut self, cmd: Box<dyn crate::edit::EditCommand>) {
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let _ = self.undo_manager.execute(cmd, arc_module);
+            }
+        }
+        self.sync_to_audio();
+    }
+
+    pub fn execute_edit_commands(&mut self, cmds: Vec<Box<dyn crate::edit::EditCommand>>) {
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                for cmd in cmds {
+                    let _ = self.undo_manager.execute(cmd, arc_module);
+                }
+            }
+        }
+        self.sync_to_audio();
+    }
 }

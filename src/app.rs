@@ -117,7 +117,6 @@ pub struct HtrkApp {
     last_visible_channels: usize,
     send_bus_effect_types: [SendEffectType; NUM_SEND_BUSES],
     send_bus_params: [[f32; 5]; NUM_SEND_BUSES],
-    automation_targets: Vec<Option<crate::sequencer::AutomationTarget>>,
     automation_dragging: Option<(usize, f32)>,
     automation_editor_state: crate::ui::automation_editor::AutomationEditorState,
 }
@@ -181,7 +180,6 @@ impl Default for HtrkApp {
                 [0.0, 0.0, 0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0, 0.0],
             ],
-            automation_targets: vec![None; crate::sequencer::module::DEFAULT_CHANNELS],
             automation_dragging: None,
             automation_editor_state: crate::ui::automation_editor::AutomationEditorState::default(),
         }
@@ -414,7 +412,7 @@ impl HtrkApp {
         self.core.muted_channels.resize(count, false);
         self.core.solo_channels.resize(count, false);
         self.multichannel_channels.resize(count, false);
-        self.automation_targets.resize(count, None);
+        self.core.automation_targets.resize(count, None);
         if self.channel_names.len() < count {
             let old = self.channel_names.len();
             self.channel_names.resize_with(count, || String::new());
@@ -909,7 +907,7 @@ impl HtrkApp {
                                     self.sync_module_to_audio();
                                 }
                             } else {
-                                let auto_target = self.automation_targets.get(self.core.cursor.channel).copied().flatten();
+                                let auto_target = self.core.automation_targets.get(self.core.cursor.channel).copied().flatten();
                                 if auto_target.is_some()
                                     && matches!(self.core.cursor.sub_column,
                                         SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow)
@@ -1155,7 +1153,7 @@ impl HtrkApp {
         }
 
         if self.core.cursor.sub_column == SubColumn::EffectType {
-            let auto_target = self.automation_targets.get(self.core.cursor.channel).copied().flatten();
+            let auto_target = self.core.automation_targets.get(self.core.cursor.channel).copied().flatten();
             if auto_target.is_some() {
                 if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
                     self.enter_automation_hex(self.core.cursor.channel, self.core.cursor.row, d as u8);
@@ -1193,7 +1191,7 @@ impl HtrkApp {
         if self.core.cursor.sub_column == SubColumn::EffectParamHigh
             || self.core.cursor.sub_column == SubColumn::EffectParamLow
         {
-            let auto_target = self.automation_targets.get(self.core.cursor.channel).copied().flatten();
+            let auto_target = self.core.automation_targets.get(self.core.cursor.channel).copied().flatten();
             if auto_target.is_some() {
                 if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
                     self.enter_automation_hex(self.core.cursor.channel, self.core.cursor.row, d as u8);
@@ -1363,127 +1361,15 @@ impl HtrkApp {
     }
 
     fn handle_automation_interaction(&mut self, interaction: crate::ui::pattern_grid::AutomationInteraction) {
-        self.ensure_module_ownership();
-        match interaction {
-            crate::ui::pattern_grid::AutomationInteraction::PointCreated { channel, order, row, value } => {
-                if let Some(ref mut module) = self.core.module {
-                    if let Some(arc_module) = Arc::get_mut(module) {
-                        let target = match self.automation_targets.get(channel).copied().flatten() {
-                            Some(t) => t,
-                            None => return,
-                        };
-                        let track = arc_module.automation_tracks.iter_mut()
-                            .find(|tr| tr.channel == Some(channel) && tr.target == target);
-                        if let Some(track) = track {
-                            track.insert_point(crate::sequencer::AutomationPoint {
-                                order,
-                                row,
-                                value,
-                                interp_to_next: track.default_interp,
-                            });
-                        }
-                    }
-                }
-                self.sync_module_to_audio();
-            }
-            crate::ui::pattern_grid::AutomationInteraction::PointMoved { channel, order, row, value } => {
-                if let Some(ref mut module) = self.core.module {
-                    if let Some(arc_module) = Arc::get_mut(module) {
-                        let target = match self.automation_targets.get(channel).copied().flatten() {
-                            Some(t) => t,
-                            None => return,
-                        };
-                        let track = arc_module.automation_tracks.iter_mut()
-                            .find(|tr| tr.channel == Some(channel) && tr.target == target);
-                        if let Some(track) = track {
-                            track.insert_point(crate::sequencer::AutomationPoint {
-                                order,
-                                row,
-                                value,
-                                interp_to_next: track.default_interp,
-                            });
-                        }
-                    }
-                }
-                self.sync_module_to_audio();
-            }
-            crate::ui::pattern_grid::AutomationInteraction::FreehandDraw { channel, points } => {
-                if let Some(ref mut module) = self.core.module {
-                    if let Some(arc_module) = Arc::get_mut(module) {
-                        let target = match self.automation_targets.get(channel).copied().flatten() {
-                            Some(t) => t,
-                            None => return,
-                        };
-                        let track = arc_module.automation_tracks.iter_mut()
-                            .find(|tr| tr.channel == Some(channel) && tr.target == target);
-                        if let Some(track) = track {
-                            for (order, row, value) in points {
-                                track.insert_point(crate::sequencer::AutomationPoint {
-                                    order,
-                                    row,
-                                    value,
-                                    interp_to_next: InterpolationMode::Hold,
-                                });
-                            }
-                        }
-                    }
-                }
-                self.sync_module_to_audio();
-            }
-        }
+        self.core.handle_automation_interaction(interaction);
     }
 
     fn enter_automation_hex(&mut self, channel: usize, row: usize, digit: u8) {
-        let selected_order = self.core.selected_order as u16;
-        let row_u16 = row as u16;
-        self.ensure_module_ownership();
-        if let Some(ref mut module) = self.core.module {
-            if let Some(arc_module) = Arc::get_mut(module) {
-                let target = match self.automation_targets.get(channel).copied().flatten() {
-                    Some(t) => t,
-                    None => return,
-                };
-                let track = arc_module.automation_tracks.iter_mut()
-                    .find(|tr| tr.channel == Some(channel) && tr.target == target);
-                if let Some(track) = track {
-                    let existing = track.points.iter().find(|p| p.order == selected_order && p.row == row_u16);
-                    let value = match existing {
-                        Some(p) => {
-                            let old_byte = (p.value * 255.0).round() as u8;
-                            (old_byte & 0xF0) | digit
-                        },
-                        None => digit,
-                    };
-                    track.insert_point(crate::sequencer::AutomationPoint {
-                        order: selected_order,
-                        row: row_u16,
-                        value: value as f32 / 255.0,
-                        interp_to_next: track.default_interp,
-                    });
-                }
-            }
-        }
-        self.sync_module_to_audio();
+        self.core.enter_automation_hex(channel, row, digit);
     }
 
     fn delete_automation_point(&mut self, channel: usize, row: usize) {
-        let selected_order = self.core.selected_order as u16;
-        let row_u16 = row as u16;
-        self.ensure_module_ownership();
-        if let Some(ref mut module) = self.core.module {
-            if let Some(arc_module) = Arc::get_mut(module) {
-                let target = match self.automation_targets.get(channel).copied().flatten() {
-                    Some(t) => t,
-                    None => return,
-                };
-                let track = arc_module.automation_tracks.iter_mut()
-                    .find(|tr| tr.channel == Some(channel) && tr.target == target);
-                if let Some(track) = track {
-                    track.remove_point_at(selected_order, row_u16);
-                }
-            }
-        }
-        self.sync_module_to_audio();
+        self.core.delete_automation_point(channel, row);
     }
 
     fn skip_to_prev_pattern(&mut self) {
@@ -1984,15 +1870,7 @@ impl HtrkApp {
                     property: SampleProperty::LoopType(crate::sequencer::sample::LoopType::Forward),
                     old_property: SampleProperty::LoopType(sample.loop_type),
                 });
-                self.ensure_module_ownership();
-                if let Some(ref mut module_arc) = self.core.module {
-                    if let Some(m) = Arc::get_mut(module_arc) {
-                        let _ = self.core.undo_manager.execute(start_cmd, m);
-                        let _ = self.core.undo_manager.execute(end_cmd, m);
-                        let _ = self.core.undo_manager.execute(type_cmd, m);
-                    }
-                }
-                self.sync_module_to_audio();
+                self.core.execute_edit_commands(vec![start_cmd, end_cmd, type_cmd]);
                 return;
             }
             SampleEditEvent::ExportSample(idx) => {
@@ -2019,13 +1897,7 @@ impl HtrkApp {
             }
         };
 
-        self.ensure_module_ownership();
-        if let Some(ref mut module_arc) = self.core.module {
-            if let Some(m) = Arc::get_mut(module_arc) {
-                let _ = self.core.undo_manager.execute(cmd, m);
-            }
-        }
-        self.sync_module_to_audio();
+        self.core.execute_edit_command(cmd);
     }
 
     fn handle_instrument_edit(&mut self, event: InstrumentEditEvent) {
@@ -2245,13 +2117,7 @@ impl HtrkApp {
             }
         };
 
-        self.ensure_module_ownership();
-        if let Some(ref mut module_arc) = self.core.module {
-            if let Some(m) = Arc::get_mut(module_arc) {
-                let _ = self.core.undo_manager.execute(cmd, m);
-            }
-        }
-        self.sync_module_to_audio();
+        self.core.execute_edit_command(cmd);
     }
 
     fn save_instrument_dialog(&mut self) {
@@ -2860,7 +2726,7 @@ impl eframe::App for HtrkApp {
                         &self.theme,
                         &self.core.playback_state,
                         metrics,
-                        &self.automation_targets,
+                        &self.core.automation_targets,
                     );
 
                     if let Some(ch) = ch_resp.toggle_mute {
@@ -2893,8 +2759,8 @@ impl eframe::App for HtrkApp {
                         }
                     }
                     if let Some((ch, target)) = ch_resp.automation_target_changed {
-                        if ch < self.automation_targets.len() {
-                            self.automation_targets[ch] = target;
+                        if ch < self.core.automation_targets.len() {
+                            self.core.automation_targets[ch] = target;
                             if let Some(ref t) = target {
                                 self.ensure_module_ownership();
                                 if let Some(ref mut module) = self.core.module {
@@ -2923,7 +2789,7 @@ impl eframe::App for HtrkApp {
                             let grid_playback_row = if playback_pattern == Some(pat_idx) { playback_row } else { None };
                             if let Some(pattern) = module.patterns.get(pat_idx) {
                                 let auto_overlays: Vec<Option<crate::ui::pattern_grid::AutomationOverlayInfo>> = (0..num_channels).map(|ch| {
-                                    self.automation_targets.get(ch).and_then(|t| t.as_ref()).map(|target| {
+                                    self.core.automation_targets.get(ch).and_then(|t| t.as_ref()).map(|target| {
                                         let track = module.automation_tracks.iter()
                                             .find(|tr| tr.channel == Some(ch) && tr.target == *target)
                                             .map(|tr| std::sync::Arc::new(tr.clone()));
