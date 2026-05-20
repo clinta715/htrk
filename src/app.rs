@@ -71,8 +71,7 @@ pub enum AppView {
 }
 
 pub struct HtrkApp {
-    command_sender: Option<CommandSender>,
-    playback_state: Arc<AtomicPlaybackState>,
+    pub(crate) core: crate::core::HtrkCore,
     stream: Option<cpal::Stream>,
 
     output_device_names: Vec<String>,
@@ -82,17 +81,10 @@ pub struct HtrkApp {
     pending_device_switch: Option<String>,
     pending_reinit: bool,
 
-    module: Option<Arc<Module>>,
-    loaded_module_name: String,
-    file_path: Option<String>,
-
     file_browser: FileBrowser,
 
     current_view: AppView,
 
-    cursor: CursorPosition,
-    selection: Option<Selection>,
-    selection_anchor: Option<CursorPosition>,
     scroll_row: usize,
     scroll_channel: usize,
 
@@ -100,24 +92,13 @@ pub struct HtrkApp {
     edit_mode: bool,
     follow_playback: bool,
     cursor_skip: u8,
-    last_entered_cell: Option<Cell>,
     edit_mask_instrument: bool,
     edit_mask_volume: bool,
     multichannel_enabled: bool,
     multichannel_channels: Vec<bool>,
-    selected_order: usize,
-    selected_sample: usize,
-    selected_instrument: usize,
 
-    muted_channels: Vec<bool>,
-    solo_channels: Vec<bool>,
     channel_names: Vec<String>,
     channel_rename_state: crate::ui::channel_headers::ChannelRenameState,
-
-    undo_manager: UndoManager,
-
-    clipboard: Option<Vec<Vec<Cell>>>,
-    clipboard_width: usize,
 
     theme: TrackerTheme,
     theme_preset: crate::ui::theme::ThemePreset,
@@ -126,8 +107,6 @@ pub struct HtrkApp {
     settings_state: crate::ui::settings_window::SettingsState,
     wav_export_state: crate::ui::wav_export_window::WavExportState,
     sample_export_dialog: Option<crate::ui::sample_export_dialog::SampleExportDialog>,
-    last_backup_time: std::time::Instant,
-    module_dirty: bool,
     audio_init_failed: bool,
     sample_selection: Option<(usize, usize)>,
     sample_clipboard: Option<Arc<Vec<f32>>>,
@@ -136,7 +115,6 @@ pub struct HtrkApp {
     col_vis: ColumnVisibility,
     last_visible_rows: usize,
     last_visible_channels: usize,
-    send_levels: Vec<[f32; 4]>,
     send_bus_effect_types: [SendEffectType; NUM_SEND_BUSES],
     send_bus_params: [[f32; 5]; NUM_SEND_BUSES],
     automation_targets: Vec<Option<crate::sequencer::AutomationTarget>>,
@@ -150,9 +128,9 @@ impl Default for HtrkApp {
         let mut file_browser = FileBrowser::default();
         file_browser.restore_last_dirs(&config);
         file_browser.restore_favorites(&config.favorites);
+        let playback_state = Arc::new(AtomicPlaybackState::default());
         HtrkApp {
-            command_sender: None,
-            playback_state: Arc::new(AtomicPlaybackState::default()),
+            core: crate::core::HtrkCore::new(playback_state.clone()),
             stream: None,
             output_device_names: Vec::new(),
             selected_device_name: None,
@@ -160,39 +138,20 @@ impl Default for HtrkApp {
             current_sample_format: String::new(),
             pending_device_switch: None,
             pending_reinit: false,
-            module: None,
-            loaded_module_name: String::new(),
-            file_path: None,
             file_browser,
             current_view: AppView::Pattern,
-            cursor: CursorPosition {
-                row: 0,
-                channel: 0,
-                sub_column: SubColumn::Note,
-            },
-            selection: None,
-            selection_anchor: None,
             scroll_row: 0,
             scroll_channel: 0,
             current_octave: 4,
             edit_mode: true,
             follow_playback: config.follow_playback_default,
             cursor_skip: 1,
-            last_entered_cell: None,
             edit_mask_instrument: true,
             edit_mask_volume: true,
             multichannel_enabled: false,
             multichannel_channels: vec![false; DEFAULT_CHANNELS],
-            selected_order: 0,
-            selected_sample: 1,
-            selected_instrument: 1,
-            muted_channels: vec![false; DEFAULT_CHANNELS],
-            solo_channels: vec![false; DEFAULT_CHANNELS],
             channel_names: (0..DEFAULT_CHANNELS).map(|i| format!("Ch{}", i + 1)).collect(),
             channel_rename_state: crate::ui::channel_headers::ChannelRenameState::default(),
-            undo_manager: UndoManager::default(),
-            clipboard: None,
-            clipboard_width: 0,
             theme: TrackerTheme::from_preset(
                 ThemePreset::from_name(&config.theme_preset).unwrap_or(ThemePreset::DarkModern)
             ),
@@ -202,8 +161,6 @@ impl Default for HtrkApp {
             settings_state: crate::ui::settings_window::SettingsState::from_config(&config),
             wav_export_state: crate::ui::wav_export_window::WavExportState::new(44100),
             sample_export_dialog: None,
-            last_backup_time: std::time::Instant::now(),
-            module_dirty: false,
             audio_init_failed: false,
             sample_selection: None,
             sample_clipboard: None,
@@ -212,7 +169,6 @@ impl Default for HtrkApp {
             config,
             last_visible_rows: VISIBLE_ROWS,
             last_visible_channels: 16,
-            send_levels: vec![[0.0f32; NUM_SEND_BUSES]; DEFAULT_CHANNELS],
             send_bus_effect_types: [
                 SendEffectType::Delay,
                 SendEffectType::Reverb,
@@ -340,7 +296,7 @@ impl HtrkApp {
         let mut stream_result = Err(cpal::BuildStreamError::DeviceNotAvailable);
         let mut sender = None;
         for trial_config in &configs_to_try {
-            let state = self.playback_state.clone();
+            let state = self.core.playback_state.clone();
             let (mut engine, trial_sender) = create_engine_and_sender(state, trial_config.sample_rate, trial_config.channels);
 
             let trial_result = match sample_format {
@@ -410,8 +366,8 @@ impl HtrkApp {
                 self.current_sample_rate = actual_sample_rate;
                 self.current_sample_format = format!("{:?}", sample_format);
                 self.stream = Some(stream);
-                self.command_sender = sender;
-                if let Some(ref module) = self.module {
+                self.core.command_sender = sender;
+                if let Some(ref module) = self.core.module {
                     self.send_command(AudioCommand::LoadModule(module.clone()));
                 }
                 // Apply persisted audio settings to the new engine
@@ -426,7 +382,7 @@ impl HtrkApp {
 
     fn switch_output_device(&mut self, device_name: String) {
         self.stream = None;
-        self.command_sender = None;
+        self.core.command_sender = None;
         self.selected_device_name = Some(device_name);
         self.init_audio();
     }
@@ -434,7 +390,7 @@ impl HtrkApp {
     fn send_command(&mut self, cmd: AudioCommand) {
         #[cfg(feature = "audio_debug")]
         debug_log!("[CMD] {:?}", cmd);
-        if let Some(ref mut sender) = self.command_sender {
+        if let Some(ref mut sender) = self.core.command_sender {
             sender.send(cmd);
         } else {
             #[cfg(feature = "audio_debug")]
@@ -443,31 +399,31 @@ impl HtrkApp {
     }
 
     fn ensure_module_ownership(&mut self) {
-        let new_module = match &self.module {
+        let new_module = match &self.core.module {
             Some(arc) if Arc::strong_count(arc) > 1 => {
                 Some(Arc::new((**arc).clone()))
             }
             _ => None,
         };
         if let Some(new_arc) = new_module {
-            self.module = Some(new_arc);
+            self.core.module = Some(new_arc);
         }
     }
 
     fn sync_module_to_audio(&mut self) {
-        if let Some(ref module) = self.module {
+        if let Some(ref module) = self.core.module {
             self.send_command(AudioCommand::LoadModule(module.clone()));
-            self.module_dirty = true;
+            self.core.module_dirty = true;
         }
     }
 
     fn sync_channel_fields(&mut self) {
-        let count = self.module.as_ref()
+        let count = self.core.module.as_ref()
             .map(|m| m.channel_panning.len())
             .unwrap_or(DEFAULT_CHANNELS);
-        self.send_levels.resize(count, [0.0; NUM_SEND_BUSES]);
-        self.muted_channels.resize(count, false);
-        self.solo_channels.resize(count, false);
+        self.core.send_levels.resize(count, [0.0; NUM_SEND_BUSES]);
+        self.core.muted_channels.resize(count, false);
+        self.core.solo_channels.resize(count, false);
         self.multichannel_channels.resize(count, false);
         self.automation_targets.resize(count, None);
         if self.channel_names.len() < count {
@@ -537,21 +493,21 @@ impl HtrkApp {
                     module.instruments.resize(17, crate::sequencer::Instrument::default());
                 }
 
-                self.loaded_module_name = module.name.clone();
-                self.file_path = Some(path.to_string());
+                self.core.loaded_module_name = module.name.clone();
+                self.core.file_path = Some(path.to_string());
                 let module = Arc::new(module);
-                self.module = Some(module.clone());
+                self.core.module = Some(module.clone());
                 self.send_command(AudioCommand::Stop);
                 self.send_command(AudioCommand::LoadModule(module));
-                self.cursor = CursorPosition::default();
-                self.selection = None;
+                self.core.cursor = CursorPosition::default();
+                self.core.selection = None;
                 self.scroll_row = 0;
                 self.scroll_channel = 0;
-                self.selected_order = 0;
-                self.selected_sample = 1;
-                self.selected_instrument = 1;
+                self.core.selected_order = 0;
+                self.core.selected_sample = 1;
+                self.core.selected_instrument = 1;
                 self.sync_channel_fields();
-                self.undo_manager.clear();
+                self.core.undo_manager.clear();
             }
             Err(e) => {
                 eprintln!("Failed to load module: {}", e);
@@ -565,39 +521,39 @@ impl HtrkApp {
         module.order_list = vec![0];
         module.patterns.push(crate::sequencer::Pattern::new(64));
 
-        self.loaded_module_name = module.name.clone();
-        self.file_path = None;
+        self.core.loaded_module_name = module.name.clone();
+        self.core.file_path = None;
         let module = Arc::new(module);
-        self.module = Some(module.clone());
+        self.core.module = Some(module.clone());
         self.send_command(AudioCommand::Stop);
         self.send_command(AudioCommand::LoadModule(module));
-        self.cursor = CursorPosition::default();
-        self.selection = None;
+        self.core.cursor = CursorPosition::default();
+        self.core.selection = None;
         self.scroll_row = 0;
         self.scroll_channel = 0;
-        self.selected_order = 0;
-        self.selected_sample = 1;
-        self.selected_instrument = 1;
+        self.core.selected_order = 0;
+        self.core.selected_sample = 1;
+        self.core.selected_instrument = 1;
         self.sync_channel_fields();
-        self.undo_manager.clear();
+        self.core.undo_manager.clear();
     }
 
     fn current_pattern(&self) -> Option<&crate::sequencer::Pattern> {
-        let module = self.module.as_ref()?;
-        let order = *module.order_list.get(self.selected_order)?;
+        let module = self.core.module.as_ref()?;
+        let order = *module.order_list.get(self.core.selected_order)?;
         module.patterns.get(order as usize)
     }
 
     #[allow(dead_code)]
     fn current_pattern_mut(&mut self) -> Option<&mut crate::sequencer::Pattern> {
         self.ensure_module_ownership();
-        let module = Arc::get_mut(self.module.as_mut()?)?;
-        let order = *module.order_list.get(self.selected_order)?;
+        let module = Arc::get_mut(self.core.module.as_mut()?)?;
+        let order = *module.order_list.get(self.core.selected_order)?;
         module.patterns.get_mut(order as usize)
     }
 
     fn num_channels(&self) -> usize {
-        self.module.as_ref()
+        self.core.module.as_ref()
             .map(|m| m.channel_panning.len())
             .unwrap_or(DEFAULT_CHANNELS)
     }
@@ -609,8 +565,8 @@ impl HtrkApp {
 
     fn get_cell_at_cursor(&self) -> Cell {
         if let Some(pattern) = self.current_pattern() {
-            if self.cursor.row < pattern.num_rows && self.cursor.channel < MAX_CHANNELS {
-                *pattern.cell(self.cursor.row, self.cursor.channel)
+            if self.core.cursor.row < pattern.num_rows && self.core.cursor.channel < MAX_CHANNELS {
+                *pattern.cell(self.core.cursor.row, self.core.cursor.channel)
             } else {
                 Cell::default()
             }
@@ -620,7 +576,7 @@ impl HtrkApp {
     }
 
     fn set_cell_at_cursor(&mut self, new_cell: Cell) {
-        let cursor = self.cursor;
+        let cursor = self.core.cursor;
         let channels: Vec<usize> = if self.multichannel_enabled {
             self.multichannel_channels.iter().enumerate()
                 .filter(|(_, &active)| active)
@@ -631,15 +587,15 @@ impl HtrkApp {
         };
 
         let old_cells: Vec<Cell> = channels.iter().map(|&ch| {
-            let saved = self.cursor;
-            self.cursor.channel = ch;
+            let saved = self.core.cursor;
+            self.core.cursor.channel = ch;
             let cell = self.get_cell_at_cursor();
-            self.cursor = saved;
+            self.core.cursor = saved;
             cell
         }).collect();
 
         self.ensure_module_ownership();
-        if let Some(ref mut module) = self.module {
+        if let Some(ref mut module) = self.core.module {
             if let Some(arc_module) = Arc::get_mut(module) {
                 for (idx, &ch) in channels.iter().enumerate() {
                     let old_cell = old_cells[idx];
@@ -647,13 +603,13 @@ impl HtrkApp {
                         continue;
                     }
                     let cmd = Box::new(SetCellCommand {
-                        order: self.selected_order,
+                        order: self.core.selected_order,
                         row: cursor.row,
                         channel: ch,
                         old_cell,
                         new_cell: new_cell.clone(),
                     });
-                    let _ = self.undo_manager.execute(cmd, arc_module);
+                    let _ = self.core.undo_manager.execute(cmd, arc_module);
                 }
             }
         }
@@ -663,29 +619,29 @@ impl HtrkApp {
     fn advance_cursor_down(&mut self, step: usize) {
         if let Some(pattern) = self.current_pattern() {
             let max_row = pattern.num_rows.max(1);
-            self.cursor.row = (self.cursor.row + step).min(max_row - 1);
+            self.core.cursor.row = (self.core.cursor.row + step).min(max_row - 1);
         }
         self.ensure_cursor_visible();
     }
 
     fn advance_cursor_up(&mut self, step: usize) {
-        self.cursor.row = self.cursor.row.saturating_sub(step);
+        self.core.cursor.row = self.core.cursor.row.saturating_sub(step);
         self.ensure_cursor_visible();
     }
 
     fn ensure_cursor_visible(&mut self) {
-        if self.cursor.row < self.scroll_row {
-            self.scroll_row = self.cursor.row;
+        if self.core.cursor.row < self.scroll_row {
+            self.scroll_row = self.core.cursor.row;
         }
-        if self.cursor.row >= self.scroll_row + self.last_visible_rows {
-            self.scroll_row = self.cursor.row - self.last_visible_rows + 1;
+        if self.core.cursor.row >= self.scroll_row + self.last_visible_rows {
+            self.scroll_row = self.core.cursor.row - self.last_visible_rows + 1;
         }
 
-        if self.cursor.channel < self.scroll_channel {
-            self.scroll_channel = self.cursor.channel;
+        if self.core.cursor.channel < self.scroll_channel {
+            self.scroll_channel = self.core.cursor.channel;
         }
-        if self.cursor.channel >= self.scroll_channel + self.last_visible_channels {
-            self.scroll_channel = self.cursor.channel - self.last_visible_channels + 1;
+        if self.core.cursor.channel >= self.scroll_channel + self.last_visible_channels {
+            self.scroll_channel = self.core.cursor.channel - self.last_visible_channels + 1;
         }
     }
 
@@ -704,9 +660,9 @@ impl HtrkApp {
                         match key {
                             egui::Key::Z if self.edit_mode => {
                                 self.ensure_module_ownership();
-                                if let Some(ref mut module) = self.module {
+                                if let Some(ref mut module) = self.core.module {
                                     if let Some(arc_module) = Arc::get_mut(module) {
-                                        let _ = self.undo_manager.undo(arc_module);
+                                        let _ = self.core.undo_manager.undo(arc_module);
                                     }
                                 }
                                 self.sync_module_to_audio();
@@ -714,9 +670,9 @@ impl HtrkApp {
                             }
                             egui::Key::Y if self.edit_mode => {
                                 self.ensure_module_ownership();
-                                if let Some(ref mut module) = self.module {
+                                if let Some(ref mut module) = self.core.module {
                                     if let Some(arc_module) = Arc::get_mut(module) {
-                                        let _ = self.undo_manager.redo(arc_module);
+                                        let _ = self.core.undo_manager.redo(arc_module);
                                     }
                                 }
                                 self.sync_module_to_audio();
@@ -848,7 +804,7 @@ impl HtrkApp {
                     });
                     if let Some(mode) = mode {
                         self.ensure_module_ownership();
-                        if let Some(ref mut module) = self.module {
+                        if let Some(ref mut module) = self.core.module {
                             if let Some(arc_module) = Arc::get_mut(module) {
                                 if let Some(t) = arc_module.automation_tracks.iter_mut().find(|t| t.id == tid) {
                                     t.default_interp = mode;
@@ -881,7 +837,7 @@ impl HtrkApp {
                             } else if modifiers.alt && self.edit_mode {
                                 self.transpose_selection(-1);
                             } else {
-                                self.selection = None;
+                                self.core.selection = None;
                                 self.advance_cursor_down(1);
                             }
                         }
@@ -895,95 +851,95 @@ impl HtrkApp {
                             } else if modifiers.alt && self.edit_mode {
                                 self.transpose_selection(1);
                             } else {
-                                self.selection = None;
+                                self.core.selection = None;
                                 self.advance_cursor_up(1);
                             }
                         }
                         egui::Key::ArrowRight => {
                             if modifiers.alt {
-                                self.selection = None;
+                                self.core.selection = None;
                                 let num_ch = self.num_channels();
-                                if self.cursor.channel < num_ch - 1 {
-                                    self.cursor.channel += 1;
-                                    self.cursor.sub_column = SubColumn::Note;
+                                if self.core.cursor.channel < num_ch - 1 {
+                                    self.core.cursor.channel += 1;
+                                    self.core.cursor.sub_column = SubColumn::Note;
                                     self.ensure_cursor_visible();
                                 }
                             } else if modifiers.shift {
                                 self.extend_selection_right();
                             } else {
-                                self.selection = None;
+                                self.core.selection = None;
                                 self.move_cursor_right();
                             }
                         }
                         egui::Key::ArrowLeft => {
                             if modifiers.alt {
-                                self.selection = None;
-                                if self.cursor.channel > 0 {
-                                    self.cursor.channel -= 1;
-                                    self.cursor.sub_column = SubColumn::Note;
+                                self.core.selection = None;
+                                if self.core.cursor.channel > 0 {
+                                    self.core.cursor.channel -= 1;
+                                    self.core.cursor.sub_column = SubColumn::Note;
                                     self.ensure_cursor_visible();
                                 }
                             } else if modifiers.shift {
                                 self.extend_selection_left();
                             } else {
-                                self.selection = None;
+                                self.core.selection = None;
                                 self.move_cursor_left();
                             }
                         }
                         egui::Key::Tab => {
-                            self.selection = None;
+                            self.core.selection = None;
                             if modifiers.shift {
-                                self.cursor.channel = self.cursor.channel.saturating_sub(1);
+                                self.core.cursor.channel = self.core.cursor.channel.saturating_sub(1);
                             } else {
-                                self.cursor.channel += 1;
-                                self.cursor.channel = self.cursor.channel.min(self.num_channels_checked() - 1);
+                                self.core.cursor.channel += 1;
+                                self.core.cursor.channel = self.core.cursor.channel.min(self.num_channels_checked() - 1);
                             }
                             self.ensure_cursor_visible();
                         }
                         egui::Key::M if modifiers.alt => {
-                            let ch = self.cursor.channel;
-                            if ch < self.muted_channels.len() {
-                                self.muted_channels[ch] = !self.muted_channels[ch];
+                            let ch = self.core.cursor.channel;
+                            if ch < self.core.muted_channels.len() {
+                                self.core.muted_channels[ch] = !self.core.muted_channels[ch];
                                 self.send_command(AudioCommand::SetChannelMuted {
                                     channel: ch,
-                                    muted: self.muted_channels[ch],
+                                    muted: self.core.muted_channels[ch],
                                 });
                             }
                         }
                         egui::Key::S if modifiers.alt => {
-                            let ch = self.cursor.channel;
-                            if ch < self.solo_channels.len() {
-                                self.solo_channels[ch] = !self.solo_channels[ch];
+                            let ch = self.core.cursor.channel;
+                            if ch < self.core.solo_channels.len() {
+                                self.core.solo_channels[ch] = !self.core.solo_channels[ch];
                                 self.send_command(AudioCommand::SetChannelSolo {
                                     channel: ch,
-                                    solo: self.solo_channels[ch],
+                                    solo: self.core.solo_channels[ch],
                                 });
                             }
                         }
                         egui::Key::N if modifiers.alt => {
-                            let ch = self.cursor.channel;
+                            let ch = self.core.cursor.channel;
                             if ch < self.multichannel_channels.len() {
                                 self.multichannel_channels[ch] = !self.multichannel_channels[ch];
                                 self.multichannel_enabled = self.multichannel_channels.iter().any(|&v| v);
                             }
                         }
                         egui::Key::PageUp => {
-                            self.selection = None;
+                            self.core.selection = None;
                             self.advance_cursor_up(16);
                         }
                         egui::Key::PageDown => {
-                            self.selection = None;
+                            self.core.selection = None;
                             self.advance_cursor_down(16);
                         }
                         egui::Key::Home => {
-                            self.selection = None;
-                            self.cursor.row = 0;
+                            self.core.selection = None;
+                            self.core.cursor.row = 0;
                             self.ensure_cursor_visible();
                         }
                         egui::Key::End => {
-                            self.selection = None;
+                            self.core.selection = None;
                             if let Some(pattern) = self.current_pattern() {
-                                self.cursor.row = pattern.num_rows - 1;
+                                self.core.cursor.row = pattern.num_rows - 1;
                                 self.ensure_cursor_visible();
                             }
                         }
@@ -992,18 +948,18 @@ impl HtrkApp {
                         }
                         egui::Key::Delete if self.edit_mode => {
                             if modifiers.alt {
-                                let selected_order = self.selected_order;
-                                let row = self.cursor.row;
+                                let selected_order = self.core.selected_order;
+                                let row = self.core.cursor.row;
                                 let can_delete = self.current_pattern().map_or(false, |p| p.num_rows > 1);
                                 if can_delete {
                                     let deleted_data: Vec<Cell> = self.current_pattern()
                                         .map(|p| p.data[row].to_vec())
                                         .unwrap_or_default();
-                                    let pat_idx = self.module.as_ref()
+                                    let pat_idx = self.core.module.as_ref()
                                         .and_then(|m| m.order_list.get(selected_order).copied())
                                         .unwrap_or(0) as usize;
                                     self.ensure_module_ownership();
-                                    if let Some(ref mut module) = self.module {
+                                    if let Some(ref mut module) = self.core.module {
                                         if let Some(arc_module) = Arc::get_mut(module) {
                                             let cmd = Box::new(crate::edit::DeleteRowCommand {
                                                 pattern_index: pat_idx,
@@ -1011,18 +967,18 @@ impl HtrkApp {
                                                 _channel: None,
                                                 deleted_data,
                                             });
-                                            let _ = self.undo_manager.execute(cmd, arc_module);
+                                            let _ = self.core.undo_manager.execute(cmd, arc_module);
                                         }
                                     }
                                     self.sync_module_to_audio();
                                 }
                             } else {
-                                let auto_target = self.automation_targets.get(self.cursor.channel).copied().flatten();
+                                let auto_target = self.automation_targets.get(self.core.cursor.channel).copied().flatten();
                                 if auto_target.is_some()
-                                    && matches!(self.cursor.sub_column,
+                                    && matches!(self.core.cursor.sub_column,
                                         SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow)
                                 {
-                                    self.delete_automation_point(self.cursor.channel, self.cursor.row);
+                                    self.delete_automation_point(self.core.cursor.channel, self.core.cursor.row);
                                     self.advance_cursor_down(1);
                                 } else {
                                     self.clear_cell_at_cursor();
@@ -1031,10 +987,10 @@ impl HtrkApp {
                             }
                         }
                         egui::Key::Insert if self.edit_mode => {
-                            let selected_order = self.selected_order;
-                            let row = self.cursor.row;
+                            let selected_order = self.core.selected_order;
+                            let row = self.core.cursor.row;
                             self.ensure_module_ownership();
-                            if let Some(ref mut module) = self.module {
+                            if let Some(ref mut module) = self.core.module {
                                 let pat_idx = *module.order_list.get(selected_order).unwrap_or(&0) as usize;
                                 if let Some(arc_module) = Arc::get_mut(module) {
                                     let cmd = Box::new(InsertRowCommand {
@@ -1042,16 +998,16 @@ impl HtrkApp {
                                         row,
                                         _channel: None,
                                     });
-                                    let _ = self.undo_manager.execute(cmd, arc_module);
+                                    let _ = self.core.undo_manager.execute(cmd, arc_module);
                                 }
                             }
                             self.sync_module_to_audio();
                         }
                         egui::Key::Space => {
-                            if self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
+                            if self.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
                                 self.send_command(AudioCommand::Stop);
                             } else if self.edit_mode {
-                                if let Some(last_cell) = self.last_entered_cell.clone() {
+                                if let Some(last_cell) = self.core.last_entered_cell.clone() {
                                     self.set_cell_at_cursor(last_cell);
                                     self.advance_cursor_down(self.cursor_skip as usize);
                                 }
@@ -1076,8 +1032,8 @@ impl HtrkApp {
                             self.send_command(AudioCommand::Stop);
                         }
                         egui::Key::F9 => {
-                            let order = self.playback_state.current_order.load(std::sync::atomic::Ordering::Relaxed);
-                            let row = self.playback_state.current_row.load(std::sync::atomic::Ordering::Relaxed);
+                            let order = self.core.playback_state.current_order.load(std::sync::atomic::Ordering::Relaxed);
+                            let row = self.core.playback_state.current_row.load(std::sync::atomic::Ordering::Relaxed);
                             self.send_command(AudioCommand::PlayFrom { order, row });
                         }
                         egui::Key::F10 => {
@@ -1090,7 +1046,7 @@ impl HtrkApp {
                             }
                         }
                         egui::Key::Escape => {
-                            self.selection = None;
+                            self.core.selection = None;
                         }
                         egui::Key::OpenBracket => {
                             self.skip_to_prev_pattern();
@@ -1117,34 +1073,34 @@ impl HtrkApp {
                         egui::Key::C if modifiers.alt && self.edit_mode => { self.copy_selection(); }
                         egui::Key::P if modifiers.alt && self.edit_mode => { self.paste_at_cursor(); }
                         egui::Key::Z if modifiers.alt && self.edit_mode => {
-                            if self.selection.is_some() {
+                            if self.core.selection.is_some() {
                                 self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::Reverse);
                             }
                         }
                         egui::Key::F if modifiers.alt && self.edit_mode => {
-                            if self.selection.is_some() {
+                            if self.core.selection.is_some() {
                                 self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::FillInstrument);
                             }
                         }
                         egui::Key::I if modifiers.alt && self.edit_mode => {
-                            if self.selection.is_some() {
+                            if self.core.selection.is_some() {
                                 self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::InterpolateVolume);
                             }
                         }
                         egui::Key::K if modifiers.alt && self.edit_mode => {
-                            if self.selection.is_some() {
+                            if self.core.selection.is_some() {
                                 self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::InterpolateEffect);
                             }
                         }
                         egui::Key::R if modifiers.alt && self.edit_mode => {
-                            if self.selection.is_some() {
+                            if self.core.selection.is_some() {
                                 self.handle_context_menu_action(crate::ui::pattern_grid::ContextMenuAction::Randomize);
                             }
                         }
                         _ => {}
                     },
                     egui::Event::Text(text) => {
-                        if self.module.is_none() {
+                        if self.core.module.is_none() {
                             return;
                         }
                         let ch = text.chars().next().unwrap_or('\0');
@@ -1158,7 +1114,7 @@ impl HtrkApp {
 
     fn preview_note(&mut self, note_key: u8) {
         let vol = 0.75;
-        let sample_idx = self.selected_sample;
+        let sample_idx = self.core.selected_sample;
         self.send_command(crate::audio::commands::AudioCommand::TriggerPreviewNote {
             sample_index: sample_idx,
             note_key,
@@ -1172,7 +1128,7 @@ impl HtrkApp {
             return;
         }
 
-        if self.cursor.sub_column.accepts_note() {
+        if self.core.cursor.sub_column.accepts_note() {
             for (key, tone) in NOTE_KEYS_LOWER.iter() {
                 let key_char = key.name();
                 if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
@@ -1183,7 +1139,7 @@ impl HtrkApp {
                         let mut new_cell = self.get_cell_at_cursor();
                         new_cell.note = note;
                         self.set_cell_at_cursor(new_cell);
-                        self.last_entered_cell = Some(new_cell);
+                        self.core.last_entered_cell = Some(new_cell);
                         self.advance_cursor_down(self.cursor_skip as usize);
                     }
                     return;
@@ -1199,7 +1155,7 @@ impl HtrkApp {
                         let mut new_cell = self.get_cell_at_cursor();
                         new_cell.note = note;
                         self.set_cell_at_cursor(new_cell);
-                        self.last_entered_cell = Some(new_cell);
+                        self.core.last_entered_cell = Some(new_cell);
                         self.advance_cursor_down(self.cursor_skip as usize);
                     }
                     return;
@@ -1209,7 +1165,7 @@ impl HtrkApp {
                 let mut new_cell = self.get_cell_at_cursor();
                 new_cell.note = Note::Off;
                 self.set_cell_at_cursor(new_cell);
-                self.last_entered_cell = Some(new_cell);
+                self.core.last_entered_cell = Some(new_cell);
                 self.advance_cursor_down(self.cursor_skip as usize);
                 return;
             }
@@ -1219,12 +1175,12 @@ impl HtrkApp {
             return;
         }
 
-        if self.cursor.sub_column.accepts_decimal() {
+        if self.core.cursor.sub_column.accepts_decimal() {
             if let Some(d) = ch.to_digit(10) {
                 let d = d as u8;
                 let mut cell = self.get_cell_at_cursor();
 
-                match self.cursor.sub_column {
+                match self.core.cursor.sub_column {
                     SubColumn::InstrumentTens => {
                         let current = cell.instrument.unwrap_or(0);
                         cell.instrument = Some(d * 10 + (current % 10));
@@ -1252,21 +1208,21 @@ impl HtrkApp {
                 self.set_cell_at_cursor(cell);
 
                 let col_vis = self.config.get_col_vis();
-                if let Some(next) = self.cursor.sub_column.next_visible(col_vis) {
-                    self.cursor.sub_column = next;
+                if let Some(next) = self.core.cursor.sub_column.next_visible(col_vis) {
+                    self.core.cursor.sub_column = next;
                 } else {
-                    self.cursor.sub_column = Self::first_visible_sub_column(col_vis);
+                    self.core.cursor.sub_column = Self::first_visible_sub_column(col_vis);
                     self.advance_cursor_down(self.cursor_skip as usize);
                 }
                 return;
             }
         }
 
-        if self.cursor.sub_column == SubColumn::EffectType {
-            let auto_target = self.automation_targets.get(self.cursor.channel).copied().flatten();
+        if self.core.cursor.sub_column == SubColumn::EffectType {
+            let auto_target = self.automation_targets.get(self.core.cursor.channel).copied().flatten();
             if auto_target.is_some() {
                 if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
-                    self.enter_automation_hex(self.cursor.channel, self.cursor.row, d as u8);
+                    self.enter_automation_hex(self.core.cursor.channel, self.core.cursor.row, d as u8);
                     self.advance_cursor_down(self.cursor_skip as usize);
                     return;
                 }
@@ -1288,23 +1244,23 @@ impl HtrkApp {
             if changed {
                 self.set_cell_at_cursor(cell);
                 let col_vis = self.config.get_col_vis();
-                if let Some(next) = self.cursor.sub_column.next_visible(col_vis) {
-                    self.cursor.sub_column = next;
+                if let Some(next) = self.core.cursor.sub_column.next_visible(col_vis) {
+                    self.core.cursor.sub_column = next;
                 } else {
-                    self.cursor.sub_column = Self::first_visible_sub_column(col_vis);
+                    self.core.cursor.sub_column = Self::first_visible_sub_column(col_vis);
                     self.advance_cursor_down(self.cursor_skip as usize);
                 }
                 return;
             }
         }
 
-        if self.cursor.sub_column == SubColumn::EffectParamHigh
-            || self.cursor.sub_column == SubColumn::EffectParamLow
+        if self.core.cursor.sub_column == SubColumn::EffectParamHigh
+            || self.core.cursor.sub_column == SubColumn::EffectParamLow
         {
-            let auto_target = self.automation_targets.get(self.cursor.channel).copied().flatten();
+            let auto_target = self.automation_targets.get(self.core.cursor.channel).copied().flatten();
             if auto_target.is_some() {
                 if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
-                    self.enter_automation_hex(self.cursor.channel, self.cursor.row, d as u8);
+                    self.enter_automation_hex(self.core.cursor.channel, self.core.cursor.row, d as u8);
                     self.advance_cursor_down(self.cursor_skip as usize);
                     return;
                 }
@@ -1312,7 +1268,7 @@ impl HtrkApp {
             if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
                 let d = d as u8;
                 let mut cell = self.get_cell_at_cursor();
-                match self.cursor.sub_column {
+                match self.core.cursor.sub_column {
                     SubColumn::EffectParamHigh => {
                         let param = effect_param(&cell.effect);
                         let new_param = (d << 4) | (param & 0x0F);
@@ -1327,18 +1283,18 @@ impl HtrkApp {
                 }
                 self.set_cell_at_cursor(cell);
                 let col_vis = self.config.get_col_vis();
-                if let Some(next) = self.cursor.sub_column.next_visible(col_vis) {
-                    self.cursor.sub_column = next;
+                if let Some(next) = self.core.cursor.sub_column.next_visible(col_vis) {
+                    self.core.cursor.sub_column = next;
                 } else {
-                    self.cursor.sub_column = Self::first_visible_sub_column(col_vis);
+                    self.core.cursor.sub_column = Self::first_visible_sub_column(col_vis);
                     self.advance_cursor_down(self.cursor_skip as usize);
                 }
             }
         }
 
-        if ch == '.' && !self.cursor.sub_column.accepts_note() {
+        if ch == '.' && !self.core.cursor.sub_column.accepts_note() {
             let mut cell = self.get_cell_at_cursor();
-            match self.cursor.sub_column {
+            match self.core.cursor.sub_column {
                 SubColumn::InstrumentTens | SubColumn::InstrumentOnes => {
                     cell.instrument = None;
                 }
@@ -1356,17 +1312,17 @@ impl HtrkApp {
 
     fn move_cursor_right(&mut self) {
         let num_ch = self.num_channels();
-        if self.cursor.channel < num_ch - 1 {
-            self.cursor.channel += 1;
-            self.cursor.sub_column = SubColumn::Note;
+        if self.core.cursor.channel < num_ch - 1 {
+            self.core.cursor.channel += 1;
+            self.core.cursor.sub_column = SubColumn::Note;
         }
         self.ensure_cursor_visible();
     }
 
     fn move_cursor_left(&mut self) {
-        if self.cursor.channel > 0 {
-            self.cursor.channel -= 1;
-            self.cursor.sub_column = SubColumn::Note;
+        if self.core.cursor.channel > 0 {
+            self.core.cursor.channel -= 1;
+            self.core.cursor.sub_column = SubColumn::Note;
         }
         self.ensure_cursor_visible();
     }
@@ -1382,15 +1338,15 @@ impl HtrkApp {
 
     fn step_sub_column_forward(&mut self) {
         let col_vis = self.config.get_col_vis();
-        if let Some(next) = self.cursor.sub_column.next_visible(col_vis) {
-            self.cursor.sub_column = next;
+        if let Some(next) = self.core.cursor.sub_column.next_visible(col_vis) {
+            self.core.cursor.sub_column = next;
         }
     }
 
     fn step_sub_column_backward(&mut self) {
         let col_vis = self.config.get_col_vis();
-        if let Some(prev) = self.cursor.sub_column.prev_visible(col_vis) {
-            self.cursor.sub_column = prev;
+        if let Some(prev) = self.core.cursor.sub_column.prev_visible(col_vis) {
+            self.core.cursor.sub_column = prev;
         }
     }
 
@@ -1404,53 +1360,53 @@ impl HtrkApp {
     }
 
     fn extend_selection_down(&mut self) {
-        if self.selection.is_none() {
-            self.selection_anchor = Some(self.cursor);
+        if self.core.selection.is_none() {
+            self.core.selection_anchor = Some(self.core.cursor);
         }
         self.advance_cursor_down(1);
-        if let Some(anchor) = self.selection_anchor {
-            self.selection = Some(Selection {
+        if let Some(anchor) = self.core.selection_anchor {
+            self.core.selection = Some(Selection {
                 start: anchor,
-                end: self.cursor,
+                end: self.core.cursor,
             });
         }
     }
 
     fn extend_selection_up(&mut self) {
-        if self.selection.is_none() {
-            self.selection_anchor = Some(self.cursor);
+        if self.core.selection.is_none() {
+            self.core.selection_anchor = Some(self.core.cursor);
         }
         self.advance_cursor_up(1);
-        if let Some(anchor) = self.selection_anchor {
-            self.selection = Some(Selection {
+        if let Some(anchor) = self.core.selection_anchor {
+            self.core.selection = Some(Selection {
                 start: anchor,
-                end: self.cursor,
+                end: self.core.cursor,
             });
         }
     }
 
     fn extend_selection_right(&mut self) {
-        if self.selection.is_none() {
-            self.selection_anchor = Some(self.cursor);
+        if self.core.selection.is_none() {
+            self.core.selection_anchor = Some(self.core.cursor);
         }
         self.move_cursor_right();
-        if let Some(anchor) = self.selection_anchor {
-            self.selection = Some(Selection {
+        if let Some(anchor) = self.core.selection_anchor {
+            self.core.selection = Some(Selection {
                 start: anchor,
-                end: self.cursor,
+                end: self.core.cursor,
             });
         }
     }
 
     fn extend_selection_left(&mut self) {
-        if self.selection.is_none() {
-            self.selection_anchor = Some(self.cursor);
+        if self.core.selection.is_none() {
+            self.core.selection_anchor = Some(self.core.cursor);
         }
         self.move_cursor_left();
-        if let Some(anchor) = self.selection_anchor {
-            self.selection = Some(Selection {
+        if let Some(anchor) = self.core.selection_anchor {
+            self.core.selection = Some(Selection {
                 start: anchor,
-                end: self.cursor,
+                end: self.core.cursor,
             });
         }
     }
@@ -1470,15 +1426,15 @@ impl HtrkApp {
                     sub_column: SubColumn::EffectParamLow,
                 },
             };
-            self.selection = Some(sel);
+            self.core.selection = Some(sel);
         }
     }
 
     fn transpose_selection(&mut self, delta: i8) {
-        let sel = match &self.selection {
+        let sel = match &self.core.selection {
             Some(s) => s.clone(),
             None => {
-                let cursor = self.cursor;
+                let cursor = self.core.cursor;
                 Selection {
                     start: cursor,
                     end: cursor,
@@ -1486,10 +1442,10 @@ impl HtrkApp {
             }
         };
         let (min, max) = sel.normalized();
-        let selected_order = self.selected_order;
+        let selected_order = self.core.selected_order;
 
         self.ensure_module_ownership();
-        if let Some(ref mut module) = self.module {
+        if let Some(ref mut module) = self.core.module {
             if let Some(arc_module) = Arc::get_mut(module) {
                 let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
                 if pat_idx < arc_module.patterns.len() {
@@ -1507,7 +1463,7 @@ impl HtrkApp {
                         delta,
                         old_notes,
                     };
-                    let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                    let _ = self.core.undo_manager.execute(Box::new(cmd), arc_module);
                 }
             }
         }
@@ -1518,15 +1474,15 @@ impl HtrkApp {
         if !self.edit_mode {
             return;
         }
-        let sel = match &self.selection {
+        let sel = match &self.core.selection {
             Some(s) => s.clone(),
             None => return,
         };
         let (min, max) = sel.normalized();
-        let selected_order = self.selected_order;
+        let selected_order = self.core.selected_order;
 
         self.ensure_module_ownership();
-        if let Some(ref mut module) = self.module {
+        if let Some(ref mut module) = self.core.module {
             if let Some(arc_module) = Arc::get_mut(module) {
                 let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
                 if pat_idx >= arc_module.patterns.len() {
@@ -1547,9 +1503,9 @@ impl HtrkApp {
                         let cmd = crate::edit::FillInstrumentCommand {
                             order: selected_order,
                             old_cells,
-                            instrument: self.selected_instrument as u8,
+                            instrument: self.core.selected_instrument as u8,
                         };
-                        let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                        let _ = self.core.undo_manager.execute(Box::new(cmd), arc_module);
                     }
                     crate::ui::pattern_grid::ContextMenuAction::InterpolateVolume => {
                         let mut old_cells = Vec::new();
@@ -1574,7 +1530,7 @@ impl HtrkApp {
                                 old_cells,
                                 new_cells,
                             };
-                            let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                            let _ = self.core.undo_manager.execute(Box::new(cmd), arc_module);
                         }
                     }
                     crate::ui::pattern_grid::ContextMenuAction::InterpolateEffect => {
@@ -1600,7 +1556,7 @@ impl HtrkApp {
                                 old_cells,
                                 new_cells,
                             };
-                            let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                            let _ = self.core.undo_manager.execute(Box::new(cmd), arc_module);
                         }
                     }
                     crate::ui::pattern_grid::ContextMenuAction::Reverse => {
@@ -1615,7 +1571,7 @@ impl HtrkApp {
                                 end_row: max.row,
                                 old_cells,
                             };
-                            let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                            let _ = self.core.undo_manager.execute(Box::new(cmd), arc_module);
                         }
                     }
                     crate::ui::pattern_grid::ContextMenuAction::Randomize => {
@@ -1644,7 +1600,7 @@ impl HtrkApp {
                                 old_cells,
                                 new_cells,
                             };
-                            let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                            let _ = self.core.undo_manager.execute(Box::new(cmd), arc_module);
                         }
                     }
                 }
@@ -1657,7 +1613,7 @@ impl HtrkApp {
         self.ensure_module_ownership();
         match interaction {
             crate::ui::pattern_grid::AutomationInteraction::PointCreated { channel, order, row, value } => {
-                if let Some(ref mut module) = self.module {
+                if let Some(ref mut module) = self.core.module {
                     if let Some(arc_module) = Arc::get_mut(module) {
                         let target = match self.automation_targets.get(channel).copied().flatten() {
                             Some(t) => t,
@@ -1678,7 +1634,7 @@ impl HtrkApp {
                 self.sync_module_to_audio();
             }
             crate::ui::pattern_grid::AutomationInteraction::PointMoved { channel, order, row, value } => {
-                if let Some(ref mut module) = self.module {
+                if let Some(ref mut module) = self.core.module {
                     if let Some(arc_module) = Arc::get_mut(module) {
                         let target = match self.automation_targets.get(channel).copied().flatten() {
                             Some(t) => t,
@@ -1699,7 +1655,7 @@ impl HtrkApp {
                 self.sync_module_to_audio();
             }
             crate::ui::pattern_grid::AutomationInteraction::FreehandDraw { channel, points } => {
-                if let Some(ref mut module) = self.module {
+                if let Some(ref mut module) = self.core.module {
                     if let Some(arc_module) = Arc::get_mut(module) {
                         let target = match self.automation_targets.get(channel).copied().flatten() {
                             Some(t) => t,
@@ -1725,10 +1681,10 @@ impl HtrkApp {
     }
 
     fn enter_automation_hex(&mut self, channel: usize, row: usize, digit: u8) {
-        let selected_order = self.selected_order as u16;
+        let selected_order = self.core.selected_order as u16;
         let row_u16 = row as u16;
         self.ensure_module_ownership();
-        if let Some(ref mut module) = self.module {
+        if let Some(ref mut module) = self.core.module {
             if let Some(arc_module) = Arc::get_mut(module) {
                 let target = match self.automation_targets.get(channel).copied().flatten() {
                     Some(t) => t,
@@ -1758,10 +1714,10 @@ impl HtrkApp {
     }
 
     fn delete_automation_point(&mut self, channel: usize, row: usize) {
-        let selected_order = self.selected_order as u16;
+        let selected_order = self.core.selected_order as u16;
         let row_u16 = row as u16;
         self.ensure_module_ownership();
-        if let Some(ref mut module) = self.module {
+        if let Some(ref mut module) = self.core.module {
             if let Some(arc_module) = Arc::get_mut(module) {
                 let target = match self.automation_targets.get(channel).copied().flatten() {
                     Some(t) => t,
@@ -1778,43 +1734,43 @@ impl HtrkApp {
     }
 
     fn skip_to_prev_pattern(&mut self) {
-        let order_len = self.module.as_ref().map_or(0, |m| m.order_list.len());
+        let order_len = self.core.module.as_ref().map_or(0, |m| m.order_list.len());
         if order_len == 0 {
             return;
         }
-        self.selected_order = if self.selected_order == 0 {
+        self.core.selected_order = if self.core.selected_order == 0 {
             order_len - 1
         } else {
-            self.selected_order - 1
+            self.core.selected_order - 1
         };
-        self.cursor.row = 0;
+        self.core.cursor.row = 0;
         self.ensure_cursor_visible();
-        self.selection = None;
-        if self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
-            self.send_command(AudioCommand::PlayFrom { order: self.selected_order as u16, row: 0 });
+        self.core.selection = None;
+        if self.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
+            self.send_command(AudioCommand::PlayFrom { order: self.core.selected_order as u16, row: 0 });
         }
     }
 
     fn skip_to_next_pattern(&mut self) {
-        let order_len = self.module.as_ref().map_or(0, |m| m.order_list.len());
+        let order_len = self.core.module.as_ref().map_or(0, |m| m.order_list.len());
         if order_len == 0 {
             return;
         }
-        self.selected_order = if self.selected_order >= order_len - 1 {
+        self.core.selected_order = if self.core.selected_order >= order_len - 1 {
             0
         } else {
-            self.selected_order + 1
+            self.core.selected_order + 1
         };
-        self.cursor.row = 0;
+        self.core.cursor.row = 0;
         self.ensure_cursor_visible();
-        self.selection = None;
-        if self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
-            self.send_command(AudioCommand::PlayFrom { order: self.selected_order as u16, row: 0 });
+        self.core.selection = None;
+        if self.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
+            self.send_command(AudioCommand::PlayFrom { order: self.core.selected_order as u16, row: 0 });
         }
     }
 
     fn copy_selection(&mut self) {
-        if let Some(sel) = &self.selection {
+        if let Some(sel) = &self.core.selection {
             let (min, max) = sel.normalized();
             if let Some(pattern) = self.current_pattern() {
                 let mut data = Vec::new();
@@ -1825,22 +1781,22 @@ impl HtrkApp {
                     }
                     data.push(row_data);
                 }
-                self.clipboard = Some(data);
-                self.clipboard_width = max.channel - min.channel + 1;
+                self.core.clipboard = Some(data);
+                self.core.clipboard_width = max.channel - min.channel + 1;
             }
         }
     }
 
     fn delete_selection(&mut self) {
-        let sel = match &self.selection {
+        let sel = match &self.core.selection {
             Some(s) => s.clone(),
             None => return,
         };
         let (min, max) = sel.normalized();
-        let selected_order = self.selected_order;
+        let selected_order = self.core.selected_order;
 
         self.ensure_module_ownership();
-        if let Some(ref mut module) = self.module {
+        if let Some(ref mut module) = self.core.module {
             if let Some(arc_module) = Arc::get_mut(module) {
                 let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
                 if pat_idx >= arc_module.patterns.len() {
@@ -1866,7 +1822,7 @@ impl HtrkApp {
                         old_cells,
                         new_cells,
                     });
-                    let _ = self.undo_manager.execute(cmd, arc_module);
+                    let _ = self.core.undo_manager.execute(cmd, arc_module);
                 }
             }
         }
@@ -1874,17 +1830,17 @@ impl HtrkApp {
     }
 
     fn paste_at_cursor(&mut self) {
-        let clipboard = self.clipboard.clone();
+        let clipboard = self.core.clipboard.clone();
         let clipboard_data = match &clipboard {
             Some(d) => d.clone(),
             None => return,
         };
-        let selected_order = self.selected_order;
-        let cursor_row = self.cursor.row;
-        let cursor_ch = self.cursor.channel;
+        let selected_order = self.core.selected_order;
+        let cursor_row = self.core.cursor.row;
+        let cursor_ch = self.core.cursor.channel;
 
         self.ensure_module_ownership();
-        if let Some(ref mut module) = self.module {
+        if let Some(ref mut module) = self.core.module {
             if let Some(arc_module) = Arc::get_mut(module) {
                 let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
                 if pat_idx >= arc_module.patterns.len() {
@@ -1917,7 +1873,7 @@ impl HtrkApp {
                         old_cells,
                         new_cells,
                     });
-                    let _ = self.undo_manager.execute(cmd, arc_module);
+                    let _ = self.core.undo_manager.execute(cmd, arc_module);
                 }
             }
         }
@@ -1946,13 +1902,13 @@ impl HtrkApp {
                 }
 
                 // Create module if it doesn't exist
-                if self.module.is_none() {
+                if self.core.module.is_none() {
                     self.new_song();
                 }
 
-                let sample_idx = self.selected_sample;
+                let sample_idx = self.core.selected_sample;
                 self.ensure_module_ownership();
-                if let Some(ref mut module_arc) = self.module {
+                if let Some(ref mut module_arc) = self.core.module {
                     if let Some(m) = Arc::get_mut(module_arc) {
                         // Ensure the sample vector is large enough
                         if sample_idx >= m.samples.len() {
@@ -1970,7 +1926,7 @@ impl HtrkApp {
     }
 
     fn save_current_file(&mut self) {
-        let path = match &self.file_path {
+        let path = match &self.core.file_path {
             Some(p) => p.clone(),
             None => {
                 self.save_as_dialog();
@@ -1981,16 +1937,16 @@ impl HtrkApp {
     }
 
     fn save_file(&mut self, path: &str) {
-        let module = match &self.module {
+        let module = match &self.core.module {
             Some(m) => m,
             None => return,
         };
         let data = formats::save_module(module);
         match std::fs::write(path, &data) {
             Ok(()) => {
-                self.file_path = Some(path.to_string());
-                self.module_dirty = false;
-                self.last_backup_time = std::time::Instant::now();
+                self.core.file_path = Some(path.to_string());
+                self.core.module_dirty = false;
+                self.core.last_backup_time = std::time::Instant::now();
             }
             Err(e) => {
                 eprintln!("Failed to save file: {}", e);
@@ -2003,16 +1959,16 @@ impl HtrkApp {
     }
 
     fn open_wav_export_dialog(&mut self) {
-        let module_loaded = self.module.is_some();
-        let total_orders = self.module.as_ref().map(|m| m.order_list.len()).unwrap_or(0) as u64;
+        let module_loaded = self.core.module.is_some();
+        let total_orders = self.core.module.as_ref().map(|m| m.order_list.len()).unwrap_or(0) as u64;
         let sample_rate = if self.current_sample_rate > 0 {
             self.current_sample_rate
         } else {
             44100
         };
 
-        let default_name = if !self.loaded_module_name.is_empty() {
-            self.loaded_module_name.clone()
+        let default_name = if !self.core.loaded_module_name.is_empty() {
+            self.core.loaded_module_name.clone()
         } else {
             "untitled".to_string()
         };
@@ -2029,7 +1985,7 @@ impl HtrkApp {
     fn export_wav_with_settings(&mut self) {
         let settings = self.wav_export_state.settings().clone();
 
-        let module = match &self.module {
+        let module = match &self.core.module {
             Some(m) => m.clone(),
             None => {
                 self.wav_export_state.finish_export(false, Some("No module loaded to export".to_string()));
@@ -2181,7 +2137,7 @@ impl HtrkApp {
             };
             self.config.last_dirs.insert(key.to_string(), path.to_string_lossy().into_owned());
         }
-        if let Some(ref path) = self.file_path {
+        if let Some(ref path) = self.core.file_path {
             self.config.last_file_path = Some(path.clone());
         }
         self.config.favorites = self.file_browser.save_favorites();
@@ -2190,20 +2146,20 @@ impl HtrkApp {
 
     fn check_auto_backup(&mut self) {
         let interval = self.config.auto_backup_interval_secs;
-        if interval == 0 || !self.module_dirty || self.module.is_none() {
+        if interval == 0 || !self.core.module_dirty || self.core.module.is_none() {
             return;
         }
-        if self.last_backup_time.elapsed().as_secs() < interval {
+        if self.core.last_backup_time.elapsed().as_secs() < interval {
             return;
         }
 
         let backup_dir = self.config.get_backup_dir();
         let _ = std::fs::create_dir_all(&backup_dir);
 
-        let name = if self.loaded_module_name.is_empty() {
+        let name = if self.core.loaded_module_name.is_empty() {
             "untitled".to_string()
         } else {
-            self.loaded_module_name.trim_end_matches(".htk")
+            self.core.loaded_module_name.trim_end_matches(".htk")
                 .trim_end_matches(".it")
                 .trim_end_matches(".xm")
                 .trim_end_matches(".s3m")
@@ -2213,18 +2169,18 @@ impl HtrkApp {
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
         let backup_path = backup_dir.join(format!("{}_backup_{}.htk", name, timestamp));
 
-        if let Some(ref module) = self.module {
+        if let Some(ref module) = self.core.module {
             let data = crate::formats::save_module(module);
             let _ = std::fs::write(&backup_path, &data);
         }
 
-        self.module_dirty = false;
-        self.last_backup_time = std::time::Instant::now();
+        self.core.module_dirty = false;
+        self.core.last_backup_time = std::time::Instant::now();
     }
 
     fn handle_sample_edit(&mut self, event: SampleEditEvent) {
-        let sample_idx = self.selected_sample;
-        let module = match &self.module {
+        let sample_idx = self.core.selected_sample;
+        let module = match &self.core.module {
             Some(m) => m,
             None => return,
         };
@@ -2401,18 +2357,18 @@ impl HtrkApp {
                     old_property: SampleProperty::LoopType(sample.loop_type),
                 });
                 self.ensure_module_ownership();
-                if let Some(ref mut module_arc) = self.module {
+                if let Some(ref mut module_arc) = self.core.module {
                     if let Some(m) = Arc::get_mut(module_arc) {
-                        let _ = self.undo_manager.execute(start_cmd, m);
-                        let _ = self.undo_manager.execute(end_cmd, m);
-                        let _ = self.undo_manager.execute(type_cmd, m);
+                        let _ = self.core.undo_manager.execute(start_cmd, m);
+                        let _ = self.core.undo_manager.execute(end_cmd, m);
+                        let _ = self.core.undo_manager.execute(type_cmd, m);
                     }
                 }
                 self.sync_module_to_audio();
                 return;
             }
             SampleEditEvent::ExportSample(idx) => {
-                let module = match &self.module {
+                let module = match &self.core.module {
                     Some(m) => m,
                     None => return,
                 };
@@ -2436,17 +2392,17 @@ impl HtrkApp {
         };
 
         self.ensure_module_ownership();
-        if let Some(ref mut module_arc) = self.module {
+        if let Some(ref mut module_arc) = self.core.module {
             if let Some(m) = Arc::get_mut(module_arc) {
-                let _ = self.undo_manager.execute(cmd, m);
+                let _ = self.core.undo_manager.execute(cmd, m);
             }
         }
         self.sync_module_to_audio();
     }
 
     fn handle_instrument_edit(&mut self, event: InstrumentEditEvent) {
-        let inst_idx = self.selected_instrument;
-        let module = match &self.module {
+        let inst_idx = self.core.selected_instrument;
+        let module = match &self.core.module {
             Some(m) => m,
             None => return,
         };
@@ -2662,23 +2618,23 @@ impl HtrkApp {
         };
 
         self.ensure_module_ownership();
-        if let Some(ref mut module_arc) = self.module {
+        if let Some(ref mut module_arc) = self.core.module {
             if let Some(m) = Arc::get_mut(module_arc) {
-                let _ = self.undo_manager.execute(cmd, m);
+                let _ = self.core.undo_manager.execute(cmd, m);
             }
         }
         self.sync_module_to_audio();
     }
 
     fn save_instrument_dialog(&mut self) {
-        let module = match &self.module {
+        let module = match &self.core.module {
             Some(m) => m,
             None => {
                 eprintln!("No module loaded");
                 return;
             }
         };
-        let inst_idx = self.selected_instrument;
+        let inst_idx = self.core.selected_instrument;
         let inst = match module.instruments.get(inst_idx) {
             Some(i) => i,
             None => {
@@ -2710,7 +2666,7 @@ impl HtrkApp {
     }
 
     fn export_instrument_dialog(&mut self, inst_idx: usize) {
-        let module = match &self.module {
+        let module = match &self.core.module {
             Some(m) => m,
             None => {
                 eprintln!("No module loaded");
@@ -2748,7 +2704,7 @@ impl HtrkApp {
     }
 
     fn save_instrument_to_file(&mut self, inst_idx: usize, path: &str) {
-        let module = match &self.module {
+        let module = match &self.core.module {
             Some(m) => m,
             None => return,
         };
@@ -2812,12 +2768,12 @@ impl HtrkApp {
                 return;
             }
         };
-        let inst_idx = self.selected_instrument;
-        if self.module.is_none() {
+        let inst_idx = self.core.selected_instrument;
+        if self.core.module.is_none() {
             self.new_song();
         }
         self.ensure_module_ownership();
-        if let Some(ref mut module_arc) = self.module {
+        if let Some(ref mut module_arc) = self.core.module {
             if let Some(m) = Arc::get_mut(module_arc) {
                 if inst_idx >= m.instruments.len() {
                     m.instruments.resize(inst_idx + 1, crate::sequencer::Instrument::default());
@@ -2898,17 +2854,17 @@ impl eframe::App for HtrkApp {
 
         // Clamp cursor and scroll to active channel count
         let nch = self.num_channels();
-        self.cursor.channel = self.cursor.channel.min(nch.saturating_sub(1));
+        self.core.cursor.channel = self.core.cursor.channel.min(nch.saturating_sub(1));
         self.scroll_channel = self.scroll_channel.min(nch.saturating_sub(1));
 
         self.update_wav_export_progress();
 
         let (playback_row, playback_order, playback_pattern) = {
-            let playing = self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
+            let playing = self.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
             if playing {
-                let order = self.playback_state.current_order.load(std::sync::atomic::Ordering::Relaxed) as usize;
-                let row = self.playback_state.current_row.load(std::sync::atomic::Ordering::Relaxed) as usize;
-                let pat = self.playback_state.current_pattern.load(std::sync::atomic::Ordering::Relaxed) as usize;
+                let order = self.core.playback_state.current_order.load(std::sync::atomic::Ordering::Relaxed) as usize;
+                let row = self.core.playback_state.current_row.load(std::sync::atomic::Ordering::Relaxed) as usize;
+                let pat = self.core.playback_state.current_pattern.load(std::sync::atomic::Ordering::Relaxed) as usize;
                 (Some(row), Some(order), Some(pat))
             } else {
                 (None, None, None)
@@ -2916,11 +2872,11 @@ impl eframe::App for HtrkApp {
         };
 
         if let Some(order) = playback_order {
-            if self.follow_playback && order != self.selected_order {
-                if let Some(ref module) = self.module {
+            if self.follow_playback && order != self.core.selected_order {
+                if let Some(ref module) = self.core.module {
                     if order < module.order_list.len() {
-                        self.selected_order = order;
-                        self.cursor.row = 0;
+                        self.core.selected_order = order;
+                        self.core.cursor.row = 0;
                         self.ensure_cursor_visible();
                     }
                 }
@@ -2929,9 +2885,9 @@ impl eframe::App for HtrkApp {
 
         if let Some(row) = playback_row {
             if self.follow_playback {
-                if let (Some(active_pat), Some(ref module)) = (playback_pattern, self.module.as_ref()) {
+                if let (Some(active_pat), Some(ref module)) = (playback_pattern, self.core.module.as_ref()) {
                     if !module.order_list.is_empty() {
-                        let order_idx = self.selected_order.min(module.order_list.len().saturating_sub(1));
+                        let order_idx = self.core.selected_order.min(module.order_list.len().saturating_sub(1));
                         let displayed_pat = module.order_list[order_idx] as usize;
                         if displayed_pat == active_pat {
                             if row < self.scroll_row {
@@ -2949,9 +2905,9 @@ impl eframe::App for HtrkApp {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             let menu_resp = crate::ui::menu_bar::draw_menu_bar(
                 ui,
-                self.undo_manager.can_undo(),
-                self.undo_manager.can_redo(),
-                self.selection.is_some(),
+                self.core.undo_manager.can_undo(),
+                self.core.undo_manager.can_redo(),
+                self.core.selection.is_some(),
                 self.follow_playback,
                 self.theme_preset,
                 self.config.get_spacing_mode(),
@@ -2983,18 +2939,18 @@ impl eframe::App for HtrkApp {
             }
             if menu_resp.undo {
                 self.ensure_module_ownership();
-                if let Some(ref mut module) = self.module {
+                if let Some(ref mut module) = self.core.module {
                     if let Some(arc_module) = Arc::get_mut(module) {
-                        let _ = self.undo_manager.undo(arc_module);
+                        let _ = self.core.undo_manager.undo(arc_module);
                     }
                 }
                 self.sync_module_to_audio();
             }
             if menu_resp.redo {
                 self.ensure_module_ownership();
-                if let Some(ref mut module) = self.module {
+                if let Some(ref mut module) = self.core.module {
                     if let Some(arc_module) = Arc::get_mut(module) {
-                        let _ = self.undo_manager.redo(arc_module);
+                        let _ = self.core.undo_manager.redo(arc_module);
                     }
                 }
                 self.sync_module_to_audio();
@@ -3049,7 +3005,7 @@ impl eframe::App for HtrkApp {
             self.pending_reinit = false;
             if self.stream.is_some() {
                 self.stream = None;
-                self.command_sender = None;
+                self.core.command_sender = None;
                 self.init_audio();
             }
         }
@@ -3057,8 +3013,8 @@ impl eframe::App for HtrkApp {
         egui::TopBottomPanel::top("transport_bar").show(ctx, |ui| {
             let transport_resp = crate::ui::transport::draw_transport(
                 ui,
-                &self.playback_state,
-                &mut self.command_sender,
+                &self.core.playback_state,
+                &mut self.core.command_sender,
                 &self.theme,
             );
             if transport_resp.prev_pattern_clicked {
@@ -3077,7 +3033,7 @@ impl eframe::App for HtrkApp {
             .show(ctx, |ui| {
                 crate::ui::oscilloscope::draw_oscilloscope(
                     ui,
-                    &self.playback_state,
+                    &self.core.playback_state,
                     &self.theme,
                     num_ch,
                 );
@@ -3086,21 +3042,21 @@ impl eframe::App for HtrkApp {
         egui::TopBottomPanel::bottom("status_bar")
             .exact_height(22.0)
             .show(ctx, |ui| {
-                let cpu = self.playback_state.cpu_usage_pct.load(std::sync::atomic::Ordering::Relaxed);
+                let cpu = self.core.playback_state.cpu_usage_pct.load(std::sync::atomic::Ordering::Relaxed);
                 let total_rows = self.current_pattern().map_or(64, |p| p.num_rows);
-                let hint = format!("Ins: {} | Smp: {}", self.selected_instrument, self.selected_sample);
+                let hint = format!("Ins: {} | Smp: {}", self.core.selected_instrument, self.core.selected_sample);
                 crate::ui::status_bar::draw_status_bar(
                     ui,
-                    self.module.as_ref().map(|m| m.as_ref()),
-                    self.selected_order,
-                    self.cursor.row,
+                    self.core.module.as_ref().map(|m| m.as_ref()),
+                    self.core.selected_order,
+                    self.core.cursor.row,
                     total_rows,
                     self.num_channels(),
                     cpu,
                     self.current_octave,
                     self.cursor_skip,
-                    self.selected_instrument,
-                    self.selected_sample,
+                    self.core.selected_instrument,
+                    self.core.selected_sample,
                     self.edit_mode,
                     &hint,
                     &self.theme,
@@ -3111,11 +3067,11 @@ impl eframe::App for HtrkApp {
             .min_width(120.0)
             .default_width(150.0)
             .show(ctx, |ui| {
-                if let Some(ref module) = self.module {
+                if let Some(ref module) = self.core.module {
                     let order_resp = crate::ui::order_list::draw_order_list(
                         ui,
                         module,
-                        self.selected_order,
+                        self.core.selected_order,
                         playback_order,
                         &self.theme,
                     );
@@ -3126,13 +3082,13 @@ impl eframe::App for HtrkApp {
                     let pattern_resized = order_resp.pattern_resized;
                     let order_reordered = order_resp.order_reordered;
                     if let Some(idx) = order_resp.selected_order {
-                        self.selected_order = idx;
-                        self.cursor.row = 0;
+                        self.core.selected_order = idx;
+                        self.core.cursor.row = 0;
                         self.ensure_cursor_visible();
                     }
                     let mut changed = false;
                     self.ensure_module_ownership();
-                    if let Some(ref mut m) = self.module {
+                    if let Some(ref mut m) = self.core.module {
                         if let Some(arc_module) = Arc::get_mut(m) {
                             if let Some((order_idx, new_pat)) = pattern_changed {
                                 if order_idx < arc_module.order_list.len() {
@@ -3144,14 +3100,14 @@ impl eframe::App for HtrkApp {
                                 if should_insert {
                                     let new_pat = arc_module.patterns.len() as u8;
                                     arc_module.patterns.push(crate::sequencer::Pattern::new(64));
-                                    arc_module.order_list.insert(self.selected_order + 1, new_pat);
+                                    arc_module.order_list.insert(self.core.selected_order + 1, new_pat);
                                     changed = true;
                                 }
                                 if should_delete && arc_module.order_list.len() > 1 {
-                                    if self.selected_order < arc_module.order_list.len() {
-                                        arc_module.order_list.remove(self.selected_order);
-                                        if self.selected_order >= arc_module.order_list.len() {
-                                            self.selected_order = arc_module.order_list.len().saturating_sub(1);
+                                    if self.core.selected_order < arc_module.order_list.len() {
+                                        arc_module.order_list.remove(self.core.selected_order);
+                                        if self.core.selected_order >= arc_module.order_list.len() {
+                                            self.core.selected_order = arc_module.order_list.len().saturating_sub(1);
                                         }
                                         changed = true;
                                     }
@@ -3163,19 +3119,19 @@ impl eframe::App for HtrkApp {
                                     let insert_at = if to > from { to - 1 } else { to };
                                     let insert_at = insert_at.min(arc_module.order_list.len());
                                     arc_module.order_list.insert(insert_at, item);
-                                    self.selected_order = insert_at;
+                                    self.core.selected_order = insert_at;
                                     changed = true;
                                 }
                             }
                             if should_duplicate {
-                                let cur_pat_idx = *arc_module.order_list.get(self.selected_order).unwrap_or(&0) as usize;
+                                let cur_pat_idx = *arc_module.order_list.get(self.core.selected_order).unwrap_or(&0) as usize;
                                 if cur_pat_idx < arc_module.patterns.len() {
                                     let cloned = arc_module.patterns[cur_pat_idx].clone();
                                     let new_idx = arc_module.patterns.len() as u8;
                                     arc_module.patterns.push(cloned);
-                                    let insert_at = (self.selected_order + 1).min(arc_module.order_list.len());
+                                    let insert_at = (self.core.selected_order + 1).min(arc_module.order_list.len());
                                     arc_module.order_list.insert(insert_at, new_idx);
-                                    self.selected_order = insert_at;
+                                    self.core.selected_order = insert_at;
                                     changed = true;
                                 }
                             }
@@ -3197,7 +3153,7 @@ impl eframe::App for HtrkApp {
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            if self.module.is_none() {
+            if self.core.module.is_none() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(100.0);
                     ui.heading("htrk - tracker");
@@ -3230,7 +3186,7 @@ impl eframe::App for HtrkApp {
                         ui.set_min_height(0.0);
                         if ui.button("+").clicked() {
                             self.ensure_module_ownership();
-                            if let Some(ref mut module) = self.module {
+                            if let Some(ref mut module) = self.core.module {
                                 if let Some(arc_module) = Arc::get_mut(module) {
                                     if arc_module.channel_panning.len() < MAX_CHANNELS {
                                         arc_module.channel_panning.push(crate::sequencer::module::PANNING_CENTER);
@@ -3241,18 +3197,18 @@ impl eframe::App for HtrkApp {
                                 }
                             }
                         }
-                        let can_remove = self.module.as_ref()
+                        let can_remove = self.core.module.as_ref()
                             .map(|m| m.channel_panning.len() > 1).unwrap_or(false);
                         if ui.button("−").clicked() && can_remove {
                             self.ensure_module_ownership();
-                            if let Some(ref mut module) = self.module {
+                            if let Some(ref mut module) = self.core.module {
                                 if let Some(arc_module) = Arc::get_mut(module) {
                                     arc_module.channel_panning.pop();
                                     arc_module.channel_volume.pop();
                                     self.sync_module_to_audio();
                                     self.sync_channel_fields();
-                                    if self.cursor.channel >= self.num_channels() {
-                                        self.cursor.channel = self.num_channels().saturating_sub(1);
+                                    if self.core.cursor.channel >= self.num_channels() {
+                                        self.core.cursor.channel = self.num_channels().saturating_sub(1);
                                     }
                                     if self.scroll_channel >= self.num_channels() {
                                         self.scroll_channel = self.num_channels().saturating_sub(1);
@@ -3267,35 +3223,35 @@ impl eframe::App for HtrkApp {
                         num_channels,
                         self.scroll_channel,
                         visible_channels,
-                        &self.muted_channels,
-                        &self.solo_channels,
+                        &self.core.muted_channels,
+                        &self.core.solo_channels,
                         &self.channel_names,
-                        &self.module.as_ref().map(|m| m.channel_panning.clone()).unwrap_or_default(),
-                        &self.send_levels,
+                        &self.core.module.as_ref().map(|m| m.channel_panning.clone()).unwrap_or_default(),
+                        &self.core.send_levels,
                         &mut self.channel_rename_state,
                         &self.theme,
-                        &self.playback_state,
+                        &self.core.playback_state,
                         metrics,
                         &self.automation_targets,
                     );
 
                     if let Some(ch) = ch_resp.toggle_mute {
-                        self.muted_channels[ch] = !self.muted_channels[ch];
+                        self.core.muted_channels[ch] = !self.core.muted_channels[ch];
                         self.send_command(AudioCommand::SetChannelMuted {
                             channel: ch,
-                            muted: self.muted_channels[ch],
+                            muted: self.core.muted_channels[ch],
                         });
                     }
                     if let Some(ch) = ch_resp.toggle_solo {
-                        self.solo_channels[ch] = !self.solo_channels[ch];
+                        self.core.solo_channels[ch] = !self.core.solo_channels[ch];
                         self.send_command(AudioCommand::SetChannelSolo {
                             channel: ch,
-                            solo: self.solo_channels[ch],
+                            solo: self.core.solo_channels[ch],
                         });
                     }
                     if let Some((ch, si, level)) = ch_resp.send_changed {
-                        if ch < self.send_levels.len() && si < NUM_SEND_BUSES {
-                            self.send_levels[ch][si] = level;
+                        if ch < self.core.send_levels.len() && si < NUM_SEND_BUSES {
+                            self.core.send_levels[ch][si] = level;
                             self.send_command(crate::audio::commands::AudioCommand::SetSendLevel {
                                 channel: ch,
                                 send_index: si,
@@ -3313,7 +3269,7 @@ impl eframe::App for HtrkApp {
                             self.automation_targets[ch] = target;
                             if let Some(ref t) = target {
                                 self.ensure_module_ownership();
-                                if let Some(ref mut module) = self.module {
+                                if let Some(ref mut module) = self.core.module {
                                     if let Some(arc_module) = Arc::get_mut(module) {
                                         let exists = arc_module.automation_tracks.iter().any(
                                             |tr| tr.channel == Some(ch) && tr.target == *t
@@ -3332,9 +3288,9 @@ impl eframe::App for HtrkApp {
                         }
                     }
 
-                    if let Some(module) = &self.module {
+                    if let Some(module) = &self.core.module {
                         if !module.order_list.is_empty() {
-                            let order_idx = self.selected_order.min(module.order_list.len().saturating_sub(1));
+                            let order_idx = self.core.selected_order.min(module.order_list.len().saturating_sub(1));
                             let pat_idx = module.order_list[order_idx] as usize;
                             let grid_playback_row = if playback_pattern == Some(pat_idx) { playback_row } else { None };
                             if let Some(pattern) = module.patterns.get(pat_idx) {
@@ -3346,7 +3302,7 @@ impl eframe::App for HtrkApp {
                                         crate::ui::pattern_grid::AutomationOverlayInfo {
                                             target: *target,
                                             track,
-                                            current_order: self.selected_order as u16,
+                                            current_order: self.core.selected_order as u16,
                                             speed: module.initial_speed,
                                         }
                                     })
@@ -3355,8 +3311,8 @@ impl eframe::App for HtrkApp {
                                 let grid_resp = crate::ui::pattern_grid::draw_pattern_grid(
                                     ui,
                                     pattern,
-                                    &self.cursor,
-                                    self.selection.as_ref(),
+                                    &self.core.cursor,
+                                    self.core.selection.as_ref(),
                                     grid_playback_row,
                                     self.scroll_row,
                                     self.scroll_channel,
@@ -3367,7 +3323,7 @@ impl eframe::App for HtrkApp {
                                     self.config.row_highlight_major,
                                     self.config.get_sample_length_bg(),
                                     self.config.get_col_vis(),
-                                    self.module.as_ref().map(|v| &**v),
+                                    self.core.module.as_ref().map(|v| &**v),
                                     &auto_overlays,
                                 );
 
@@ -3375,20 +3331,20 @@ impl eframe::App for HtrkApp {
                                 self.last_visible_channels = grid_resp.visible_channels;
 
                                 if let Some(pos) = grid_resp.clicked_position {
-                                    self.cursor = pos;
-                                    self.selection = None;
-                                    self.selection_anchor = None;
+                                    self.core.cursor = pos;
+                                    self.core.selection = None;
+                                    self.core.selection_anchor = None;
                                     self.ensure_cursor_visible();
                                 }
                                 if let Some(pos) = grid_resp.drag_position {
-                                    if self.selection_anchor.is_none() {
-                                        self.selection_anchor = Some(self.cursor);
+                                    if self.core.selection_anchor.is_none() {
+                                        self.core.selection_anchor = Some(self.core.cursor);
                                     }
-                                    self.cursor = pos;
-                                    if let Some(anchor) = self.selection_anchor {
-                                        self.selection = Some(Selection {
+                                    self.core.cursor = pos;
+                                    if let Some(anchor) = self.core.selection_anchor {
+                                        self.core.selection = Some(Selection {
                                             start: anchor,
-                                            end: self.cursor,
+                                            end: self.core.cursor,
                                         });
                                     }
                                     self.ensure_cursor_visible();
@@ -3410,11 +3366,11 @@ impl eframe::App for HtrkApp {
                     }
                 }
                 AppView::Sample => {
-                    if let Some(module) = &self.module {
+                    if let Some(module) = &self.core.module {
                         if let Some(event) = crate::ui::sample_editor::draw_sample_editor(
                             ui,
                             module,
-                            &mut self.selected_sample,
+                            &mut self.core.selected_sample,
                             &self.theme,
                             &mut self.sample_selection,
                             &mut self.sample_clipboard,
@@ -3425,11 +3381,11 @@ impl eframe::App for HtrkApp {
                     }
                 }
                 AppView::Instrument => {
-                    if let Some(module) = &self.module {
+                    if let Some(module) = &self.core.module {
                         if let Some(event) = crate::ui::instrument_editor::draw_instrument_editor(
                             ui,
                             module,
-                            &mut self.selected_instrument,
+                            &mut self.core.selected_instrument,
                             &self.theme,
                         ) {
                             match event {
@@ -3453,7 +3409,7 @@ impl eframe::App for HtrkApp {
                 AppView::SendFx => {
                     crate::ui::sendfx_editor::draw_sendfx_view(
                         ui,
-                        &mut self.command_sender,
+                        &mut self.core.command_sender,
                         &mut self.send_bus_effect_types,
                         &mut self.send_bus_params,
                     );
@@ -3462,16 +3418,16 @@ impl eframe::App for HtrkApp {
                     let num_channels = self.num_channels();
                     crate::ui::playback_view::draw_playback_view(
                         ui,
-                        &self.playback_state,
-                        &mut self.command_sender,
+                        &self.core.playback_state,
+                        &mut self.core.command_sender,
                         &self.theme,
                         num_channels,
                     );
                 }
                 AppView::Automation => {
-                    self.automation_editor_state.selected_order = self.selected_order as u16;
+                    self.automation_editor_state.selected_order = self.core.selected_order as u16;
                     self.ensure_module_ownership();
-                    if let Some(ref mut module) = self.module {
+                    if let Some(ref mut module) = self.core.module {
                         if let Some(arc_module) = Arc::get_mut(module) {
                             let auto_resp = crate::ui::automation_editor::draw_automation_editor(
                                 ui,
@@ -3599,7 +3555,7 @@ impl eframe::App for HtrkApp {
         if let Some(ref mut dialog) = self.sample_export_dialog {
             if let Some((path, bit_depth)) = dialog.show(ctx) {
                 let sample_idx = dialog.sample_index;
-                if let Some(ref module) = self.module {
+                if let Some(ref module) = self.core.module {
                     if let Some(sample) = module.samples.get(sample_idx) {
                         let wav_data = crate::formats::wav::export_wav(sample, bit_depth);
                         if let Err(e) = std::fs::write(&path, wav_data) {

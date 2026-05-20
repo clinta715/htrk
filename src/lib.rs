@@ -1,6 +1,7 @@
 pub mod app;
 pub mod app_config;
 pub mod audio;
+pub mod core;
 pub mod debug_log;
 pub mod edit;
 pub mod errors;
