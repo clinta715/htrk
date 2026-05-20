@@ -7,7 +7,6 @@ use crate::app_config::AppConfig;
 use crate::audio::commands::AudioCommand;
 use crate::audio::engine::create_engine_and_sender;
 use crate::audio::playback_state::AtomicPlaybackState;
-use crate::audio::renderer::WavRenderer;
 use crate::formats;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::effect::SendEffectType;
@@ -355,7 +354,7 @@ impl HtrkApp {
         self.core.sync_to_audio();
     }
 
-    fn sync_channel_fields(&mut self) {
+    pub(crate) fn sync_channel_fields(&mut self) {
         self.core.sync_channel_fields();
         let count = self.core.num_channels();
         self.multichannel_channels.resize(count, false);
@@ -402,40 +401,7 @@ impl HtrkApp {
         crate::debug_log::init(self.config.debug, config_dir);
     }
 
-    fn load_file(&mut self, path: &str) {
-        let data = match std::fs::read(path) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Failed to read file: {}", e);
-                return;
-            }
-        };
 
-        if data.len() < 4 {
-            eprintln!("File too small to be a valid module");
-            return;
-        }
-
-        match formats::load_module(&data) {
-            Ok(mut module) => {
-                if module.samples.len() < 65 {
-                    module.samples.resize(65, crate::sequencer::Sample::default());
-                }
-                if module.instruments.len() < 17 {
-                    module.instruments.resize(17, crate::sequencer::Instrument::default());
-                }
-
-                let name = module.name.clone();
-                self.core.load_module(module, name, Some(path.to_string()));
-                self.scroll_row = 0;
-                self.scroll_channel = 0;
-                self.sync_channel_fields();
-            }
-            Err(e) => {
-                eprintln!("Failed to load module: {}", e);
-            }
-        }
-    }
 
     pub(crate) fn new_song(&mut self) {
         self.core.new_song();
@@ -656,273 +622,15 @@ impl HtrkApp {
         self.file_browser.open(BrowserMode::Modules, &mut self.config);
     }
 
-    fn import_wav(&mut self, path: &str) {
-        let data = match std::fs::read(path) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Failed to read WAV file: {}", e);
-                return;
-            }
-        };
-        match crate::formats::wav::import_wav(&data) {
-            Ok(mut sample) => {
-                if sample.name.is_empty() {
-                    if let Some(name) = std::path::Path::new(path).file_stem().and_then(|s| s.to_str()) {
-                        sample.name = name.to_string();
-                    }
-                }
 
-                if self.core.module.is_none() {
-                    self.new_song();
-                }
 
-                let sample_idx = self.core.selected_sample;
-                self.core.import_wav_to_sample(sample_idx, sample);
-            }
-            Err(e) => {
-                eprintln!("Failed to import WAV: {}", e);
-            }
-        }
-    }
 
-    fn save_current_file(&mut self) {
-        let path = match &self.core.file_path {
-            Some(p) => p.clone(),
-            None => {
-                self.save_as_dialog();
-                return;
-            }
-        };
-        self.save_file(&path);
-    }
-
-    fn save_file(&mut self, path: &str) {
-        self.core.save_file(path);
-    }
 
     pub(crate) fn save_as_dialog(&mut self) {
         self.file_browser.open(BrowserMode::Projects, &mut self.config);
     }
 
-    fn open_wav_export_dialog(&mut self) {
-        let module_loaded = self.core.module.is_some();
-        let total_orders = self.core.module.as_ref().map(|m| m.order_list.len()).unwrap_or(0) as u64;
-        let sample_rate = if self.current_sample_rate > 0 {
-            self.current_sample_rate
-        } else {
-            44100
-        };
 
-        let default_name = if !self.core.loaded_module_name.is_empty() {
-            self.core.loaded_module_name.clone()
-        } else {
-            "untitled".to_string()
-        };
-
-        self.wav_export_state.default_directory = self.config.default_wav_path.as_ref().map(|p| {
-            let pb = std::path::PathBuf::from(p);
-            if pb.is_dir() { pb } else { std::path::PathBuf::new() }
-        }).filter(|p| p.as_os_str().is_empty().then(|| false).unwrap_or(true));
-
-        self.wav_export_state.open(&default_name, module_loaded, Some(total_orders), sample_rate);
-        self.wav_export_state.update_estimates(Some(total_orders));
-    }
-
-    fn export_wav_with_settings(&mut self) {
-        let settings = self.wav_export_state.settings().clone();
-
-        let module = match &self.core.module {
-            Some(m) => m.clone(),
-            None => {
-                self.wav_export_state.finish_export(false, Some("No module loaded to export".to_string()));
-                return;
-            }
-        };
-
-        let file_path = match settings.file_path.clone() {
-            Some(path) => path,
-            None => {
-                self.wav_export_state.finish_export(false, Some("No file path selected".to_string()));
-                return;
-            }
-        };
-
-        let sample_rate = if settings.sample_rate > 0 {
-            settings.sample_rate
-        } else {
-            self.current_sample_rate
-        };
-
-        if sample_rate == 0 {
-            self.wav_export_state.finish_export(false, Some("No valid sample rate available".to_string()));
-            return;
-        }
-
-        let progress_arc = self.wav_export_state.progress_arc();
-        let state_arc = self.wav_export_state.state_arc();
-        let cancel_arc = self.wav_export_state.cancel_arc();
-
-        // Extract config values before the move closure
-        let interp_str = self.config.default_interpolation.clone();
-        let limiter_str = self.config.limiter_mode.clone();
-
-        self.wav_export_state.start_export();
-
-        std::thread::spawn(move || {
-            let spec = hound::WavSpec {
-                channels: settings.channel_mode.channels(),
-                sample_rate,
-                bits_per_sample: settings.bit_depth.bits(),
-                sample_format: if settings.bit_depth.is_float() {
-                    hound::SampleFormat::Float
-                } else {
-                    hound::SampleFormat::Int
-                },
-            };
-
-            let result = std::fs::File::create(&file_path)
-                .and_then(|file| {
-                    let writer = hound::WavWriter::new(file, spec)
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-                    Ok(writer)
-                });
-
-            match result {
-                Ok(mut writer) => {
-                    let mut renderer = WavRenderer::new(module, sample_rate);
-                    let interp = match interp_str.as_str() {
-                        "Nearest" => crate::audio::commands::InterpolationType::Nearest,
-                        "Cubic" => crate::audio::commands::InterpolationType::Cubic,
-                        _ => crate::audio::commands::InterpolationType::Linear,
-                    };
-                    renderer.set_interpolation(interp);
-                    let limiter = match limiter_str.as_str() {
-                        "SoftKnee" => crate::audio::commands::LimiterMode::SoftKnee,
-                        "SoftKneeSmooth" => crate::audio::commands::LimiterMode::SoftKneeSmooth,
-                        _ => crate::audio::commands::LimiterMode::HardClip,
-                    };
-                    renderer.set_limiter_mode(limiter);
-                    renderer.set_channels(settings.channel_mode == crate::ui::wav_export_window::ChannelMode::Stereo);
-
-                    let render_result = renderer.render_with_settings(
-                        &mut writer,
-                        &settings,
-                        |p| {
-                            if cancel_arc.load(Ordering::SeqCst) {
-                                return false;
-                            }
-                            let pct = (p * 100.0) as u32;
-                            progress_arc.store(pct, Ordering::SeqCst);
-                            state_arc.store(1, Ordering::SeqCst);
-                            true
-                        },
-                    );
-
-                    match render_result {
-                        Ok(()) => {
-                            if let Err(e) = writer.finalize() {
-                                state_arc.store(3, Ordering::SeqCst);
-                                eprintln!("Failed to finalize audio file: {}", e);
-                            } else {
-                                state_arc.store(2, Ordering::SeqCst);
-                                println!("Exported to: {}", file_path.display());
-                            }
-                        }
-                        Err(e) => {
-                            state_arc.store(3, Ordering::SeqCst);
-                            eprintln!("Failed to render audio: {:?}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    state_arc.store(3, Ordering::SeqCst);
-                    eprintln!("Failed to create file: {}", e);
-                }
-            }
-        });
-    }
-
-    fn update_wav_export_progress(&mut self) {
-        if !self.wav_export_state.is_exporting {
-            return;
-        }
-
-        let progress = self.wav_export_state.export_progress_atomic.load(Ordering::SeqCst);
-        let state = self.wav_export_state.export_state_atomic.load(Ordering::SeqCst);
-
-        self.wav_export_state.export_progress = (progress as f32) / 100.0;
-        self.wav_export_state.export_status = if progress > 0 {
-            format!("Rendering... {}%", progress)
-        } else {
-            "Preparing...".to_string()
-        };
-
-        if state == 2 {
-            self.wav_export_state.is_exporting = false;
-            self.wav_export_state.export_complete = true;
-            self.wav_export_state.export_status = "Export complete!".to_string();
-        } else if state == 3 {
-            self.wav_export_state.is_exporting = false;
-            self.wav_export_state.export_complete = true;
-            self.wav_export_state.export_status = "Export failed (check console)".to_string();
-        }
-    }
-
-    #[allow(dead_code)]
-    fn export_wav_file(&mut self) {
-    }
-
-    fn save_config(&mut self) {
-        self.config.last_dirs.clear();
-        for (mode, path) in &self.file_browser.last_dirs {
-            let key = match mode {
-                BrowserMode::Modules => "modules",
-                BrowserMode::Samples => "samples",
-                BrowserMode::Instruments => "instruments",
-                BrowserMode::Projects => "projects",
-            };
-            self.config.last_dirs.insert(key.to_string(), path.to_string_lossy().into_owned());
-        }
-        if let Some(ref path) = self.core.file_path {
-            self.config.last_file_path = Some(path.clone());
-        }
-        self.config.favorites = self.file_browser.save_favorites();
-        self.config.save();
-    }
-
-    fn check_auto_backup(&mut self) {
-        let interval = self.config.auto_backup_interval_secs;
-        if interval == 0 || !self.core.module_dirty || self.core.module.is_none() {
-            return;
-        }
-        if self.core.last_backup_time.elapsed().as_secs() < interval {
-            return;
-        }
-
-        let backup_dir = self.config.get_backup_dir();
-        let _ = std::fs::create_dir_all(&backup_dir);
-
-        let name = if self.core.loaded_module_name.is_empty() {
-            "untitled".to_string()
-        } else {
-            self.core.loaded_module_name.trim_end_matches(".htk")
-                .trim_end_matches(".it")
-                .trim_end_matches(".xm")
-                .trim_end_matches(".s3m")
-                .trim_end_matches(".mod")
-                .to_string()
-        };
-        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-        let backup_path = backup_dir.join(format!("{}_backup_{}.htk", name, timestamp));
-
-        if let Some(ref module) = self.core.module {
-            let data = crate::formats::save_module(module);
-            let _ = std::fs::write(&backup_path, &data);
-        }
-
-        self.core.module_dirty = false;
-        self.core.last_backup_time = std::time::Instant::now();
-    }
 }
 
 impl eframe::App for HtrkApp {
@@ -940,7 +648,7 @@ impl eframe::App for HtrkApp {
         self.core.cursor.channel = self.core.cursor.channel.min(nch.saturating_sub(1));
         self.scroll_channel = self.scroll_channel.min(nch.saturating_sub(1));
 
-        self.update_wav_export_progress();
+        crate::actions::update_wav_export_progress(self);
 
         let (playback_row, playback_order, playback_pattern) = {
             let playing = self.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
@@ -1012,13 +720,13 @@ impl eframe::App for HtrkApp {
                 self.file_browser.open(BrowserMode::Instruments, &mut self.config);
             }
             if menu_resp.save_file {
-                self.save_current_file();
+                crate::actions::save_current_file(self);
             }
             if menu_resp.save_as {
                 self.save_as_dialog();
             }
             if menu_resp.export_wav {
-                self.open_wav_export_dialog();
+                crate::actions::open_wav_export_dialog(self);
             }
             if menu_resp.undo {
                 self.ensure_module_ownership();
@@ -1576,7 +1284,7 @@ impl eframe::App for HtrkApp {
         }
 
         if crate::ui::wav_export_window::draw_wav_export(ctx, &mut self.wav_export_state) {
-            self.export_wav_with_settings();
+            crate::actions::export_wav_with_settings(self);
         }
 
         if self.show_about {
@@ -1655,9 +1363,9 @@ impl eframe::App for HtrkApp {
                             .unwrap_or("")
                             .to_lowercase();
                         if ext == "wav" {
-                            self.import_wav(&path_str);
+                            crate::actions::import_wav(self, &path_str);
                         } else {
-                            self.load_file(&path_str);
+                            crate::actions::load_file(self, &path_str);
                         }
                     }
                 });
@@ -1666,12 +1374,12 @@ impl eframe::App for HtrkApp {
             }
         }
 
-        self.check_auto_backup();
+        crate::actions::check_auto_backup(self);
 
         ctx.request_repaint();
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.save_config();
+        crate::actions::save_config(self);
     }
 }
