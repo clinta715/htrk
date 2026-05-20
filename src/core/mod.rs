@@ -323,3 +323,84 @@ impl HtrkCore {
         self.sync_to_audio();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_headless_core() -> HtrkCore {
+        let playback_state = Arc::new(AtomicPlaybackState::default());
+        HtrkCore::new(playback_state)
+    }
+
+    #[test]
+    fn headless_new_song() {
+        let mut core = make_headless_core();
+        assert!(core.module.is_none());
+
+        core.new_song();
+        assert!(core.module.is_some());
+        assert_eq!(core.loaded_module_name, "Untitled");
+        assert!(core.file_path.is_none());
+        assert_eq!(core.selected_order, 0);
+    }
+
+    #[test]
+    fn headless_edit_and_undo() {
+        let mut core = make_headless_core();
+        core.new_song();
+
+        let cell = Cell {
+            note: crate::sequencer::note::Note::On(60),
+            instrument: Some(1),
+            volume: Some(64),
+            volume_effect: None,
+            effect: crate::sequencer::effect::Effect::None,
+        };
+        core.set_cell_at_cursor(cell.clone(), &[], false);
+        let retrieved = core.get_cell_at_cursor();
+        assert_eq!(retrieved.note, crate::sequencer::note::Note::On(60));
+        assert_eq!(retrieved.instrument, Some(1));
+
+        core.undo();
+        let after_undo = core.get_cell_at_cursor();
+        assert_eq!(after_undo.note, crate::sequencer::note::Note::None);
+    }
+
+    #[test]
+    fn headless_channel_mute_solo() {
+        let mut core = make_headless_core();
+        core.new_song();
+
+        assert!(!core.muted_channels[0]);
+        core.toggle_mute(0);
+        assert!(core.muted_channels[0]);
+        core.toggle_mute(0);
+        assert!(!core.muted_channels[0]);
+
+        assert!(!core.solo_channels[0]);
+        core.toggle_solo(0);
+        assert!(core.solo_channels[0]);
+    }
+
+    #[test]
+    fn headless_selection_and_copy() {
+        let mut core = make_headless_core();
+        core.new_song();
+
+        let cell = Cell {
+            note: crate::sequencer::note::Note::On(48),
+            instrument: Some(2),
+            volume: None,
+            volume_effect: None,
+            effect: crate::sequencer::effect::Effect::None,
+        };
+        core.set_cell_at_cursor(cell, &[], false);
+
+        let anchor = CursorPosition { row: 0, channel: 0, sub_column: crate::ui::pattern_grid::SubColumn::Note };
+        let end = CursorPosition { row: 0, channel: 0, sub_column: crate::ui::pattern_grid::SubColumn::Note };
+        core.selection = Some(Selection { start: anchor, end });
+        core.copy_selection();
+        assert!(core.clipboard.is_some());
+    }
+}
