@@ -483,11 +483,9 @@ impl SequencerEngine {
                 }
             }
             Note::Off => {
-                if is_xm {
-                    self.handle_note_off_period(channel);
-                } else {
-                    self.handle_note_off(channel);
-                }
+                let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
+                processor.handle_note_off(self, channel);
+                self.processor = processor;
             }
             Note::Cut => {
                 self.cut_channel_voices(channel);
@@ -538,66 +536,6 @@ impl SequencerEngine {
         offset.min(sample.data.len().saturating_sub(1))
     }
 
-    pub(crate) fn handle_note_off_period(&mut self, channel: usize) {
-        let module = match self.module.as_ref() {
-            Some(m) => m.clone(),
-            None => return,
-        };
-
-        for voice in &mut self.voices {
-            if !voice.active || voice.channel != Some(channel) {
-                continue;
-            }
-
-            let inst_idx = voice.instrument_index.unwrap_or(0) as usize;
-            if inst_idx > 0 && inst_idx < module.instruments.len() {
-                let inst = &module.instruments[inst_idx];
-
-                // FT2 pan envelope keyoff bug: checks vol env type, not pan env type
-                if let Some(ref pan_env) = inst.panning_envelope {
-                    if !pan_env.flags.enabled {
-                        if let Some(ref mut pe) = voice.pan_env {
-                            if pe.current_point < pan_env.points.len() {
-                                if pe.position >= pan_env.points[pe.current_point].tick as f32 {
-                                    pe.position = pan_env.points[pe.current_point].tick as f32 - 1.0;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if let Some(ref vol_env) = inst.volume_envelope {
-                    if vol_env.flags.enabled {
-                        if let Some(ref mut ve) = voice.vol_env {
-                            if ve.current_point < vol_env.points.len() {
-                                if ve.position >= vol_env.points[ve.current_point].tick as f32 {
-                                    ve.position = vol_env.points[ve.current_point].tick as f32 - 1.0;
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // No volume envelope: immediately cut volume
-                    let ch = &mut self.state.channels[channel];
-                    ch.real_vol = 0;
-                    ch.channel_volume = 0;
-                    voice.base_volume = 0.0;
-                }
-            }
-
-            voice.note_off = true;
-            voice.env_sustain_active = false;
-            if let Some(ref mut env) = voice.vol_env {
-                env.released = true;
-            }
-            if let Some(ref mut env) = voice.pan_env {
-                env.released = true;
-            }
-            if let Some(ref mut env) = voice.filter_env {
-                env.released = true;
-            }
-        }
-    }
 
     // ─── XM effect application ───────────────────────────────────
 
@@ -1144,25 +1082,6 @@ impl SequencerEngine {
         }
     }
 
-    pub(crate) fn handle_note_off(&mut self, channel: usize) {
-        for voice in &mut self.voices {
-            if voice.active && voice.channel == Some(channel) {
-                voice.note_off = true;
-                if let Some(ref mut env) = voice.vol_env {
-                    env.released = true;
-                }
-                if let Some(ref mut env) = voice.pan_env {
-                    env.released = true;
-                }
-                if let Some(ref mut env) = voice.pitch_env {
-                    env.released = true;
-                }
-                if let Some(ref mut env) = voice.filter_env {
-                    env.released = true;
-                }
-            }
-        }
-    }
 
     pub(crate) fn cut_channel_voices(&mut self, channel: usize) {
         for voice in &mut self.voices {

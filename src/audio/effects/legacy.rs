@@ -925,6 +925,15 @@ impl LegacyProcessor {
         }
     }
 
-    pub fn handle_note_off(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _channel: usize) {
+    pub fn handle_note_off(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize) {
+        for voice in &mut engine.voices {
+            if voice.active && voice.channel == Some(channel) {
+                voice.note_off = true;
+                if let Some(ref mut env) = voice.vol_env { env.released = true; }
+                if let Some(ref mut env) = voice.pan_env { env.released = true; }
+                if let Some(ref mut env) = voice.pitch_env { env.released = true; }
+                if let Some(ref mut env) = voice.filter_env { env.released = true; }
+            }
+        }
     }
 }
