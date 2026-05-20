@@ -28,10 +28,10 @@ pub struct SequencerEngine {
     pub voices: Vec<Voice>,
     next_voice: usize,
     pub module: Option<Arc<Module>>,
-    output_sample_rate: f64,
-    global_volume: f32,
-    use_xm_model: bool,
-    amiga_led_filter: bool,
+    pub(crate) output_sample_rate: f64,
+    pub(crate) global_volume: f32,
+    pub(crate) use_xm_model: bool,
+    pub(crate) amiga_led_filter: bool,
     pub pending_send_fx_params: Vec<(usize, u32, f32)>,
     processor: EffectProcessor,
 }
@@ -2599,7 +2599,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn cut_channel_voices(&mut self, channel: usize) {
+    pub(crate) fn cut_channel_voices(&mut self, channel: usize) {
         for voice in &mut self.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.deactivate();
@@ -2670,7 +2670,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn apply_portamento_up(&mut self, channel: usize, speed: u16) {
+    pub(crate) fn apply_portamento_up(&mut self, channel: usize, speed: u16) {
         let module = match self.module.as_ref() {
             Some(m) => m,
             None => return,
@@ -2693,7 +2693,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn apply_portamento_down(&mut self, channel: usize, speed: u16) {
+    pub(crate) fn apply_portamento_down(&mut self, channel: usize, speed: u16) {
         let module = match self.module.as_ref() {
             Some(m) => m,
             None => return,
@@ -2776,7 +2776,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn apply_volume_slide(&mut self, channel: usize) {
+    pub(crate) fn apply_volume_slide(&mut self, channel: usize) {
         let (up, down) = {
             let ch = &self.state.channels[channel];
             if !self.use_xm_model && ch.last_volume_slide_param > 0 {
@@ -2806,7 +2806,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn apply_panning_slide(&mut self, channel: usize) {
+    pub(crate) fn apply_panning_slide(&mut self, channel: usize) {
         let ch = &mut self.state.channels[channel];
         if ch.last_panning_slide == 0 {
             return;
@@ -2987,7 +2987,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         self.voices[voice_idx].channel = Some(channel);
     }
 
-    fn set_channel_cutoff_tick(&mut self, channel: usize, ticks: u8) {
+    pub(crate) fn set_channel_cutoff_tick(&mut self, channel: usize, ticks: u8) {
         for voice in &mut self.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.cutoff_tick = Some(ticks as u16);
@@ -3004,7 +3004,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         None
     }
 
-    fn set_channel_delay_tick(&mut self, channel: usize, ticks: u8) {
+    pub(crate) fn set_channel_delay_tick(&mut self, channel: usize, ticks: u8) {
         for voice in &mut self.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.delay_tick = Some(ticks as u16);
@@ -3083,7 +3083,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn set_envelope_position(&mut self, channel: usize, tick: u16) {
+    pub(crate) fn set_envelope_position(&mut self, channel: usize, tick: u16) {
         for voice in &mut self.voices {
             if !voice.active || voice.channel != Some(channel) {
                 continue;
@@ -3516,7 +3516,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         chosen
     }
 
-    fn compute_channel_volume(&self, channel: usize) -> f32 {
+    pub(crate) fn compute_channel_volume(&self, channel: usize) -> f32 {
         if channel >= self.state.channels.len() {
             return 0.0;
         }
@@ -3537,7 +3537,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         self.state.channels[channel].channel_panning as f32 / 255.0
     }
 
-    fn compute_portamento_target(
+    pub(crate) fn compute_portamento_target(
         &self,
         _channel: usize,
         _note_key: u8,
