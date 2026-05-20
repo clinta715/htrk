@@ -1,4 +1,4 @@
-use super::EffectContext;
+use super::EffectProcessor;
 use crate::sequencer::effect::Effect;
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::sample::Sample;
@@ -10,15 +10,15 @@ impl XmProcessor {
         XmProcessor
     }
 
-    pub fn apply_effect(&mut self, _ctx: &mut EffectContext, _channel: usize, _effect: &Effect, _is_row_start: bool) {
+    pub fn apply_effect(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _channel: usize, _effect: &Effect, _is_row_start: bool) {
     }
 
-    pub fn process_tick(&mut self, _ctx: &mut EffectContext, _tick: u8) {
+    pub fn process_tick(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _tick: u8) {
     }
 
     pub fn trigger_note(
         &mut self,
-        _ctx: &mut EffectContext,
+        _engine: &mut crate::audio::sequencer_engine::SequencerEngine,
         _channel: usize,
         _note_key: u8,
         _remapped_key: u8,
@@ -29,11 +29,12 @@ impl XmProcessor {
     ) {
     }
 
-    pub fn trigger_delayed_note(&mut self, _ctx: &mut EffectContext, _channel: usize) {
+    pub fn trigger_delayed_note(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _channel: usize) {
     }
 
-    pub fn process_volume_column(&mut self, ctx: &mut EffectContext, channel: usize, vol: u8) {
-        let ch = &mut ctx.channels[channel];
+    pub fn process_volume_column(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, vol: u8) {
+        use crate::sequencer::player::ChannelState;
+        let ch = &mut engine.state.channels[channel];
         ch.vol_kol = vol;
         if vol <= 64 {
             ch.channel_volume = vol;
@@ -41,6 +42,6 @@ impl XmProcessor {
         }
     }
 
-    pub fn handle_note_off(&mut self, _ctx: &mut EffectContext, _channel: usize) {
+    pub fn handle_note_off(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _channel: usize) {
     }
 }

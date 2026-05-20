@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::audio::effects::{
-    EffectProcessor, EffectContext,
+    EffectProcessor,
     VIBRATO_TABLE_SIZE, VIBRATO_SINE_TABLE, VIBRATO_RAMP_TABLE, FUNK_TRACK,
     quantize_to_semitone, fastrand, compute_samples_per_tick, get_vibrato_value,
     advance_single_envelope, evaluate_envelope, compute_playback_frequency,

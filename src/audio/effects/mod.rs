@@ -1,11 +1,10 @@
 mod xm;
 mod legacy;
 
-use crate::audio::voice::{EnvelopeState, Voice};
+use crate::audio::voice::EnvelopeState;
 use crate::sequencer::effect::Effect;
 use crate::sequencer::module::{Module, BASE_NOTE_RATE};
 use crate::sequencer::pattern::Cell;
-use crate::sequencer::player::{ChannelState, SequencerState};
 use crate::sequencer::sample::{Sample, VibratoWaveform};
 
 pub const VIBRATO_TABLE_SIZE: usize = 64;
@@ -166,15 +165,6 @@ pub fn compute_playback_frequency(
     (note_freq / base_rate) * sample_rate * pitch_multiplier
 }
 
-pub struct EffectContext<'a> {
-    pub channels: &'a mut [ChannelState],
-    pub voices: &'a mut [Voice],
-    pub module: &'a Module,
-    pub sample_rate: f64,
-    pub global_volume: &'a mut f32,
-    pub state: &'a mut SequencerState,
-}
-
 pub enum EffectProcessor {
     Xm(xm::XmProcessor),
     Legacy(legacy::LegacyProcessor),
@@ -189,23 +179,23 @@ impl EffectProcessor {
         }
     }
 
-    pub fn apply_effect(&mut self, ctx: &mut EffectContext, channel: usize, effect: &Effect, is_row_start: bool) {
+    pub fn apply_effect(&mut self, engine: &mut super::sequencer_engine::SequencerEngine, channel: usize, effect: &Effect, is_row_start: bool) {
         match self {
-            EffectProcessor::Xm(p) => p.apply_effect(ctx, channel, effect, is_row_start),
-            EffectProcessor::Legacy(p) => p.apply_effect(ctx, channel, effect, is_row_start),
+            EffectProcessor::Xm(p) => p.apply_effect(engine, channel, effect, is_row_start),
+            EffectProcessor::Legacy(p) => p.apply_effect(engine, channel, effect, is_row_start),
         }
     }
 
-    pub fn process_tick(&mut self, ctx: &mut EffectContext, tick: u8) {
+    pub fn process_tick(&mut self, engine: &mut super::sequencer_engine::SequencerEngine, tick: u8) {
         match self {
-            EffectProcessor::Xm(p) => p.process_tick(ctx, tick),
-            EffectProcessor::Legacy(p) => p.process_tick(ctx, tick),
+            EffectProcessor::Xm(p) => p.process_tick(engine, tick),
+            EffectProcessor::Legacy(p) => p.process_tick(engine, tick),
         }
     }
 
     pub fn trigger_note(
         &mut self,
-        ctx: &mut EffectContext,
+        engine: &mut super::sequencer_engine::SequencerEngine,
         channel: usize,
         note_key: u8,
         remapped_key: u8,
@@ -215,29 +205,29 @@ impl EffectProcessor {
         instrument_idx: usize,
     ) {
         match self {
-            EffectProcessor::Xm(p) => p.trigger_note(ctx, channel, note_key, remapped_key, sample, sample_idx, cell, instrument_idx),
-            EffectProcessor::Legacy(p) => p.trigger_note(ctx, channel, note_key, remapped_key, sample, sample_idx, cell, instrument_idx),
+            EffectProcessor::Xm(p) => p.trigger_note(engine, channel, note_key, remapped_key, sample, sample_idx, cell, instrument_idx),
+            EffectProcessor::Legacy(p) => p.trigger_note(engine, channel, note_key, remapped_key, sample, sample_idx, cell, instrument_idx),
         }
     }
 
-    pub fn trigger_delayed_note(&mut self, ctx: &mut EffectContext, channel: usize) {
+    pub fn trigger_delayed_note(&mut self, engine: &mut super::sequencer_engine::SequencerEngine, channel: usize) {
         match self {
-            EffectProcessor::Xm(p) => p.trigger_delayed_note(ctx, channel),
-            EffectProcessor::Legacy(p) => p.trigger_delayed_note(ctx, channel),
+            EffectProcessor::Xm(p) => p.trigger_delayed_note(engine, channel),
+            EffectProcessor::Legacy(p) => p.trigger_delayed_note(engine, channel),
         }
     }
 
-    pub fn process_volume_column(&mut self, ctx: &mut EffectContext, channel: usize, vol: u8) {
+    pub fn process_volume_column(&mut self, engine: &mut super::sequencer_engine::SequencerEngine, channel: usize, vol: u8) {
         match self {
-            EffectProcessor::Xm(p) => p.process_volume_column(ctx, channel, vol),
-            EffectProcessor::Legacy(p) => p.process_volume_column(ctx, channel, vol),
+            EffectProcessor::Xm(p) => p.process_volume_column(engine, channel, vol),
+            EffectProcessor::Legacy(p) => p.process_volume_column(engine, channel, vol),
         }
     }
 
-    pub fn handle_note_off(&mut self, ctx: &mut EffectContext, channel: usize) {
+    pub fn handle_note_off(&mut self, engine: &mut super::sequencer_engine::SequencerEngine, channel: usize) {
         match self {
-            EffectProcessor::Xm(p) => p.handle_note_off(ctx, channel),
-            EffectProcessor::Legacy(p) => p.handle_note_off(ctx, channel),
+            EffectProcessor::Xm(p) => p.handle_note_off(engine, channel),
+            EffectProcessor::Legacy(p) => p.handle_note_off(engine, channel),
         }
     }
 }
