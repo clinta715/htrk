@@ -516,7 +516,138 @@ impl LegacyProcessor {
         }
     }
 
-    pub fn process_tick(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _tick: u8) {
+    pub fn process_tick(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, tick: u8) {
+        let module = engine.module.as_ref().unwrap().clone();
+
+        for ch in 0..engine.state.channels.len() {
+            let ae = engine.state.channels[ch].active_effects;
+
+            if ae.arpeggio
+                && (engine.state.channels[ch].last_arpeggio.0 > 0
+                    || engine.state.channels[ch].last_arpeggio.1 > 0)
+            {
+                let (arp1, arp2) = engine.state.channels[ch].last_arpeggio;
+                engine.apply_arpeggio(ch, tick, arp1, arp2);
+            }
+            if ae.portamento_up {
+                let spd = engine.state.channels[ch].last_portamento_up_speed;
+                if spd > 0 {
+                    let actual_spd = if module.format == crate::sequencer::module::ModuleFormat::S3M { spd as u16 * 4 } else { spd as u16 };
+                    engine.apply_portamento_up(ch, actual_spd);
+                }
+            }
+            if ae.portamento_down {
+                let spd = engine.state.channels[ch].last_portamento_down_speed;
+                if spd > 0 {
+                    let actual_spd = if module.format == crate::sequencer::module::ModuleFormat::S3M { spd as u16 * 4 } else { spd as u16 };
+                    engine.apply_portamento_down(ch, actual_spd);
+                }
+            }
+            if ae.tone_portamento {
+                let tp_speed = engine.state.channels[ch].last_tone_portamento_speed;
+                if tp_speed > 0 && engine.state.channels[ch].portamento_target_period.is_some() {
+                    let actual_spd = if module.format == crate::sequencer::module::ModuleFormat::S3M { tp_speed as u16 * 4 } else { tp_speed as u16 };
+                    engine.apply_tone_portamento(ch, actual_spd);
+                }
+            }
+            if ae.vibrato {
+                let vib_speed = engine.state.channels[ch].last_vibrato_speed;
+                let vib_depth = engine.state.channels[ch].last_vibrato_depth;
+                if vib_speed > 0 || vib_depth > 0 {
+                    engine.apply_vibrato(ch, vib_speed, vib_depth);
+                }
+            }
+            if ae.tremolo {
+                let trem_speed = engine.state.channels[ch].last_tremolo_speed;
+                let trem_depth = engine.state.channels[ch].last_tremolo_depth;
+                if trem_speed > 0 || trem_depth > 0 {
+                    engine.apply_tremolo(ch, trem_speed, trem_depth);
+                }
+            }
+            if ae.volume_slide {
+                let vol_up = engine.state.channels[ch].last_volume_slide_up;
+                let vol_down = engine.state.channels[ch].last_volume_slide_down;
+                if vol_up > 0 || vol_down > 0 {
+                    engine.apply_volume_slide(ch);
+                }
+            }
+            if ae.tremor {
+                let ontime = engine.state.channels[ch].tremor_ontime;
+                let offtime = engine.state.channels[ch].tremor_offtime;
+                if ontime > 0 || offtime > 0 {
+                    engine.apply_tremor(ch, tick, ontime, offtime);
+                }
+            }
+            if ae.global_volume_slide {
+                let up_val = engine.state.last_global_volume_up as i16;
+                let down_val = engine.state.last_global_volume_down as i16;
+                if up_val > 0 || down_val > 0 {
+                    let new_vol = engine.state.global_volume as i16 + up_val - down_val;
+                    engine.state.global_volume = new_vol.clamp(0, 128) as u8;
+                    engine.global_volume = engine.state.global_volume as f32 / 128.0;
+                }
+            }
+
+            if ae.panbrello {
+                let pb_speed = engine.state.channels[ch].last_panbrello_speed;
+                let pb_depth = engine.state.channels[ch].last_panbrello_depth;
+                if pb_speed > 0 || pb_depth > 0 {
+                    engine.apply_panbrello(ch, pb_speed, pb_depth);
+                }
+            }
+
+            if ae.filter_cutoff_slide {
+                let slide = engine.state.channels[ch].last_filter_cutoff_slide as f32;
+                let new_cutoff = (engine.state.channels[ch].filter_cutoff + slide).clamp(0.0, 0xFFFF as f32);
+                engine.state.channels[ch].filter_cutoff = new_cutoff;
+                for voice in &mut engine.voices {
+                    if voice.active && voice.channel == Some(ch) {
+                        voice.filter_cutoff = new_cutoff;
+                    }
+                }
+            }
+
+            let fs = engine.state.channels[ch].funk_speed;
+            if fs > 0 {
+                let fp = &mut engine.state.channels[ch].funk_pos;
+                *fp = fp.wrapping_add(fs);
+                if *fp >= 128 {
+                    *fp = 0;
+                    for voice in &mut engine.voices {
+                        if voice.active && voice.channel == Some(ch) && !voice.karplus_strong {
+                            let offset = (crate::audio::effects::fastrand() * 4.0) as u32;
+                            voice.position = voice.position + offset as f64;
+                        }
+                    }
+                }
+            }
+
+            let retrigger_interval = engine.state.channels[ch].last_retrigger_interval;
+            if retrigger_interval > 0 && tick > 0 && tick % retrigger_interval == 0 {
+                engine.retrigger_channel_note(ch);
+            }
+
+            if let Some(delay) = engine.get_channel_delay_tick(ch) {
+                if tick == delay as u8 {
+                    engine.trigger_delayed_note(ch);
+                }
+            }
+
+            if let Some(cutoff) = engine.get_channel_cutoff_tick(ch) {
+                if tick == cutoff as u8 {
+                    engine.cut_channel_voices(ch);
+                }
+            }
+
+            if !ae.tremolo {
+                let vol = engine.compute_channel_volume(ch);
+                for voice in &mut engine.voices {
+                    if voice.active && voice.channel == Some(ch) {
+                        voice.base_volume = vol;
+                    }
+                }
+            }
+        }
     }
 
     pub fn trigger_note(

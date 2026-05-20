@@ -801,288 +801,12 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
     fn process_effects_tick_unified(&mut self) {
         let tick = self.state.current_tick;
-        let module = self.module.as_ref().unwrap().clone();
-        let linear = module.flags.linear_slides;
-        let is_xm = self.use_xm_model;
-
-        for ch in 0..self.state.channels.len() {
-            if is_xm {
-                let ch_state = &mut self.state.channels[ch];
-                let vol_kol = ch_state.vol_kol;
-                if vol_kol > 0 {
-                    let vfx = vol_kol >> 4;
-                    match vfx {
-                        0x6 => {
-                            let amt = vol_kol & 0x0F;
-                            let new_vol = ch_state.real_vol.saturating_sub(amt);
-                            ch_state.real_vol = new_vol;
-                            ch_state.channel_volume = new_vol;
-                        }
-                        0x7 => {
-                            let amt = vol_kol & 0x0F;
-                            let new_vol = (ch_state.real_vol + amt).min(64);
-                            ch_state.real_vol = new_vol;
-                            ch_state.channel_volume = new_vol;
-                        }
-                        0xD => {
-                            let amt = vol_kol & 0x0F;
-                            let new_pan = ch_state.channel_panning.saturating_sub(amt);
-                            ch_state.channel_panning = new_pan;
-                        }
-                        0xE => {
-                            let amt = vol_kol & 0x0F;
-                            let new_pan = (ch_state.channel_panning + amt).min(255);
-                            ch_state.channel_panning = new_pan;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            let ae = self.state.channels[ch].active_effects;
-
-            if ae.arpeggio
-                && (self.state.channels[ch].last_arpeggio.0 > 0
-                    || self.state.channels[ch].last_arpeggio.1 > 0)
-            {
-                if is_xm {
-                    self.apply_arpeggio_period(ch, tick, linear);
-                } else {
-                    let (arp1, arp2) = self.state.channels[ch].last_arpeggio;
-                    self.apply_arpeggio(ch, tick, arp1, arp2);
-                }
-            }
-            if ae.portamento_up {
-                let spd = self.state.channels[ch].last_portamento_up_speed;
-                if is_xm {
-                    if spd > 0 {
-                        let spd_period = (spd as u16) << 2;
-                        {
-                            let ch = &mut self.state.channels[ch];
-                            ch.real_period = ch.real_period.saturating_sub(spd_period).max(1);
-                            ch.out_period = ch.real_period;
-                        }
-                        let module = self.module.as_ref().unwrap().clone();
-                        let freq = period_to_frequency(self.state.channels[ch].out_period, module.flags.linear_slides, 8363);
-                        let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
-                        for voice in &mut self.voices {
-                            if voice.active && voice.channel == Some(ch) {
-                                voice.current_frequency = freq;
-                                voice.sample_delta = delta;
-                            }
-                        }
-                    }
-                } else if spd > 0 {
-                    let actual_spd = if module.format == ModuleFormat::S3M { spd as u16 * 4 } else { spd as u16 };
-                    self.apply_portamento_up(ch, actual_spd);
-                }
-            }
-            if ae.portamento_down {
-                let spd = self.state.channels[ch].last_portamento_down_speed;
-                if is_xm {
-                    if spd > 0 {
-                        let spd_period = (spd as u16) << 2;
-                        {
-                            let ch = &mut self.state.channels[ch];
-                            ch.real_period = ch.real_period.saturating_add(spd_period).min(31999);
-                            ch.out_period = ch.real_period;
-                        }
-                        let module = self.module.as_ref().unwrap().clone();
-                        let freq = period_to_frequency(self.state.channels[ch].out_period, module.flags.linear_slides, 8363);
-                        let delta = if self.output_sample_rate > 0.0 { freq / self.output_sample_rate } else { 0.0 };
-                        for voice in &mut self.voices {
-                            if voice.active && voice.channel == Some(ch) {
-                                voice.current_frequency = freq;
-                                voice.sample_delta = delta;
-                            }
-                        }
-                    }
-                } else if spd > 0 {
-                    let actual_spd = if module.format == ModuleFormat::S3M { spd as u16 * 4 } else { spd as u16 };
-                    self.apply_portamento_down(ch, actual_spd);
-                }
-            }
-            if ae.tone_portamento {
-                if is_xm {
-                    self.apply_tone_portamento_period(ch, linear);
-                } else {
-                    let tp_speed = self.state.channels[ch].last_tone_portamento_speed;
-                    if tp_speed > 0 && self.state.channels[ch].portamento_target_period.is_some() {
-                        let actual_spd = if module.format == ModuleFormat::S3M { tp_speed as u16 * 4 } else { tp_speed as u16 };
-                        self.apply_tone_portamento(ch, actual_spd);
-                    }
-                }
-            }
-            if ae.vibrato {
-                if is_xm {
-                    self.apply_vibrato_period(ch, linear);
-                } else {
-                    let vib_speed = self.state.channels[ch].last_vibrato_speed;
-                    let vib_depth = self.state.channels[ch].last_vibrato_depth;
-                    if vib_speed > 0 || vib_depth > 0 {
-                        self.apply_vibrato(ch, vib_speed, vib_depth);
-                    }
-                }
-            }
-            if ae.tremolo {
-                if is_xm {
-                    self.apply_tremolo_period(ch);
-                } else {
-                    let trem_speed = self.state.channels[ch].last_tremolo_speed;
-                    let trem_depth = self.state.channels[ch].last_tremolo_depth;
-                    if trem_speed > 0 || trem_depth > 0 {
-                        self.apply_tremolo(ch, trem_speed, trem_depth);
-                    }
-                }
-            }
-            if ae.volume_slide {
-                if is_xm {
-                    self.apply_volume_slide_period(ch);
-                } else {
-                    let vol_up = self.state.channels[ch].last_volume_slide_up;
-                    let vol_down = self.state.channels[ch].last_volume_slide_down;
-                    if vol_up > 0 || vol_down > 0 {
-                        self.apply_volume_slide(ch);
-                    }
-                }
-            }
-            if ae.tremor {
-                if is_xm {
-                    self.apply_tremor_period(ch);
-                } else {
-                    let ontime = self.state.channels[ch].tremor_ontime;
-                    let offtime = self.state.channels[ch].tremor_offtime;
-                    if ontime > 0 || offtime > 0 {
-                        self.apply_tremor(ch, tick, ontime, offtime);
-                    }
-                }
-            }
-            if ae.global_volume_slide && !is_xm {
-                let up_val = self.state.last_global_volume_up as i16;
-                let down_val = self.state.last_global_volume_down as i16;
-                if up_val > 0 || down_val > 0 {
-                    let new_vol = self.state.global_volume as i16 + up_val - down_val;
-                    self.state.global_volume = new_vol.clamp(0, 128) as u8;
-                    self.global_volume = self.state.global_volume as f32 / 128.0;
-                }
-            }
-
-            if ae.panning_slide {
-                if is_xm {
-                    self.apply_panning_slide(ch);
-                }
-            }
-
-            if ae.panbrello && !is_xm {
-                let pb_speed = self.state.channels[ch].last_panbrello_speed;
-                let pb_depth = self.state.channels[ch].last_panbrello_depth;
-                if pb_speed > 0 || pb_depth > 0 {
-                    self.apply_panbrello(ch, pb_speed, pb_depth);
-                }
-            }
-
-            // Filter cutoff slide (per-tick)
-            if ae.filter_cutoff_slide {
-                let slide = self.state.channels[ch].last_filter_cutoff_slide as f32;
-                let new_cutoff = (self.state.channels[ch].filter_cutoff + slide).clamp(0.0, 0xFFFF as f32);
-                self.state.channels[ch].filter_cutoff = new_cutoff;
-                for voice in &mut self.voices {
-                    if voice.active && voice.channel == Some(ch) {
-                        voice.filter_cutoff = new_cutoff;
-                    }
-                }
-            }
-
-            // MOD FunkIt
-            if !is_xm {
-                let fs = self.state.channels[ch].funk_speed;
-                if fs > 0 {
-                    let fp = &mut self.state.channels[ch].funk_pos;
-                    *fp = fp.wrapping_add(fs);
-                    if *fp >= 128 {
-                        *fp = 0;
-                        for voice in &mut self.voices {
-                            if voice.active && voice.channel == Some(ch) && !voice.karplus_strong {
-                                let offset = (fastrand() * 4.0) as u32;
-                                voice.position = voice.position + offset as f64;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Retrig
-            if is_xm {
-                let retrig_speed = self.state.channels[ch].retrig_speed;
-                let retrig_interval = self.state.channels[ch].last_retrigger_interval;
-                if retrig_speed > 0 && tick > 0 && tick % retrig_speed == 0 {
-                    self.do_multi_retrig_period(ch, linear);
-                } else if retrig_interval > 0 && tick > 0 && tick % retrig_interval == 0 {
-                    self.retrig_channel_note_period(ch, linear);
-                }
-            } else {
-                let retrigger_interval = self.state.channels[ch].last_retrigger_interval;
-                if retrigger_interval > 0 && tick > 0 && tick % retrigger_interval == 0 {
-                    self.retrigger_channel_note(ch);
-                }
-            }
-
-            // Note delay
-            if is_xm {
-                let delay_ticks = self.state.channels[ch].note_delay_ticks;
-                if delay_ticks > 0 && tick == delay_ticks {
-                    self.trigger_delayed_note_period(ch, linear);
-                }
-            } else {
-                if let Some(delay) = self.get_channel_delay_tick(ch) {
-                    if tick == delay as u8 {
-                        self.trigger_delayed_note(ch);
-                    }
-                }
-            }
-
-            // Note cut
-            if is_xm {
-                let note_cut = self.state.channels[ch].note_cut_tick;
-                if let Some(cutoff) = note_cut {
-                    if tick == cutoff {
-                        self.cut_channel_voices(ch);
-                        self.state.channels[ch].note_cut_tick = None;
-                    }
-                }
-
-                if self.state.channels[ch].active_effects.key_off {
-                    self.state.channels[ch].active_effects.key_off = false;
-                    for voice in &mut self.voices {
-                        if voice.active && voice.channel == Some(ch) {
-                            if let Some(ref mut env) = voice.vol_env { env.released = true; }
-                            if let Some(ref mut env) = voice.pan_env { env.released = true; }
-                            if let Some(ref mut env) = voice.pitch_env { env.released = true; }
-                            if let Some(ref mut env) = voice.filter_env { env.released = true; }
-                        }
-                    }
-                }
-            } else {
-                if let Some(cutoff) = self.get_channel_cutoff_tick(ch) {
-                    if tick == cutoff as u8 {
-                        self.cut_channel_voices(ch);
-                    }
-                }
-            }
-
-            // Volume update for voices
-            if !ae.tremolo {
-                let vol = self.compute_channel_volume(ch);
-                for voice in &mut self.voices {
-                    if voice.active && voice.channel == Some(ch) {
-                        voice.base_volume = vol;
-                    }
-                }
-            }
-        }
+        let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
+        processor.process_tick(self, tick);
+        self.processor = processor;
     }
 
-    fn apply_tone_portamento_period(&mut self, channel: usize, linear: bool) {
+    pub(crate) fn apply_tone_portamento_period(&mut self, channel: usize, linear: bool) {
         let ch = &self.state.channels[channel];
         if ch.porta_dir == 0 { return; }
         let speed = ch.porta_speed_period;
@@ -1119,7 +843,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
     // ─── XM vibrato ──────────────────────────────────────────────
 
-    fn apply_vibrato_period(&mut self, channel: usize, _linear: bool) {
+    pub(crate) fn apply_vibrato_period(&mut self, channel: usize, _linear: bool) {
         let (vib_pos, vib_speed, vib_depth, wave_ctrl) = {
             let ch = &self.state.channels[channel];
             (ch.vib_pos, ch.vib_speed, ch.vib_depth, ch.wave_ctrl & 0x03)
@@ -1161,7 +885,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
     // ─── XM tremolo ──────────────────────────────────────────────
 
-    fn apply_tremolo_period(&mut self, channel: usize) {
+    pub(crate) fn apply_tremolo_period(&mut self, channel: usize) {
         let (trem_pos, trem_speed, trem_depth, wave_ctrl) = {
             let ch = &self.state.channels[channel];
             (ch.trem_pos, ch.trem_speed, ch.trem_depth, (ch.wave_ctrl >> 4) & 0x03)
@@ -1211,7 +935,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
     // ─── XM arpeggio ─────────────────────────────────────────────
 
-    fn apply_arpeggio_period(&mut self, channel: usize, tick: u8, linear: bool) {
+    pub(crate) fn apply_arpeggio_period(&mut self, channel: usize, tick: u8, linear: bool) {
         let (arp1, arp2) = self.state.channels[channel].last_arpeggio;
         let arp_tab = get_arp_tab();
         let arp_tick = arp_tab[tick as usize % 256];
@@ -1229,7 +953,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
     // ─── XM volume slide ─────────────────────────────────────────
 
-    fn apply_volume_slide_period(&mut self, channel: usize) {
+    pub(crate) fn apply_volume_slide_period(&mut self, channel: usize) {
         let ch = &mut self.state.channels[channel];
         let up = ch.last_volume_slide_up;
         let down = ch.last_volume_slide_down;
@@ -1251,7 +975,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
     // ─── XM tremor ───────────────────────────────────────────────
 
-    fn apply_tremor_period(&mut self, channel: usize) {
+    pub(crate) fn apply_tremor_period(&mut self, channel: usize) {
         let ch = &mut self.state.channels[channel];
         let tremor_sign = ch.tremor_pos_byte & 0x80;
         let mut tremor_data = ch.tremor_pos_byte & 0x7F;
@@ -1282,7 +1006,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
 
     // ─── XM retrig ───────────────────────────────────────────────
 
-    fn do_multi_retrig_period(&mut self, channel: usize, linear: bool) {
+    pub(crate) fn do_multi_retrig_period(&mut self, channel: usize, linear: bool) {
         let (cnt, speed, vol_kol, _retrig_vol) = {
             let ch = &mut self.state.channels[channel];
             ch.retrig_cnt += 1;
@@ -1331,7 +1055,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         self.retrig_channel_note_period(channel, linear);
     }
 
-    fn retrig_channel_note_period(&mut self, channel: usize, linear: bool) {
+    pub(crate) fn retrig_channel_note_period(&mut self, channel: usize, linear: bool) {
         let module = match self.module.as_ref() {
             Some(m) => m.clone(),
             None => return,
@@ -1374,7 +1098,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         self.voices[voice_idx].channel = Some(channel);
     }
 
-    fn trigger_delayed_note_period(&mut self, channel: usize, linear: bool) {
+    pub(crate) fn trigger_delayed_note_period(&mut self, channel: usize, linear: bool) {
         let cell = match self.state.channels[channel].delayed_cell.take() {
             Some(c) => c,
             None => return,
@@ -1964,7 +1688,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn apply_tone_portamento(&mut self, channel: usize, speed: u16) {
+    pub(crate) fn apply_tone_portamento(&mut self, channel: usize, speed: u16) {
         let module = match self.module.as_ref() {
             Some(m) => m,
             None => return,
@@ -2070,7 +1794,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn apply_vibrato(&mut self, channel: usize, speed: u8, depth: u8) {
+    pub(crate) fn apply_vibrato(&mut self, channel: usize, speed: u8, depth: u8) {
         if depth == 0 {
             return;
         }
@@ -2119,7 +1843,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn apply_tremolo(&mut self, channel: usize, speed: u8, depth: u8) {
+    pub(crate) fn apply_tremolo(&mut self, channel: usize, speed: u8, depth: u8) {
         if depth == 0 {
             return;
         }
@@ -2137,7 +1861,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn apply_arpeggio(&mut self, channel: usize, tick: u8, note1: u8, note2: u8) {
+    pub(crate) fn apply_arpeggio(&mut self, channel: usize, tick: u8, note1: u8, note2: u8) {
         let arp_tick = tick % 3;
         let semitone_offset = match arp_tick {
             0 => 0,
@@ -2156,7 +1880,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn apply_panbrello(&mut self, channel: usize, speed: u8, depth: u8) {
+    pub(crate) fn apply_panbrello(&mut self, channel: usize, speed: u8, depth: u8) {
         if depth == 0 {
             return;
         }
@@ -2175,7 +1899,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn apply_tremor(&mut self, channel: usize, _tick: u8, ontime: u8, offtime: u8) {
+    pub(crate) fn apply_tremor(&mut self, channel: usize, _tick: u8, ontime: u8, offtime: u8) {
         if ontime == 0 && offtime == 0 {
             return;
         }
@@ -2194,7 +1918,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         self.state.channels[channel].tremor_counter = self.state.channels[channel].tremor_counter.wrapping_add(1);
     }
 
-    fn retrigger_channel_note(&mut self, channel: usize) {
+    pub(crate) fn retrigger_channel_note(&mut self, channel: usize) {
         let module = match self.module.as_ref() {
             Some(m) => m.clone(),
             None => return,
@@ -2243,7 +1967,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn get_channel_cutoff_tick(&self, channel: usize) -> Option<u16> {
+    pub(crate) fn get_channel_cutoff_tick(&self, channel: usize) -> Option<u16> {
         for voice in &self.voices {
             if voice.active && voice.channel == Some(channel) {
                 return voice.cutoff_tick;
@@ -2260,7 +1984,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         }
     }
 
-    fn get_channel_delay_tick(&self, channel: usize) -> Option<u16> {
+    pub(crate) fn get_channel_delay_tick(&self, channel: usize) -> Option<u16> {
         let ch = &self.state.channels[channel];
         if ch.note_delay_ticks > 0 {
             return Some(ch.note_delay_ticks as u16);
@@ -2273,7 +1997,7 @@ let _dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
         None
     }
 
-    fn trigger_delayed_note(&mut self, channel: usize) {
+    pub(crate) fn trigger_delayed_note(&mut self, channel: usize) {
         let cell = match self.state.channels[channel].delayed_cell.take() {
             Some(c) => c,
             None => return,

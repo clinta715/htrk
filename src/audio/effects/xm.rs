@@ -487,7 +487,162 @@ impl XmProcessor {
         }
     }
 
-    pub fn process_tick(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _tick: u8) {
+    pub fn process_tick(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, tick: u8) {
+        let linear = engine.module.as_ref().map(|m| m.flags.linear_slides).unwrap_or(false);
+
+        for ch in 0..engine.state.channels.len() {
+            let ch_state = &mut engine.state.channels[ch];
+            let vol_kol = ch_state.vol_kol;
+            if vol_kol > 0 {
+                let vfx = vol_kol >> 4;
+                match vfx {
+                    0x6 => {
+                        let amt = vol_kol & 0x0F;
+                        let new_vol = ch_state.real_vol.saturating_sub(amt);
+                        ch_state.real_vol = new_vol;
+                        ch_state.channel_volume = new_vol;
+                    }
+                    0x7 => {
+                        let amt = vol_kol & 0x0F;
+                        let new_vol = (ch_state.real_vol + amt).min(64);
+                        ch_state.real_vol = new_vol;
+                        ch_state.channel_volume = new_vol;
+                    }
+                    0xD => {
+                        let amt = vol_kol & 0x0F;
+                        let new_pan = ch_state.channel_panning.saturating_sub(amt);
+                        ch_state.channel_panning = new_pan;
+                    }
+                    0xE => {
+                        let amt = vol_kol & 0x0F;
+                        let new_pan = (ch_state.channel_panning + amt).min(255);
+                        ch_state.channel_panning = new_pan;
+                    }
+                    _ => {}
+                }
+            }
+
+            let ae = engine.state.channels[ch].active_effects;
+
+            if ae.arpeggio
+                && (engine.state.channels[ch].last_arpeggio.0 > 0
+                    || engine.state.channels[ch].last_arpeggio.1 > 0)
+            {
+                engine.apply_arpeggio_period(ch, tick, linear);
+            }
+            if ae.portamento_up {
+                let spd = engine.state.channels[ch].last_portamento_up_speed;
+                if spd > 0 {
+                    let spd_period = (spd as u16) << 2;
+                    {
+                        let ch = &mut engine.state.channels[ch];
+                        ch.real_period = ch.real_period.saturating_sub(spd_period).max(1);
+                        ch.out_period = ch.real_period;
+                    }
+                    let module = engine.module.as_ref().unwrap().clone();
+                    let freq = crate::sequencer::period::period_to_frequency(engine.state.channels[ch].out_period, module.flags.linear_slides, 8363);
+                    let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
+                    for voice in &mut engine.voices {
+                        if voice.active && voice.channel == Some(ch) {
+                            voice.current_frequency = freq;
+                            voice.sample_delta = delta;
+                        }
+                    }
+                }
+            }
+            if ae.portamento_down {
+                let spd = engine.state.channels[ch].last_portamento_down_speed;
+                if spd > 0 {
+                    let spd_period = (spd as u16) << 2;
+                    {
+                        let ch = &mut engine.state.channels[ch];
+                        ch.real_period = ch.real_period.saturating_add(spd_period).min(31999);
+                        ch.out_period = ch.real_period;
+                    }
+                    let module = engine.module.as_ref().unwrap().clone();
+                    let freq = crate::sequencer::period::period_to_frequency(engine.state.channels[ch].out_period, module.flags.linear_slides, 8363);
+                    let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
+                    for voice in &mut engine.voices {
+                        if voice.active && voice.channel == Some(ch) {
+                            voice.current_frequency = freq;
+                            voice.sample_delta = delta;
+                        }
+                    }
+                }
+            }
+            if ae.tone_portamento {
+                engine.apply_tone_portamento_period(ch, linear);
+            }
+            if ae.vibrato {
+                engine.apply_vibrato_period(ch, linear);
+            }
+            if ae.tremolo {
+                engine.apply_tremolo_period(ch);
+            }
+            if ae.volume_slide {
+                engine.apply_volume_slide_period(ch);
+            }
+            if ae.tremor {
+                engine.apply_tremor_period(ch);
+            }
+
+            if ae.panning_slide {
+                engine.apply_panning_slide(ch);
+            }
+
+            if ae.filter_cutoff_slide {
+                let slide = engine.state.channels[ch].last_filter_cutoff_slide as f32;
+                let new_cutoff = (engine.state.channels[ch].filter_cutoff + slide).clamp(0.0, 0xFFFF as f32);
+                engine.state.channels[ch].filter_cutoff = new_cutoff;
+                for voice in &mut engine.voices {
+                    if voice.active && voice.channel == Some(ch) {
+                        voice.filter_cutoff = new_cutoff;
+                    }
+                }
+            }
+
+            let retrig_speed = engine.state.channels[ch].retrig_speed;
+            let retrig_interval = engine.state.channels[ch].last_retrigger_interval;
+            if retrig_speed > 0 && tick > 0 && tick % retrig_speed == 0 {
+                engine.do_multi_retrig_period(ch, linear);
+            } else if retrig_interval > 0 && tick > 0 && tick % retrig_interval == 0 {
+                engine.retrig_channel_note_period(ch, linear);
+            }
+
+            let delay_ticks = engine.state.channels[ch].note_delay_ticks;
+            if delay_ticks > 0 && tick == delay_ticks {
+                engine.trigger_delayed_note_period(ch, linear);
+            }
+
+            let note_cut = engine.state.channels[ch].note_cut_tick;
+            if let Some(cutoff) = note_cut {
+                if tick == cutoff {
+                    engine.cut_channel_voices(ch);
+                    engine.state.channels[ch].note_cut_tick = None;
+                }
+            }
+
+            if engine.state.channels[ch].active_effects.key_off {
+                engine.state.channels[ch].active_effects.key_off = false;
+                for voice in &mut engine.voices {
+                    if voice.active && voice.channel == Some(ch) {
+                        if let Some(ref mut env) = voice.vol_env { env.released = true; }
+                        if let Some(ref mut env) = voice.pan_env { env.released = true; }
+                        if let Some(ref mut env) = voice.pitch_env { env.released = true; }
+                        if let Some(ref mut env) = voice.filter_env { env.released = true; }
+                    }
+                }
+            }
+
+            if !ae.tremolo {
+                let vol = engine.compute_channel_volume(ch);
+                for voice in &mut engine.voices {
+                    if voice.active && voice.channel == Some(ch) {
+                        voice.base_volume = vol;
+                    }
+                }
+            }
+        }
     }
 
     pub fn trigger_note(
