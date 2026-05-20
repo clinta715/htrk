@@ -263,9 +263,9 @@ fn test_headless_edit() {
 
 Execute in this order, committing after each step so the app compiles at every point:
 
-1. **Create `src/core/mod.rs`** — Define `HtrkCore` struct with all fields, `new()` constructor, `module()` / `playback_state()` accessors, and `with_module_mut` / `sync_to_audio` helpers. Wire `src/lib.rs` to include `core` module.
+1. ~~**Create `src/core/mod.rs`** — Define `HtrkCore` struct with all fields, `new()` constructor, `module()` / `playback_state()` accessors, and `with_module_mut` / `sync_to_audio` helpers. Wire `src/lib.rs` to include `core` module.~~ **DONE** (commit 95f03f6)
 
-2. **Replace `HtrkApp` fields with `core: HtrkCore`** — Move all core-owned fields into `HtrkCore`, give `HtrkApp` a `core` field. Temporarily add `Deref`/`DerefMut` impls to `HtrkApp` targeting `HtrkCore` so all existing `self.module`, `self.cursor` etc. calls still compile.
+2. ~~**Replace `HtrkApp` fields with `core: HtrkCore`** — Move all core-owned fields into `HtrkCore`, give `HtrkApp` a `core` field. Changed all ~346 `self.FIELD` references to `self.core.FIELD`. No Deref/DerefMut needed — direct field access via `pub(crate)` fields.~~ **DONE** (commit 95f03f6)
 
 3. **Migrate editing methods to `editing.rs`** — Move `set_cell_at_cursor`, `clear_cell_at_cursor`, `insert_row`, `delete_row`, `copy_selection`, `paste_at_cursor`, `delete_selection`, `transpose_selection`, `select_all`, and all order-list mutation methods. Remove `Deref`/`DerefMut` for these methods one at a time, fixing call sites in `app.rs` to use `self.core.`.
 
@@ -277,7 +277,7 @@ Execute in this order, committing after each step so the app compiles at every p
 
 7. **Migrate the 3 CommandSender widgets** — Change `transport.rs`, `sendfx_editor.rs`, `playback_view.rs` to take `&mut HtrkCore` instead of `&mut CommandSender`. Move relevant `send_command` calls inside `HtrkCore` methods.
 
-8. **Remove `Deref`/`DerefMut`** — Once all methods are genuinely on `HtrkCore`, remove the temporary deref impls. All `self.module` in `app.rs` must now be `self.core.module()`, etc.
+8. **Remove `Deref`/`DerefMut`** — Note: we didn't use Deref/DerefMut. All field access is via `pub(crate)` fields on `HtrkCore`, accessed as `self.core.FIELD`. This step is N/A — verify all access is clean.
 
 9. **Add headless test** — Create `tests/headless_edit.rs` that constructs `HtrkCore` without `eframe`, loads a module, performs edits, and verifies state.
 
