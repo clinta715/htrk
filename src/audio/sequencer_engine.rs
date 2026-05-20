@@ -9,7 +9,7 @@ use crate::audio::effects::{
 use crate::audio::voice::{EnvelopeState, Voice};
 use crate::audio::filter::StateVariableFilter;
 use crate::sequencer::automation::AutomationTarget;
-use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect, FilterType, NUM_SEND_BUSES};
+use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, FilterType, NUM_SEND_BUSES};
 use crate::sequencer::instrument::{
     DuplicateCheckAction, DuplicateCheckType, NewNoteAction,
 };
@@ -349,8 +349,6 @@ impl SequencerEngine {
     if channel >= self.state.channels.len() {
         return;
     }
-    let is_xm = self.use_xm_model;
-
     // Common: instrument
     if cell.instrument.is_some() {
         self.state.channels[channel].last_instrument = cell.instrument.unwrap();
@@ -385,19 +383,11 @@ impl SequencerEngine {
         None
     };
 
-    // XM: set channel defaults from sample (volume + pan)
-    if is_xm {
-        if let Some(s) = sample {
-            self.state.channels[channel].channel_volume = s.default_volume.min(64);
-            self.state.channels[channel].channel_panning = s.default_panning;
-        }
-    } else {
-        // IT: volume reset on instrument change only
-        if cell.instrument.is_some() {
-            if let Some(s) = sample {
-                self.state.channels[channel].channel_volume = s.default_volume.min(64);
-            }
-        }
+    // Set channel defaults from sample
+    {
+        let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
+        processor.init_sample_defaults(self, channel, cell, sample);
+        self.processor = processor;
     }
 
     // Volume column
@@ -449,33 +439,9 @@ impl SequencerEngine {
                 self.state.channels[channel].last_note = Note::On(key);
 
                 if is_tone_portamento {
-                    if is_xm {
-                        let ch = &mut self.state.channels[channel];
-                        if let Some(s) = sample {
-                            ch.rel_ton = s.relative_note;
-                        }
-                        let ft = ch.fine_tune_offset;
-                        let want_period = get_note_period(
-                            remapped_key.saturating_add(ch.rel_ton as u8),
-                            ft,
-                            module.flags.linear_slides,
-                        );
-                        ch.want_period = want_period;
-                        if want_period == ch.real_period {
-                            ch.porta_dir = 0;
-                        } else if want_period > ch.real_period {
-                            ch.porta_dir = 1;
-                        } else {
-                            ch.porta_dir = 2;
-                        }
-                    } else {
-                        let (target_period, target_freq) = self.compute_portamento_target(
-                            channel, key, remapped_key, sample, sample_idx, &module,
-                        );
-                        let ch = &mut self.state.channels[channel];
-                        ch.portamento_target_period = Some(target_period);
-                        ch.portamento_target_frequency = Some(target_freq);
-                    }
+                    let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
+                    processor.setup_portamento(self, channel, key, remapped_key, sample, sample_idx);
+                    self.processor = processor;
                 } else {
                     let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
                     processor.trigger_note(self, channel, key, remapped_key, sample, sample_idx, cell, instrument_idx);

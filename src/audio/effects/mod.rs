@@ -217,6 +217,20 @@ impl EffectProcessor {
         }
     }
 
+    pub fn setup_portamento(&mut self, engine: &mut super::sequencer_engine::SequencerEngine, channel: usize, note_key: u8, remapped_key: u8, sample: Option<&Sample>, sample_idx: usize) {
+        match self {
+            EffectProcessor::Xm(p) => p.setup_portamento(engine, channel, note_key, remapped_key, sample, sample_idx),
+            EffectProcessor::Legacy(p) => p.setup_portamento(engine, channel, note_key, remapped_key, sample, sample_idx),
+        }
+    }
+
+    pub fn init_sample_defaults(&mut self, engine: &mut super::sequencer_engine::SequencerEngine, channel: usize, cell: &Cell, sample: Option<&Sample>) {
+        match self {
+            EffectProcessor::Xm(p) => p.init_sample_defaults(engine, channel, cell, sample),
+            EffectProcessor::Legacy(p) => p.init_sample_defaults(engine, channel, cell, sample),
+        }
+    }
+
     pub fn process_volume_column(&mut self, engine: &mut super::sequencer_engine::SequencerEngine, channel: usize, vol: u8) {
         match self {
             EffectProcessor::Xm(p) => p.process_volume_column(engine, channel, vol),

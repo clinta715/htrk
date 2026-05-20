@@ -833,6 +833,36 @@ impl XmProcessor {
         }
     }
 
+    pub fn setup_portamento(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, note_key: u8, remapped_key: u8, sample: Option<&Sample>, _sample_idx: usize) {
+        if let Some(s) = sample {
+            let ch = &mut engine.state.channels[channel];
+            ch.rel_ton = s.relative_note;
+        }
+        let module = engine.module.as_ref().unwrap().clone();
+        let ch = &mut engine.state.channels[channel];
+        let ft = ch.fine_tune_offset;
+        let want_period = crate::sequencer::period::get_note_period(
+            remapped_key.saturating_add(ch.rel_ton as u8),
+            ft,
+            module.flags.linear_slides,
+        );
+        ch.want_period = want_period;
+        if want_period == ch.real_period {
+            ch.porta_dir = 0;
+        } else if want_period > ch.real_period {
+            ch.porta_dir = 1;
+        } else {
+            ch.porta_dir = 2;
+        }
+    }
+
+    pub fn init_sample_defaults(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, _cell: &Cell, sample: Option<&Sample>) {
+        if let Some(s) = sample {
+            engine.state.channels[channel].channel_volume = s.default_volume.min(64);
+            engine.state.channels[channel].channel_panning = s.default_panning;
+        }
+    }
+
     pub fn handle_note_off(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize) {
         let module = match engine.module.as_ref() {
             Some(m) => m.clone(),
