@@ -874,7 +874,55 @@ impl LegacyProcessor {
     pub fn trigger_delayed_note(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _channel: usize) {
     }
 
-    pub fn process_volume_column(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _channel: usize, _vol: u8) {
+    pub fn process_volume_column(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, vol: u8) {
+        let ch_state = &mut engine.state.channels[channel];
+
+        if vol <= 64 {
+            ch_state.row_volume = vol;
+            ch_state.channel_volume = vol;
+            return;
+        }
+
+        match vol {
+            65..=74 => {
+                let amount = vol - 65;
+                ch_state.channel_volume = (ch_state.channel_volume as u16 + amount as u16).min(64) as u8;
+                ch_state.row_volume = ch_state.channel_volume;
+            }
+            75..=84 => {
+                let amount = vol - 75;
+                ch_state.channel_volume = ch_state.channel_volume.saturating_sub(amount);
+                ch_state.row_volume = ch_state.channel_volume;
+            }
+            85..=94 => {
+                ch_state.last_tone_portamento_speed = vol - 85;
+            }
+            95..=104 => {
+                ch_state.last_vibrato_speed = vol - 95;
+            }
+            105..=114 => {
+                ch_state.last_vibrato_depth = vol - 105;
+            }
+            115..=124 => {
+                ch_state.last_portamento_up_speed = vol - 115;
+            }
+            125..=127 => {}
+            128..=192 => {
+                let pan = vol - 128;
+                ch_state.channel_panning = (pan as u16 * 255 / 64).min(255) as u8;
+            }
+            193..=207 => {
+                let speed = vol - 193;
+                ch_state.last_portamento_up_speed = speed;
+                engine.apply_portamento_up(channel, speed as u16);
+            }
+            208..=222 => {
+                let speed = vol - 208;
+                ch_state.last_portamento_down_speed = speed;
+                engine.apply_portamento_down(channel, speed as u16);
+            }
+            _ => {}
+        }
     }
 
     pub fn handle_note_off(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _channel: usize) {
