@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::audio::commands::AudioCommand;
-use crate::edit::{SetCellCommand, UndoManager};
-use crate::sequencer::module::{Module, DEFAULT_CHANNELS, MAX_CHANNELS};
+use crate::edit::{SetCellCommand, BulkSetCellsCommand, TransposeCommand};
+use crate::sequencer::module::MAX_CHANNELS;
+use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
 use crate::ui::pattern_grid::{CursorPosition, Selection, SubColumn};
 
@@ -67,47 +67,365 @@ impl HtrkCore {
         }
     }
 
-    pub fn set_cursor(&mut self, cursor: CursorPosition) {
-        self.cursor = cursor;
-    }
-
-    pub fn set_selection(&mut self, selection: Option<Selection>) {
-        self.selection = selection;
-    }
-
-    pub fn set_selection_anchor(&mut self, anchor: Option<CursorPosition>) {
-        self.selection_anchor = anchor;
-    }
-
-    pub fn set_selected_order(&mut self, order: usize) {
-        self.selected_order = order;
-    }
-
-    pub fn set_selected_sample(&mut self, sample: usize) {
-        self.selected_sample = sample;
-    }
-
-    pub fn set_selected_instrument(&mut self, instrument: usize) {
-        self.selected_instrument = instrument;
-    }
-
-    pub fn set_last_entered_cell(&mut self, cell: Option<Cell>) {
-        self.last_entered_cell = cell;
-    }
-
-    pub fn last_entered_cell(&self) -> Option<Cell> {
-        self.last_entered_cell
-    }
-
-    pub fn set_muted_channel(&mut self, channel: usize, muted: bool) {
-        if channel < self.muted_channels.len() {
-            self.muted_channels[channel] = muted;
+    pub fn copy_selection(&mut self) {
+        if let Some(sel) = &self.selection {
+            let (min, max) = sel.normalized();
+            if let Some(pattern) = self.current_pattern() {
+                let mut data = Vec::new();
+                for row in min.row..=max.row {
+                    let mut row_data = Vec::new();
+                    for ch in min.channel..=max.channel {
+                        row_data.push(*pattern.cell(row, ch));
+                    }
+                    data.push(row_data);
+                }
+                self.clipboard = Some(data);
+                self.clipboard_width = max.channel - min.channel + 1;
+            }
         }
     }
 
-    pub fn set_solo_channel(&mut self, channel: usize, solo: bool) {
-        if channel < self.solo_channels.len() {
-            self.solo_channels[channel] = solo;
+    pub fn delete_selection(&mut self) {
+        let sel = match &self.selection {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        let (min, max) = sel.normalized();
+        let selected_order = self.selected_order;
+
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
+                if pat_idx >= arc_module.patterns.len() {
+                    return;
+                }
+                let pattern = &arc_module.patterns[pat_idx];
+                let mut old_cells = Vec::new();
+                let mut new_cells = Vec::new();
+                for row in min.row..=max.row {
+                    for ch in min.channel..=max.channel {
+                        if row < pattern.num_rows && ch < MAX_CHANNELS {
+                            let old = pattern.data[row][ch];
+                            if !old.is_empty() {
+                                old_cells.push((row, ch, old));
+                                new_cells.push((row, ch, Cell::default()));
+                            }
+                        }
+                    }
+                }
+                if !old_cells.is_empty() {
+                    let cmd = Box::new(BulkSetCellsCommand {
+                        order: selected_order,
+                        old_cells,
+                        new_cells,
+                    });
+                    let _ = self.undo_manager.execute(cmd, arc_module);
+                }
+            }
         }
+        self.sync_to_audio();
+    }
+
+    pub fn paste_at_cursor(&mut self) {
+        let clipboard_data = match &self.clipboard {
+            Some(d) => d.clone(),
+            None => return,
+        };
+        let selected_order = self.selected_order;
+        let cursor_row = self.cursor.row;
+        let cursor_ch = self.cursor.channel;
+
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
+                if pat_idx >= arc_module.patterns.len() {
+                    return;
+                }
+                let pattern = &arc_module.patterns[pat_idx];
+                let mut old_cells = Vec::new();
+                let mut new_cells = Vec::new();
+                for (row_offset, row_data) in clipboard_data.iter().enumerate() {
+                    let target_row = cursor_row + row_offset;
+                    if target_row >= pattern.num_rows {
+                        continue;
+                    }
+                    for (ch_offset, cell) in row_data.iter().enumerate() {
+                        let target_ch = cursor_ch + ch_offset;
+                        if target_ch >= MAX_CHANNELS {
+                            continue;
+                        }
+                        if cell.is_empty() {
+                            continue;
+                        }
+                        let old = pattern.data[target_row][target_ch];
+                        old_cells.push((target_row, target_ch, old));
+                        new_cells.push((target_row, target_ch, *cell));
+                    }
+                }
+                if !old_cells.is_empty() {
+                    let cmd = Box::new(BulkSetCellsCommand {
+                        order: selected_order,
+                        old_cells,
+                        new_cells,
+                    });
+                    let _ = self.undo_manager.execute(cmd, arc_module);
+                }
+            }
+        }
+        self.sync_to_audio();
+    }
+
+    pub fn select_all(&mut self) {
+        if let Some(pattern) = self.current_pattern() {
+            let num_ch = self.num_channels();
+            let sel = Selection {
+                start: CursorPosition {
+                    row: 0,
+                    channel: 0,
+                    sub_column: SubColumn::Note,
+                },
+                end: CursorPosition {
+                    row: pattern.num_rows - 1,
+                    channel: num_ch - 1,
+                    sub_column: SubColumn::EffectParamLow,
+                },
+            };
+            self.selection = Some(sel);
+        }
+    }
+
+    pub fn transpose_selection(&mut self, delta: i8) {
+        let sel = match &self.selection {
+            Some(s) => s.clone(),
+            None => {
+                let cursor = self.cursor;
+                Selection { start: cursor, end: cursor }
+            }
+        };
+        let (min, max) = sel.normalized();
+        let selected_order = self.selected_order;
+
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
+                if pat_idx < arc_module.patterns.len() {
+                    let mut old_notes = Vec::new();
+                    for row in min.row..=max.row {
+                        for ch in min.channel..=max.channel {
+                            let note = arc_module.patterns[pat_idx].data[row][ch].note;
+                            if let Note::On(_) = note {
+                                old_notes.push((row, ch, note));
+                            }
+                        }
+                    }
+                    let cmd = TransposeCommand {
+                        order: selected_order,
+                        delta,
+                        old_notes,
+                    };
+                    let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                }
+            }
+        }
+        self.sync_to_audio();
+    }
+
+    pub fn handle_context_menu_action(&mut self, action: crate::ui::pattern_grid::ContextMenuAction) {
+        let sel = match &self.selection {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        let (min, max) = sel.normalized();
+        let selected_order = self.selected_order;
+
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
+                if pat_idx >= arc_module.patterns.len() {
+                    return;
+                }
+
+                match action {
+                    crate::ui::pattern_grid::ContextMenuAction::FillInstrument => {
+                        let mut old_cells = Vec::new();
+                        for row in min.row..=max.row {
+                            for ch in min.channel..=max.channel {
+                                let cell = arc_module.patterns[pat_idx].data[row][ch];
+                                if cell.note != Note::None {
+                                    old_cells.push((row, ch, cell));
+                                }
+                            }
+                        }
+                        let cmd = crate::edit::FillInstrumentCommand {
+                            order: selected_order,
+                            old_cells,
+                            instrument: self.selected_instrument as u8,
+                        };
+                        let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                    }
+                    crate::ui::pattern_grid::ContextMenuAction::InterpolateVolume => {
+                        let mut old_cells = Vec::new();
+                        let mut new_cells = Vec::new();
+                        for ch in min.channel..=max.channel {
+                            let first_vol = arc_module.patterns[pat_idx].data[min.row][ch].volume;
+                            let last_vol = arc_module.patterns[pat_idx].data[max.row][ch].volume;
+                            if let (Some(fv), Some(lv)) = (first_vol, last_vol) {
+                                let total = max.row - min.row;
+                                for (step, row) in (min.row..=max.row).enumerate() {
+                                    let old_cell = arc_module.patterns[pat_idx].data[row][ch];
+                                    old_cells.push((row, ch, old_cell));
+                                    let mut new_cell = old_cell;
+                                    new_cell.volume = Some(crate::edit::interpolate_u8(fv, lv, step, total));
+                                    new_cells.push((row, ch, new_cell));
+                                }
+                            }
+                        }
+                        if !new_cells.is_empty() {
+                            let cmd = crate::edit::InterpolateCommand {
+                                order: selected_order,
+                                old_cells,
+                                new_cells,
+                            };
+                            let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                        }
+                    }
+                    crate::ui::pattern_grid::ContextMenuAction::InterpolateEffect => {
+                        let mut old_cells = Vec::new();
+                        let mut new_cells = Vec::new();
+                        for ch in min.channel..=max.channel {
+                            let first_param = crate::sequencer::effect::effect_param_value(&arc_module.patterns[pat_idx].data[min.row][ch].effect);
+                            let last_param = crate::sequencer::effect::effect_param_value(&arc_module.patterns[pat_idx].data[max.row][ch].effect);
+                            if let (Some(fp), Some(lp)) = (first_param, last_param) {
+                                let total = max.row - min.row;
+                                for (step, row) in (min.row..=max.row).enumerate() {
+                                    let old_cell = arc_module.patterns[pat_idx].data[row][ch];
+                                    old_cells.push((row, ch, old_cell));
+                                    let new_val = crate::edit::interpolate_u8(fp, lp, step, total);
+                                    let new_cell = crate::sequencer::effect::set_effect_param_value(old_cell, new_val);
+                                    new_cells.push((row, ch, new_cell));
+                                }
+                            }
+                        }
+                        if !new_cells.is_empty() {
+                            let cmd = crate::edit::InterpolateCommand {
+                                order: selected_order,
+                                old_cells,
+                                new_cells,
+                            };
+                            let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                        }
+                    }
+                    crate::ui::pattern_grid::ContextMenuAction::Reverse => {
+                        for ch in min.channel..=max.channel {
+                            let old_cells: Vec<Cell> = (min.row..=max.row)
+                                .map(|r| arc_module.patterns[pat_idx].data[r][ch])
+                                .collect();
+                            let cmd = crate::edit::ReverseCommand {
+                                order: selected_order,
+                                channel: ch,
+                                start_row: min.row,
+                                end_row: max.row,
+                                old_cells,
+                            };
+                            let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                        }
+                    }
+                    crate::ui::pattern_grid::ContextMenuAction::Randomize => {
+                        let mut old_cells = Vec::new();
+                        let mut new_cells = Vec::new();
+                        for row in min.row..=max.row {
+                            for ch in min.channel..=max.channel {
+                                let old_cell = arc_module.patterns[pat_idx].data[row][ch];
+                                old_cells.push((row, ch, old_cell));
+                                let mut new_cell = old_cell;
+                                if let Note::On(key) = old_cell.note {
+                                    let new_key = crate::edit::random_u8(key.saturating_sub(12).max(0), (key as u16 + 12).min(119) as u8);
+                                    new_cell.note = Note::On(new_key);
+                                }
+                                if let Some(v) = old_cell.volume {
+                                    let min_v = v.saturating_sub(16);
+                                    let max_v = (v as u16 + 16).min(255) as u8;
+                                    new_cell.volume = Some(crate::edit::random_u8(min_v, max_v));
+                                }
+                                new_cells.push((row, ch, new_cell));
+                            }
+                        }
+                        if !new_cells.is_empty() {
+                            let cmd = crate::edit::RandomizeCommand {
+                                order: selected_order,
+                                old_cells,
+                                new_cells,
+                            };
+                            let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                        }
+                    }
+                }
+            }
+        }
+        self.sync_to_audio();
+    }
+
+    pub fn skip_to_prev_pattern(&mut self) {
+        let order_len = self.module.as_ref().map_or(0, |m| m.order_list.len());
+        if order_len == 0 {
+            return;
+        }
+        self.selected_order = if self.selected_order == 0 {
+            order_len - 1
+        } else {
+            self.selected_order - 1
+        };
+        self.cursor.row = 0;
+        self.selection = None;
+        if self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
+            self.send_command(crate::audio::commands::AudioCommand::PlayFrom {
+                order: self.selected_order as u16,
+                row: 0,
+            });
+        }
+    }
+
+    pub fn skip_to_next_pattern(&mut self) {
+        let order_len = self.module.as_ref().map_or(0, |m| m.order_list.len());
+        if order_len == 0 {
+            return;
+        }
+        self.selected_order = if self.selected_order >= order_len - 1 {
+            0
+        } else {
+            self.selected_order + 1
+        };
+        self.cursor.row = 0;
+        self.selection = None;
+        if self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
+            self.send_command(crate::audio::commands::AudioCommand::PlayFrom {
+                order: self.selected_order as u16,
+                row: 0,
+            });
+        }
+    }
+
+    pub fn undo(&mut self) {
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let _ = self.undo_manager.undo(arc_module);
+            }
+        }
+        self.sync_to_audio();
+    }
+
+    pub fn redo(&mut self) {
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let _ = self.undo_manager.redo(arc_module);
+            }
+        }
+        self.sync_to_audio();
     }
 }

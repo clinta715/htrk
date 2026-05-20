@@ -180,7 +180,7 @@ impl HtrkCore {
         }
     }
 
-    fn ensure_module_ownership(&mut self) {
+    pub(crate) fn ensure_module_ownership(&mut self) {
         let new_module = match &self.module {
             Some(arc) if Arc::strong_count(arc) > 1 => {
                 Some(Arc::new((**arc).clone()))
@@ -204,9 +204,10 @@ impl HtrkCore {
         result
     }
 
-    fn sync_to_audio(&mut self) {
+    pub fn sync_to_audio(&mut self) {
         if let Some(ref module) = self.module {
             self.send_command(AudioCommand::LoadModule(module.clone()));
+            self.module_dirty = true;
         }
     }
 
@@ -219,22 +220,27 @@ impl HtrkCore {
         self.solo_channels.resize(count, false);
     }
 
-    fn current_pattern(&self) -> Option<&crate::sequencer::Pattern> {
+    pub(crate) fn current_pattern(&self) -> Option<&crate::sequencer::Pattern> {
         let module = self.module.as_ref()?;
         let order = *module.order_list.get(self.selected_order)?;
         module.patterns.get(order as usize)
     }
 
-    fn current_pattern_mut(&mut self) -> Option<&mut crate::sequencer::Pattern> {
+    pub(crate) fn current_pattern_mut(&mut self) -> Option<&mut crate::sequencer::Pattern> {
         self.ensure_module_ownership();
         let module = Arc::get_mut(self.module.as_mut()?)?;
         let order = *module.order_list.get(self.selected_order)?;
         module.patterns.get_mut(order as usize)
     }
 
-    fn num_channels(&self) -> usize {
+    pub(crate) fn num_channels(&self) -> usize {
         self.module.as_ref()
             .map(|m| m.channel_panning.len())
             .unwrap_or(DEFAULT_CHANNELS)
+    }
+
+    pub(crate) fn num_channels_checked(&self) -> usize {
+        let n = self.num_channels();
+        if n == 0 { 1 } else { n }
     }
 }
