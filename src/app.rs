@@ -1,34 +1,24 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use eframe::egui;
 
+use crate::app_config::AppConfig;
 use crate::audio::commands::AudioCommand;
 use crate::audio::engine::create_engine_and_sender;
-use crate::audio::renderer::WavRenderer;
 use crate::audio::playback_state::AtomicPlaybackState;
-use crate::edit::{
-    InsertRowCommand, SampleProperty, SetSamplePropertyCommand,
-    InstrumentProperty, SetInstrumentPropertyCommand, AddEnvelopePointCommand,
-    RemoveEnvelopePointCommand, SetEnvelopePointCommand, EnvelopeType, SetSampleDataCommand,
-    MapNoteToSampleCommand, SetEnvelopeSustainCommand, SetEnvelopeLoopCommand,
-    SetEnvelopeFlagsCommand, MapNoteToNoteCommand,
-};
-use crate::app_config::AppConfig;
-use crate::sequencer::instrument::EnvelopePoint;
-use crate::ui::sample_editor::SampleEditEvent;
-use crate::ui::instrument_editor::InstrumentEditEvent;
-use crate::ui::file_browser::{FileBrowser, BrowserMode};
+use crate::audio::renderer::WavRenderer;
+use crate::edit::InsertRowCommand;
 use crate::formats;
-use crate::sequencer::pattern::Cell;
+use crate::sequencer::automation::InterpolationMode;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::effect::SendEffectType;
-use crate::sequencer::automation::InterpolationMode;
-use crate::sequencer::{Effect, Note, MAX_CHANNELS, DEFAULT_CHANNELS};
+use crate::sequencer::pattern::Cell;
+use crate::sequencer::{Effect, Note, DEFAULT_CHANNELS, MAX_CHANNELS};
+use crate::ui::file_browser::{BrowserMode, FileBrowser};
 use crate::ui::pattern_grid::{ColumnVisibility, Selection, SubColumn, VISIBLE_ROWS};
-use crate::ui::TrackerTheme;
 use crate::ui::theme::ThemePreset;
+use crate::ui::TrackerTheme;
 
 const NOTE_KEYS_LOWER: [(egui::Key, u8); 12] = [
     (egui::Key::Z, 0),
@@ -106,12 +96,12 @@ pub struct HtrkApp {
     show_about: bool,
     settings_state: crate::ui::settings_window::SettingsState,
     wav_export_state: crate::ui::wav_export_window::WavExportState,
-    sample_export_dialog: Option<crate::ui::sample_export_dialog::SampleExportDialog>,
+    pub(crate) sample_export_dialog: Option<crate::ui::sample_export_dialog::SampleExportDialog>,
     audio_init_failed: bool,
     sample_selection: Option<(usize, usize)>,
-    sample_clipboard: Option<Arc<Vec<f32>>>,
+    pub(crate) sample_clipboard: Option<Arc<Vec<f32>>>,
     amplify_factor: f32,
-    config: AppConfig,
+    pub(crate) config: AppConfig,
     col_vis: ColumnVisibility,
     last_visible_rows: usize,
     last_visible_channels: usize,
@@ -389,11 +379,11 @@ impl HtrkApp {
         self.core.send_command(cmd);
     }
 
-    fn ensure_module_ownership(&mut self) {
+    pub(crate) fn ensure_module_ownership(&mut self) {
         self.core.ensure_module_ownership();
     }
 
-    fn sync_module_to_audio(&mut self) {
+    pub(crate) fn sync_module_to_audio(&mut self) {
         self.core.sync_to_audio();
     }
 
@@ -479,7 +469,7 @@ impl HtrkApp {
         }
     }
 
-    fn new_song(&mut self) {
+    pub(crate) fn new_song(&mut self) {
         self.core.new_song();
         self.scroll_row = 0;
         self.scroll_channel = 0;
@@ -1612,617 +1602,6 @@ impl HtrkApp {
         self.core.module_dirty = false;
         self.core.last_backup_time = std::time::Instant::now();
     }
-
-    fn handle_sample_edit(&mut self, event: SampleEditEvent) {
-        let sample_idx = self.core.selected_sample;
-        let module = match &self.core.module {
-            Some(m) => m,
-            None => return,
-        };
-        let sample = match module.samples.get(sample_idx) {
-            Some(s) => s,
-            None => return,
-        };
-
-        let cmd: Box<dyn crate::edit::EditCommand> = match event {
-            SampleEditEvent::NameChanged(n) => Box::new(SetSamplePropertyCommand {
-                sample_index: sample_idx,
-                property: SampleProperty::Name(n),
-                old_property: SampleProperty::Name(sample.name.clone()),
-            }),
-            SampleEditEvent::VolumeChanged(v) => Box::new(SetSamplePropertyCommand {
-                sample_index: sample_idx,
-                property: SampleProperty::DefaultVolume(v),
-                old_property: SampleProperty::DefaultVolume(sample.default_volume),
-            }),
-            SampleEditEvent::PanningChanged(p) => Box::new(SetSamplePropertyCommand {
-                sample_index: sample_idx,
-                property: SampleProperty::DefaultPanning(p),
-                old_property: SampleProperty::DefaultPanning(sample.default_panning),
-            }),
-            SampleEditEvent::GlobalVolumeChanged(v) => Box::new(SetSamplePropertyCommand {
-                sample_index: sample_idx,
-                property: SampleProperty::GlobalVolume(v),
-                old_property: SampleProperty::GlobalVolume(sample.global_volume),
-            }),
-            SampleEditEvent::LoopTypeChanged(t) => Box::new(SetSamplePropertyCommand {
-                sample_index: sample_idx,
-                property: SampleProperty::LoopType(t),
-                old_property: SampleProperty::LoopType(sample.loop_type),
-            }),
-            SampleEditEvent::LoopStartChanged(s) => Box::new(SetSamplePropertyCommand {
-                sample_index: sample_idx,
-                property: SampleProperty::LoopStart(s),
-                old_property: SampleProperty::LoopStart(sample.loop_start),
-            }),
-            SampleEditEvent::LoopEndChanged(e) => Box::new(SetSamplePropertyCommand {
-                sample_index: sample_idx,
-                property: SampleProperty::LoopEnd(e),
-                old_property: SampleProperty::LoopEnd(sample.loop_end),
-            }),
-            SampleEditEvent::RelativeNoteChanged(n) => Box::new(SetSamplePropertyCommand {
-                sample_index: sample_idx,
-                property: SampleProperty::RelativeNote(n),
-                old_property: SampleProperty::RelativeNote(sample.relative_note),
-            }),
-            SampleEditEvent::FineTuneChanged(t) => Box::new(SetSamplePropertyCommand {
-                sample_index: sample_idx,
-                property: SampleProperty::FineTune(t),
-                old_property: SampleProperty::FineTune(sample.fine_tune),
-            }),
-            SampleEditEvent::Normalize => {
-                let mut data = (*sample.data).clone();
-                let max = data.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
-                if max > 0.0 {
-                    let factor = 1.0 / max;
-                    for x in data.iter_mut() {
-                        *x *= factor;
-                    }
-                }
-                Box::new(SetSampleDataCommand {
-                    sample_index: sample_idx,
-                    old_data: sample.data.clone(),
-                    new_data: Arc::new(data),
-                })
-            }
-            SampleEditEvent::Reverse => {
-                let mut data = (*sample.data).clone();
-                data.reverse();
-                Box::new(SetSampleDataCommand {
-                    sample_index: sample_idx,
-                    old_data: sample.data.clone(),
-                    new_data: Arc::new(data),
-                })
-            }
-            SampleEditEvent::CutRegion(s, e) => {
-                let s = s.min(e);
-                let e = s.max(e);
-                let mut data = (*sample.data).clone();
-                self.sample_clipboard = Some(Arc::new(data[s..e].to_vec()));
-                data.drain(s..e);
-                Box::new(SetSampleDataCommand {
-                    sample_index: sample_idx,
-                    old_data: sample.data.clone(),
-                    new_data: Arc::new(data),
-                })
-            }
-            SampleEditEvent::CopyRegion(s, e) => {
-                let s = s.min(e);
-                let e = s.max(e);
-                self.sample_clipboard = Some(Arc::new(sample.data[s..e].to_vec()));
-                return;
-            }
-            SampleEditEvent::PasteRegion(pos) => {
-                let clip = match self.sample_clipboard.as_ref() {
-                    Some(c) => c.clone(),
-                    None => return,
-                };
-                let data = (*sample.data).clone();
-                let pos = pos.min(data.len());
-                let mut new_data = Vec::with_capacity(data.len() + clip.len());
-                new_data.extend_from_slice(&data[..pos]);
-                new_data.extend_from_slice(&clip);
-                new_data.extend_from_slice(&data[pos..]);
-                Box::new(SetSampleDataCommand {
-                    sample_index: sample_idx,
-                    old_data: sample.data.clone(),
-                    new_data: Arc::new(new_data),
-                })
-            }
-            SampleEditEvent::CropRegion(s, e) => {
-                let s = s.min(e);
-                let e = s.max(e);
-                let data = sample.data[s..e].to_vec();
-                Box::new(SetSampleDataCommand {
-                    sample_index: sample_idx,
-                    old_data: sample.data.clone(),
-                    new_data: Arc::new(data),
-                })
-            }
-            SampleEditEvent::Amplify(factor) => {
-                let mut data = (*sample.data).clone();
-                for x in data.iter_mut() {
-                    *x *= factor;
-                }
-                Box::new(SetSampleDataCommand {
-                    sample_index: sample_idx,
-                    old_data: sample.data.clone(),
-                    new_data: Arc::new(data),
-                })
-            }
-            SampleEditEvent::SilenceRegion(s, e) => {
-                let s = s.min(e);
-                let e = s.max(e);
-                let mut data = (*sample.data).clone();
-                for x in data[s..e].iter_mut() {
-                    *x = 0.0;
-                }
-                Box::new(SetSampleDataCommand {
-                    sample_index: sample_idx,
-                    old_data: sample.data.clone(),
-                    new_data: Arc::new(data),
-                })
-            }
-            SampleEditEvent::TrimSilence => {
-                let data = &sample.data;
-                let threshold = 0.001;
-                let start = data.iter().position(|&x| x.abs() > threshold).unwrap_or(0);
-                let end = data.iter().rposition(|&x| x.abs() > threshold).map(|p| p + 1).unwrap_or(data.len());
-                let trimmed = if start < end { data[start..end].to_vec() } else { Vec::new() };
-                Box::new(SetSampleDataCommand {
-                    sample_index: sample_idx,
-                    old_data: sample.data.clone(),
-                    new_data: Arc::new(trimmed),
-                })
-            }
-            SampleEditEvent::SetLoopFromSelection(start, end) => {
-                let start_cmd: Box<dyn crate::edit::EditCommand> = Box::new(SetSamplePropertyCommand {
-                    sample_index: sample_idx,
-                    property: SampleProperty::LoopStart(start),
-                    old_property: SampleProperty::LoopStart(sample.loop_start),
-                });
-                let end_cmd: Box<dyn crate::edit::EditCommand> = Box::new(SetSamplePropertyCommand {
-                    sample_index: sample_idx,
-                    property: SampleProperty::LoopEnd(end),
-                    old_property: SampleProperty::LoopEnd(sample.loop_end),
-                });
-                let type_cmd: Box<dyn crate::edit::EditCommand> = Box::new(SetSamplePropertyCommand {
-                    sample_index: sample_idx,
-                    property: SampleProperty::LoopType(crate::sequencer::sample::LoopType::Forward),
-                    old_property: SampleProperty::LoopType(sample.loop_type),
-                });
-                self.core.execute_edit_commands(vec![start_cmd, end_cmd, type_cmd]);
-                return;
-            }
-            SampleEditEvent::ExportSample(idx) => {
-                let module = match &self.core.module {
-                    Some(m) => m,
-                    None => return,
-                };
-                let sample = match module.samples.get(idx) {
-                    Some(s) if !s.data.is_empty() => s,
-                    _ => return,
-                };
-                let default_dir = self.config.default_wav_path.as_deref();
-                let bit_depth = self.config.get_sample_export_bit_depth();
-                self.sample_export_dialog = Some(
-                    crate::ui::sample_export_dialog::SampleExportDialog::new(
-                        idx,
-                        sample.name.clone(),
-                        sample.sample_rate,
-                        default_dir,
-                        bit_depth,
-                    )
-                );
-                return;
-            }
-        };
-
-        self.core.execute_edit_command(cmd);
-    }
-
-    fn handle_instrument_edit(&mut self, event: InstrumentEditEvent) {
-        let inst_idx = self.core.selected_instrument;
-        let module = match &self.core.module {
-            Some(m) => m,
-            None => return,
-        };
-        let inst = match module.instruments.get(inst_idx) {
-            Some(i) => i,
-            None => return,
-        };
-
-        let cmd: Box<dyn crate::edit::EditCommand> = match event {
-            InstrumentEditEvent::NameChanged(n) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::Name(n),
-                old_property: InstrumentProperty::Name(inst.name.clone()),
-            }),
-            InstrumentEditEvent::NnaChanged(n) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::Nna(n),
-                old_property: InstrumentProperty::Nna(inst.nna),
-            }),
-            InstrumentEditEvent::DuplicateCheckTypeChanged(t) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::DuplicateCheckType(t),
-                old_property: InstrumentProperty::DuplicateCheckType(inst.duplicate_check_type),
-            }),
-            InstrumentEditEvent::DuplicateCheckActionChanged(a) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::DuplicateCheckAction(a),
-                old_property: InstrumentProperty::DuplicateCheckAction(inst.duplicate_check_action),
-            }),
-            InstrumentEditEvent::FadeoutChanged(f) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::Fadeout(f),
-                old_property: InstrumentProperty::Fadeout(inst.fade_out),
-            }),
-            InstrumentEditEvent::GlobalVolumeChanged(v) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::GlobalVolume(v),
-                old_property: InstrumentProperty::GlobalVolume(inst.global_volume),
-            }),
-            InstrumentEditEvent::PitchPanSeparationChanged(s) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::PitchPanSeparation(s),
-                old_property: InstrumentProperty::PitchPanSeparation(inst.pitch_pan_separation),
-            }),
-            InstrumentEditEvent::PitchPanCenterChanged(c) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::PitchPanCenter(c),
-                old_property: InstrumentProperty::PitchPanCenter(inst.pitch_pan_center),
-            }),
-            InstrumentEditEvent::RandomVolumeChanged(v) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::RandomVolume(v),
-                old_property: InstrumentProperty::RandomVolume(inst.random_volume),
-            }),
-            InstrumentEditEvent::RandomPanningChanged(p) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::RandomPanning(p),
-                old_property: InstrumentProperty::RandomPanning(inst.random_panning),
-            }),
-            InstrumentEditEvent::FilterCutoffChanged(c) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::FilterCutoff(c),
-                old_property: InstrumentProperty::FilterCutoff(inst.filter_cutoff),
-            }),
-            InstrumentEditEvent::FilterResonanceChanged(r) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::FilterResonance(r),
-                old_property: InstrumentProperty::FilterResonance(inst.filter_resonance),
-            }),
-            InstrumentEditEvent::FilterTypeChanged(t) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::FilterType(t),
-                old_property: InstrumentProperty::FilterType(inst.filter_type),
-            }),
-            InstrumentEditEvent::FilterRandomCutoffChanged(c) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::FilterRandomCutoff(c),
-                old_property: InstrumentProperty::FilterRandomCutoff(inst.filter_random_cutoff),
-            }),
-            InstrumentEditEvent::EnvelopePointMoved(env_type, idx, t, v) => {
-                let env = match env_type {
-                    EnvelopeType::Volume => &inst.volume_envelope,
-                    EnvelopeType::Panning => &inst.panning_envelope,
-                    EnvelopeType::Pitch => &inst.pitch_envelope,
-                    EnvelopeType::Filter => &inst.filter_envelope,
-                };
-                let old_pt = env.as_ref().map(|e| e.points[idx]).unwrap_or_default();
-                Box::new(SetEnvelopePointCommand {
-                    instrument_index: inst_idx,
-                    envelope_type: env_type,
-                    point_index: idx,
-                    old_point: old_pt,
-                    new_point: EnvelopePoint { tick: t, value: v },
-                })
-            }
-            InstrumentEditEvent::EnvelopePointAdded(env_type, t, v) => Box::new(AddEnvelopePointCommand {
-                instrument_index: inst_idx,
-                envelope_type: env_type,
-                point: EnvelopePoint { tick: t, value: v },
-            }),
-            InstrumentEditEvent::EnvelopePointRemoved(env_type, idx) => {
-                let env = match env_type {
-                    EnvelopeType::Volume => &inst.volume_envelope,
-                    EnvelopeType::Panning => &inst.panning_envelope,
-                    EnvelopeType::Pitch => &inst.pitch_envelope,
-                    EnvelopeType::Filter => &inst.filter_envelope,
-                };
-                let old_pt = env.as_ref().map(|e| e.points[idx]).unwrap_or_default();
-                Box::new(RemoveEnvelopePointCommand {
-                    instrument_index: inst_idx,
-                    envelope_type: env_type,
-                    point_index: idx,
-                    old_point: old_pt,
-                })
-            }
-            InstrumentEditEvent::EnvelopeSustainChanged(env_type, new_sustain) => {
-                let env = match env_type {
-                    EnvelopeType::Volume => &inst.volume_envelope,
-                    EnvelopeType::Panning => &inst.panning_envelope,
-                    EnvelopeType::Pitch => &inst.pitch_envelope,
-                    EnvelopeType::Filter => &inst.filter_envelope,
-                };
-                Box::new(SetEnvelopeSustainCommand {
-                    instrument_index: inst_idx,
-                    envelope_type: env_type,
-                    old_sustain: env.as_ref().and_then(|e| e.sustain_point),
-                    new_sustain,
-                })
-            }
-            InstrumentEditEvent::EnvelopeLoopChanged(env_type, new_enabled, new_start, new_end) => {
-                let env = match env_type {
-                    EnvelopeType::Volume => &inst.volume_envelope,
-                    EnvelopeType::Panning => &inst.panning_envelope,
-                    EnvelopeType::Pitch => &inst.pitch_envelope,
-                    EnvelopeType::Filter => &inst.filter_envelope,
-                };
-                Box::new(SetEnvelopeLoopCommand {
-                    instrument_index: inst_idx,
-                    envelope_type: env_type,
-                    old_loop_enabled: env.as_ref().map_or(false, |e| e.flags.loop_),
-                    new_loop_enabled: new_enabled,
-                    old_loop_start: env.as_ref().and_then(|e| e.loop_start),
-                    new_loop_start: new_start,
-                    old_loop_end: env.as_ref().and_then(|e| e.loop_end),
-                    new_loop_end: new_end,
-                })
-            }
-            InstrumentEditEvent::EnvelopeFlagsChanged(env_type, new_flags) => {
-                let env = match env_type {
-                    EnvelopeType::Volume => &inst.volume_envelope,
-                    EnvelopeType::Panning => &inst.panning_envelope,
-                    EnvelopeType::Pitch => &inst.pitch_envelope,
-                    EnvelopeType::Filter => &inst.filter_envelope,
-                };
-                Box::new(SetEnvelopeFlagsCommand {
-                    instrument_index: inst_idx,
-                    envelope_type: env_type,
-                    old_flags: env.as_ref().map(|e| e.flags).unwrap_or_default(),
-                    new_flags,
-                })
-            }
-            InstrumentEditEvent::SampleMapChanged(note, new_idx) => Box::new(MapNoteToSampleCommand {
-                instrument_index: inst_idx,
-                note,
-                old_sample: inst.sample_map[note as usize],
-                new_sample: new_idx,
-            }),
-            InstrumentEditEvent::NoteMapChanged(note, new_dest) => Box::new(MapNoteToNoteCommand {
-                instrument_index: inst_idx,
-                note,
-                old_dest: inst.note_map[note as usize],
-                new_dest,
-            }),
-            InstrumentEditEvent::VibTypeChanged(v) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::VibType(v),
-                old_property: InstrumentProperty::VibType(inst.vib_type),
-            }),
-            InstrumentEditEvent::VibSweepChanged(v) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::VibSweep(v),
-                old_property: InstrumentProperty::VibSweep(inst.vib_sweep),
-            }),
-            InstrumentEditEvent::VibDepthChanged(v) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::VibDepth(v),
-                old_property: InstrumentProperty::VibDepth(inst.vib_depth),
-            }),
-            InstrumentEditEvent::VibRateChanged(v) => Box::new(SetInstrumentPropertyCommand {
-                instrument_index: inst_idx,
-                property: InstrumentProperty::VibRate(v),
-                old_property: InstrumentProperty::VibRate(inst.vib_rate),
-            }),
-            InstrumentEditEvent::SampleMapFillAll(sample_idx) => Box::new(
-                crate::edit::SetSampleMapCommand {
-                    instrument_index: inst_idx,
-                    new_sample_index: sample_idx,
-                    old_map: inst.sample_map,
-                },
-            ),
-            InstrumentEditEvent::SaveInstrument => {
-                return;
-            }
-            InstrumentEditEvent::LoadInstrument => {
-                return;
-            }
-            InstrumentEditEvent::ExportInstrument(_) => {
-                return;
-            }
-            InstrumentEditEvent::ImportInstrument => {
-                return;
-            }
-        };
-
-        self.core.execute_edit_command(cmd);
-    }
-
-    fn save_instrument_dialog(&mut self) {
-        let module = match &self.core.module {
-            Some(m) => m,
-            None => {
-                eprintln!("No module loaded");
-                return;
-            }
-        };
-        let inst_idx = self.core.selected_instrument;
-        let inst = match module.instruments.get(inst_idx) {
-            Some(i) => i,
-            None => {
-                eprintln!("No instrument selected");
-                return;
-            }
-        };
-        let inst_name = if inst.name.is_empty() {
-            format!("Instrument_{:02X}", inst_idx)
-        } else {
-            inst.name.clone()
-        };
-        let mut dialog = rfd::FileDialog::new()
-            .set_title("Save Instrument")
-            .set_file_name(format!("{}.hti", inst_name))
-            .add_filter("HTRK Instruments", &["hti"]);
-        if let Some(ref dir) = self.config.default_instrument_path {
-            let dir_path = std::path::PathBuf::from(dir);
-            if dir_path.is_dir() {
-                dialog = dialog.set_directory(&dir_path);
-            }
-        }
-        if let Some(path) = dialog.save_file() {
-            self.save_instrument_to_file(inst_idx, path.to_string_lossy().as_ref());
-            if let Some(parent) = path.parent() {
-                self.config.default_instrument_path = Some(parent.to_string_lossy().into_owned());
-            }
-        }
-    }
-
-    fn export_instrument_dialog(&mut self, inst_idx: usize) {
-        let module = match &self.core.module {
-            Some(m) => m,
-            None => {
-                eprintln!("No module loaded");
-                return;
-            }
-        };
-        let inst = match module.instruments.get(inst_idx) {
-            Some(i) => i,
-            None => {
-                eprintln!("No instrument at index {}", inst_idx);
-                return;
-            }
-        };
-        let inst_name = if inst.name.is_empty() {
-            format!("Instrument_{:02X}", inst_idx)
-        } else {
-            inst.name.clone()
-        };
-        let mut dialog = rfd::FileDialog::new()
-            .set_title("Export Instrument")
-            .set_file_name(format!("{}.hti", inst_name))
-            .add_filter("HTRK Instruments", &["hti"]);
-        if let Some(ref dir) = self.config.default_instrument_path {
-            let dir_path = std::path::PathBuf::from(dir);
-            if dir_path.is_dir() {
-                dialog = dialog.set_directory(&dir_path);
-            }
-        }
-        if let Some(path) = dialog.save_file() {
-            self.save_instrument_to_file(inst_idx, path.to_string_lossy().as_ref());
-            if let Some(parent) = path.parent() {
-                self.config.default_instrument_path = Some(parent.to_string_lossy().into_owned());
-            }
-        }
-    }
-
-    fn save_instrument_to_file(&mut self, inst_idx: usize, path: &str) {
-        let module = match &self.core.module {
-            Some(m) => m,
-            None => return,
-        };
-        let inst = match module.instruments.get(inst_idx) {
-            Some(i) => i,
-            None => return,
-        };
-        let sample_indices: Vec<u8> = inst.sample_map.iter().cloned().collect();
-        let samples: Vec<_> = sample_indices.iter()
-            .filter_map(|&idx| {
-                if idx > 0 && idx as usize - 1 < module.samples.len() {
-                    Some(module.samples[idx as usize - 1].clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let data = match crate::formats::hti::save_instrument(inst, &samples) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Failed to save instrument: {:?}", e);
-                return;
-            }
-        };
-        if let Err(e) = std::fs::write(path, &data) {
-            eprintln!("Failed to write instrument file: {}", e);
-        }
-    }
-
-    fn load_instrument_dialog(&mut self) {
-        let mut dialog = rfd::FileDialog::new()
-            .set_title("Load Instrument")
-            .add_filter("HTRK Instruments", &["hti"]);
-        if let Some(ref dir) = self.config.default_instrument_path {
-            let dir_path = std::path::PathBuf::from(dir);
-            if dir_path.is_dir() {
-                dialog = dialog.set_directory(&dir_path);
-            }
-        }
-        if let Some(path) = dialog.pick_file() {
-            let path_str = path.to_string_lossy().to_string();
-            self.load_instrument_from_file(&path_str);
-            if let Some(parent) = path.parent() {
-                self.config.default_instrument_path = Some(parent.to_string_lossy().into_owned());
-            }
-        }
-    }
-
-    fn load_instrument_from_file(&mut self, path: &str) {
-        let data = match std::fs::read(path) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Failed to read instrument file: {}", e);
-                return;
-            }
-        };
-        let (loaded_inst, loaded_samples) = match crate::formats::hti::load_instrument(&data) {
-            Ok(result) => result,
-            Err(e) => {
-                eprintln!("Failed to load instrument: {:?}", e);
-                return;
-            }
-        };
-        let inst_idx = self.core.selected_instrument;
-        if self.core.module.is_none() {
-            self.new_song();
-        }
-        self.ensure_module_ownership();
-        if let Some(ref mut module_arc) = self.core.module {
-            if let Some(m) = Arc::get_mut(module_arc) {
-                if inst_idx >= m.instruments.len() {
-                    m.instruments.resize(inst_idx + 1, crate::sequencer::Instrument::default());
-                }
-                let sample_map = loaded_inst.sample_map.clone();
-                m.instruments[inst_idx] = loaded_inst;
-                let mut available_slots: Vec<usize> = (1..m.samples.len())
-                    .filter(|&i| m.samples[i].data.is_empty())
-                    .collect();
-                let mut sample_mapping: HashMap<usize, usize> = HashMap::new();
-                for (new_idx, sample) in loaded_samples.iter().enumerate() {
-                    if let Some(&existing_idx) = available_slots.first() {
-                        m.samples[existing_idx] = sample.clone();
-                        sample_mapping.insert(new_idx + 1, existing_idx);
-                        available_slots.remove(0);
-                    } else {
-                        let new_sample_idx = m.samples.len();
-                        m.samples.push(sample.clone());
-                        sample_mapping.insert(new_idx + 1, new_sample_idx);
-                    }
-                }
-                let mut remapped_map = [0u8; 120];
-                for (note, &old_idx) in sample_map.iter().enumerate().take(120) {
-                    if let Some(&new_idx) = sample_mapping.get(&(old_idx as usize)) {
-                        remapped_map[note] = new_idx as u8;
-                    } else {
-                        remapped_map[note] = old_idx;
-                    }
-                }
-                m.instruments[inst_idx].sample_map = remapped_map;
-            }
-        }
-        self.sync_module_to_audio();
-    }
 }
 
 fn hex_to_effect(d: u8) -> crate::sequencer::Effect {
@@ -2776,7 +2155,7 @@ impl eframe::App for HtrkApp {
                             &mut self.sample_clipboard,
                             &mut self.amplify_factor,
                         ) {
-                            self.handle_sample_edit(event);
+                            crate::actions::handle_sample_edit(self, event);
                         }
                     }
                 }
@@ -2790,18 +2169,18 @@ impl eframe::App for HtrkApp {
                         ) {
                             match event {
                                 crate::ui::instrument_editor::InstrumentEditEvent::SaveInstrument => {
-                                    self.save_instrument_dialog();
+                                    crate::actions::save_instrument_dialog(self);
                                 }
                                 crate::ui::instrument_editor::InstrumentEditEvent::LoadInstrument => {
-                                    self.load_instrument_dialog();
+                                    crate::actions::load_instrument_dialog(self);
                                 }
                                 crate::ui::instrument_editor::InstrumentEditEvent::ExportInstrument(idx) => {
-                                    self.export_instrument_dialog(idx);
+                                    crate::actions::export_instrument_dialog(self, idx);
                                 }
                                 crate::ui::instrument_editor::InstrumentEditEvent::ImportInstrument => {
-                                    self.load_instrument_dialog();
+                                    crate::actions::load_instrument_dialog(self);
                                 }
-                                other => self.handle_instrument_edit(other),
+                                other => crate::actions::handle_instrument_edit(self, other),
                             }
                         }
                     }
