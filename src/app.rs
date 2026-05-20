@@ -5,11 +5,11 @@ use std::sync::atomic::Ordering;
 use eframe::egui;
 
 use crate::audio::commands::AudioCommand;
-use crate::audio::engine::{CommandSender, create_engine_and_sender};
+use crate::audio::engine::create_engine_and_sender;
 use crate::audio::renderer::WavRenderer;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::edit::{
-    SetCellCommand, InsertRowCommand, UndoManager, SampleProperty, SetSamplePropertyCommand,
+    InsertRowCommand, SampleProperty, SetSamplePropertyCommand,
     InstrumentProperty, SetInstrumentPropertyCommand, AddEnvelopePointCommand,
     RemoveEnvelopePointCommand, SetEnvelopePointCommand, EnvelopeType, SetSampleDataCommand,
     MapNoteToSampleCommand, SetEnvelopeSustainCommand, SetEnvelopeLoopCommand,
@@ -25,8 +25,8 @@ use crate::sequencer::pattern::Cell;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::automation::InterpolationMode;
-use crate::sequencer::{Effect, Module, Note, MAX_CHANNELS, DEFAULT_CHANNELS};
-use crate::ui::pattern_grid::{ColumnVisibility, CursorPosition, Selection, SubColumn, VISIBLE_ROWS};
+use crate::sequencer::{Effect, Note, MAX_CHANNELS, DEFAULT_CHANNELS};
+use crate::ui::pattern_grid::{ColumnVisibility, Selection, SubColumn, VISIBLE_ROWS};
 use crate::ui::TrackerTheme;
 use crate::ui::theme::ThemePreset;
 

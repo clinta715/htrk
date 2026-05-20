@@ -9,7 +9,7 @@ use crate::audio::engine::CommandSender;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::edit::UndoManager;
 use crate::sequencer::automation::AutomationTarget;
-use crate::sequencer::effect::{SendEffectType, NUM_SEND_BUSES};
+use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::module::{Module, DEFAULT_CHANNELS};
 use crate::sequencer::pattern::Cell;
 use crate::ui::pattern_grid::{CursorPosition, Selection};
