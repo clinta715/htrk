@@ -429,6 +429,73 @@ impl HtrkCore {
         self.sync_to_audio();
     }
 
+    pub fn copy_channel(&mut self, channel: usize) {
+        if let Some(pattern) = self.current_pattern() {
+            let mut data = Vec::new();
+            for row in 0..pattern.num_rows {
+                data.push(vec![*pattern.cell(row, channel)]);
+            }
+            self.clipboard = Some(data);
+            self.clipboard_width = 1;
+        }
+    }
+
+    pub fn clear_channel(&mut self, channel: usize) {
+        let selected_order = self.selected_order;
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
+                if pat_idx >= arc_module.patterns.len() { return; }
+                let pattern = &arc_module.patterns[pat_idx];
+                let mut old_cells = Vec::new();
+                let mut new_cells = Vec::new();
+                for row in 0..pattern.num_rows {
+                    let old = pattern.data[row][channel];
+                    if !old.is_empty() {
+                        old_cells.push((row, channel, old));
+                        new_cells.push((row, channel, Cell::default()));
+                    }
+                }
+                if !old_cells.is_empty() {
+                    let cmd = Box::new(BulkSetCellsCommand {
+                        order: selected_order,
+                        old_cells,
+                        new_cells,
+                    });
+                    let _ = self.undo_manager.execute(cmd, arc_module);
+                }
+            }
+        }
+        self.sync_to_audio();
+    }
+
+    pub fn copy_column(&mut self, channel: usize, sub_column: SubColumn) {
+        if let Some(pattern) = self.current_pattern() {
+            let mut data = Vec::new();
+            for row in 0..pattern.num_rows {
+                let raw = *pattern.cell(row, channel);
+                let cell = match sub_column {
+                    SubColumn::Note => {
+                        let mut c = Cell::default(); c.note = raw.note; c
+                    }
+                    SubColumn::InstrumentTens | SubColumn::InstrumentOnes => {
+                        let mut c = Cell::default(); c.instrument = raw.instrument; c
+                    }
+                    SubColumn::VolumeTens | SubColumn::VolumeOnes => {
+                        let mut c = Cell::default(); c.volume = raw.volume; c
+                    }
+                    SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => {
+                        let mut c = Cell::default(); c.effect = raw.effect; c
+                    }
+                };
+                data.push(vec![cell]);
+            }
+            self.clipboard = Some(data);
+            self.clipboard_width = 1;
+        }
+    }
+
     pub fn execute_edit_command(&mut self, cmd: Box<dyn crate::edit::EditCommand>) {
         self.ensure_module_ownership();
         if let Some(ref mut module) = self.module {

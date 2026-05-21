@@ -644,6 +644,33 @@ impl HtrkApp {
         self.file_browser.open(BrowserMode::Projects, &mut self.config);
     }
 
+    pub(crate) fn copy_track(&mut self) {
+        self.core.copy_channel(self.core.cursor.channel);
+    }
+
+    pub(crate) fn cut_track(&mut self) {
+        let ch = self.core.cursor.channel;
+        self.core.copy_channel(ch);
+        self.core.clear_channel(ch);
+    }
+
+    pub(crate) fn delete_track(&mut self) {
+        self.core.clear_channel(self.core.cursor.channel);
+    }
+
+    pub(crate) fn copy_column(&mut self) {
+        let ch = self.core.cursor.channel;
+        let sc = self.core.cursor.sub_column;
+        self.core.copy_column(ch, sc);
+    }
+
+    pub(crate) fn cut_column(&mut self) {
+        let ch = self.core.cursor.channel;
+        let sc = self.core.cursor.sub_column;
+        self.core.copy_column(ch, sc);
+        self.core.clear_channel(ch);
+    }
+
 
 }
 
@@ -772,6 +799,21 @@ impl eframe::App for HtrkApp {
             }
             if menu_resp.select_all {
                 self.select_all();
+            }
+            if menu_resp.cut_track && self.edit_mode {
+                self.cut_track();
+            }
+            if menu_resp.copy_track {
+                self.copy_track();
+            }
+            if menu_resp.delete_track && self.edit_mode {
+                self.delete_track();
+            }
+            if menu_resp.cut_column && self.edit_mode {
+                self.cut_column();
+            }
+            if menu_resp.copy_column {
+                self.copy_column();
             }
             if menu_resp.follow_playback {
                 self.follow_playback = !self.follow_playback;

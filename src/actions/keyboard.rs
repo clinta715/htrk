@@ -106,6 +106,10 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             app.file_browser.open(BrowserMode::Samples, &mut app.config);
                             handled = true;
                         }
+                        egui::Key::S => {
+                            crate::actions::save_current_file(app);
+                            handled = true;
+                        }
                         egui::Key::ArrowRight => {
                             app.step_sub_column_forward();
                             handled = true;
@@ -327,6 +331,9 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     egui::Key::Backspace if app.edit_mode => {
                         app.clear_cell_at_cursor();
                     }
+                    egui::Key::Delete if modifiers.shift && app.edit_mode => {
+                        app.delete_track();
+                    }
                     egui::Key::Delete if app.edit_mode => {
                         if modifiers.alt {
                             let selected_order = app.core.selected_order;
@@ -399,6 +406,27 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     }
                     egui::Key::F2 => {
                         app.edit_mode = !app.edit_mode;
+                    }
+                    egui::Key::F3 if modifiers.shift && app.edit_mode => {
+                        app.cut_track();
+                    }
+                    egui::Key::F3 if modifiers.alt && app.edit_mode => {
+                        app.cut_column();
+                    }
+                    egui::Key::F3 => {
+                        app.show_shortcuts = !app.show_shortcuts;
+                    }
+                    egui::Key::F4 if modifiers.shift => {
+                        app.copy_track();
+                    }
+                    egui::Key::F4 if modifiers.alt => {
+                        app.copy_column();
+                    }
+                    egui::Key::F5 if modifiers.shift => {
+                        app.paste_at_cursor();
+                    }
+                    egui::Key::F5 if modifiers.alt => {
+                        app.paste_at_cursor();
                     }
                     egui::Key::F5 => {
                         app.send_command(crate::audio::commands::AudioCommand::Play);
