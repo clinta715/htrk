@@ -536,6 +536,7 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
                     let note = Note::On(note_key);
                     let mut new_cell = app.get_cell_at_cursor();
                     new_cell.note = note;
+                    new_cell.instrument = Some(app.core.selected_instrument as u8);
                     app.set_cell_at_cursor(new_cell);
                     app.core.last_entered_cell = Some(new_cell);
                     app.advance_cursor_down(app.cursor_skip as usize);
@@ -552,6 +553,7 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
                     let note = Note::On(note_key);
                     let mut new_cell = app.get_cell_at_cursor();
                     new_cell.note = note;
+                    new_cell.instrument = Some(app.core.selected_instrument as u8);
                     app.set_cell_at_cursor(new_cell);
                     app.core.last_entered_cell = Some(new_cell);
                     app.advance_cursor_down(app.cursor_skip as usize);
