@@ -62,7 +62,19 @@ pub fn draw_status_bar(
 
         ui.label(egui::RichText::new(format!("Oct:{}", current_octave)).font(font.clone()).color(theme.fg_note));
         ui.label(egui::RichText::new(format!(" Skp:{}", cursor_skip)).font(font.clone()).color(theme.fg_effect));
-        ui.label(egui::RichText::new(format!(" Ins:{:02}", selected_instrument)).font(font.clone()).color(theme.fg_instrument));
+        let mapped_smp = module.and_then(|m| {
+            m.instruments.get(selected_instrument).and_then(|inst| {
+                (0..120).find_map(|i| {
+                    let s = inst.sample_map[i];
+                    if s > 0 { Some(s as usize) } else { None }
+                })
+            })
+        });
+        let inst_str = match mapped_smp {
+            Some(s) => format!(" Ins:{:02}[{:02}]", selected_instrument, s),
+            None => format!(" Ins:{:02}", selected_instrument),
+        };
+        ui.label(egui::RichText::new(inst_str).font(font.clone()).color(theme.fg_instrument));
         ui.label(egui::RichText::new(format!(" Smp:{:02}", selected_sample)).font(font.clone()).color(theme.fg_volume));
 
         ui.separator();

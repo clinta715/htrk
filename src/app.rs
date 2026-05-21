@@ -1218,6 +1218,7 @@ impl eframe::App for HtrkApp {
                             ui,
                             module,
                             &mut self.core.selected_instrument,
+                            &mut self.core.selected_sample,
                             &self.theme,
                         ) {
                             match event {

@@ -42,6 +42,7 @@ pub fn draw_instrument_editor(
     ui: &mut egui::Ui,
     module: &Module,
     selected_instrument: &mut usize,
+    selected_sample: &mut usize,
     _theme: &TrackerTheme,
 ) -> Option<InstrumentEditEvent> {
     let mut event = None;
@@ -75,6 +76,11 @@ pub fn draw_instrument_editor(
                     let response = ui.selectable_label(is_selected, label);
                     if response.clicked() {
                         *selected_instrument = i;
+                        if let Some(inst) = module.instruments.get(i) {
+                            if let Some(s) = inst.sample_map.iter().copied().find(|&s| s > 0) {
+                                *selected_sample = s as usize;
+                            }
+                        }
                     }
                     if has_inst && i > 0 {
                         response.context_menu(|ui| {

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use crate::app::HtrkApp;
@@ -62,6 +63,19 @@ pub(crate) fn import_wav(app: &mut HtrkApp, path: &str) {
 
             let sample_idx = app.core.selected_sample;
             app.core.import_wav_to_sample(sample_idx, sample);
+
+            app.ensure_module_ownership();
+            if let Some(ref mut module) = app.core.module {
+                if let Some(arc_module) = Arc::get_mut(module) {
+                    let inst_idx = app.core.selected_instrument;
+                    if inst_idx > 0 && inst_idx < arc_module.instruments.len() {
+                        for i in 0..120 {
+                            arc_module.instruments[inst_idx].sample_map[i] = sample_idx as u8;
+                        }
+                    }
+                }
+            }
+            app.sync_module_to_audio();
         }
         Err(e) => {
             eprintln!("Failed to import WAV: {}", e);

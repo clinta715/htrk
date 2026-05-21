@@ -709,7 +709,21 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
 
 fn preview_note(app: &mut HtrkApp, note_key: u8) {
     let vol = 0.75;
-    let sample_idx = app.core.selected_sample;
+    let sample_idx = if let Some(ref module) = app.core.module {
+        let inst_idx = app.core.selected_instrument;
+        if inst_idx > 0 && inst_idx < module.instruments.len() {
+            let mapped = module.instruments[inst_idx].sample_map[note_key as usize];
+            if mapped > 0 && (mapped as usize) < module.samples.len() {
+                mapped as usize
+            } else {
+                app.core.selected_sample
+            }
+        } else {
+            app.core.selected_sample
+        }
+    } else {
+        app.core.selected_sample
+    };
     app.send_command(crate::audio::commands::AudioCommand::TriggerPreviewNote {
         sample_index: sample_idx,
         note_key,
