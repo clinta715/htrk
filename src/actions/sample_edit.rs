@@ -187,6 +187,10 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) {
             app.core.execute_edit_commands(vec![start_cmd, end_cmd, type_cmd]);
             return;
         }
+        SampleEditEvent::ImportSample => {
+            app.file_browser.open(crate::ui::file_browser::BrowserMode::Samples, &mut app.config);
+            return;
+        }
         SampleEditEvent::ExportSample(idx) => {
             let module = match &app.core.module {
                 Some(m) => m,

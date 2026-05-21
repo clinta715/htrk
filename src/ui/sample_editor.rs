@@ -24,6 +24,7 @@ pub enum SampleEditEvent {
     TrimSilence,
     SetLoopFromSelection(usize, usize),
     ExportSample(usize),
+    ImportSample,
 }
 
 pub fn draw_sample_editor(
@@ -53,6 +54,11 @@ pub fn draw_sample_editor(
                     *selected_sample += 1;
                     *selection = None;
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Open...").clicked() {
+                        event = Some(SampleEditEvent::ImportSample);
+                    }
+                });
             });
 
             ui.separator();
