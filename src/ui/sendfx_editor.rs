@@ -54,6 +54,7 @@ pub fn draw_sendfx_view(
     command_sender: &mut Option<CommandSender>,
     send_bus_types: &mut [SendEffectType; NUM_SEND_BUSES],
     send_bus_params: &mut [[f32; 5]; NUM_SEND_BUSES],
+    send_pre_fader: &mut [bool; NUM_SEND_BUSES],
 ) {
     ui.horizontal(|ui| {
         for si in 0..NUM_SEND_BUSES {
@@ -102,6 +103,15 @@ pub fn draw_sendfx_view(
                     params[0] = rl;
                     if let Some(ref mut sender) = command_sender {
                         sender.send(AudioCommand::SetSendReturnLevel { send_index: si, level: rl });
+                    }
+                }
+
+                let mut pf = send_pre_fader[si];
+                ui.checkbox(&mut pf, "Pre-Fader");
+                if pf != send_pre_fader[si] {
+                    send_pre_fader[si] = pf;
+                    if let Some(ref mut sender) = command_sender {
+                        sender.send(AudioCommand::SetSendPreFader { send_index: si, pre_fader: pf });
                     }
                 }
 

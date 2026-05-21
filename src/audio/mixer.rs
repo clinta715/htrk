@@ -12,6 +12,8 @@ pub fn mix_voices_per_channel(
     output_right: &mut [f32],
     ch_left: &mut [Vec<f32>],
     ch_right: &mut [Vec<f32>],
+    pre_ch_left: &mut [Vec<f32>],
+    pre_ch_right: &mut [Vec<f32>],
     offset: usize,
     len: usize,
     master_volume: f32,
@@ -68,6 +70,12 @@ pub fn mix_voices_per_channel(
                 if ch_idx < ch_left.len() {
                     ch_left[ch_idx][offset + i] += fl;
                     ch_right[ch_idx][offset + i] += fr;
+                }
+                if ch_idx < pre_ch_left.len() {
+                    let pfl = s * (1.0 - pan);
+                    let pfr = s * pan;
+                    pre_ch_left[ch_idx][offset + i] += pfl;
+                    pre_ch_right[ch_idx][offset + i] += pfr;
                 }
                 voice.ks_pos += 1;
             }
@@ -138,6 +146,13 @@ pub fn mix_voices_per_channel(
             if ch_idx < ch_left.len() {
                 ch_left[ch_idx][offset + i] += fl;
                 ch_right[ch_idx][offset + i] += fr;
+            }
+
+            if ch_idx < pre_ch_left.len() {
+                let pfl = led_filtered * (1.0 - pan);
+                let pfr = led_filtered * pan;
+                pre_ch_left[ch_idx][offset + i] += pfl;
+                pre_ch_right[ch_idx][offset + i] += pfr;
             }
 
             voice.position += voice.sample_delta * voice.direction;
@@ -472,8 +487,6 @@ mod tests {
         voice.sample_delta = freq / sample_rate * 2.0;
         voice.base_volume = 0.5;
         voice.envelope_volume = 1.0;
-        voice.channel_volume = 1.0;
-        voice.global_volume = 1.0;
         voice.fade_out_volume = 1.0;
         voice.final_volume = 0.5;
         voice.smoothed_volume = 0.5;
@@ -603,8 +616,6 @@ mod tests {
         voice.sample_delta = 0.5;
         voice.base_volume = 1.0;
         voice.envelope_volume = 1.0;
-        voice.channel_volume = 1.0;
-        voice.global_volume = 1.0;
         voice.fade_out_volume = 1.0;
         voice.final_volume = 1.0;
         voice.smoothed_volume = 1.0;
@@ -640,8 +651,6 @@ mod tests {
         voice.sample_delta = 1.0;
         voice.base_volume = 1.0;
         voice.envelope_volume = 1.0;
-        voice.channel_volume = 1.0;
-        voice.global_volume = 1.0;
         voice.fade_out_volume = 1.0;
         voice.final_volume = 1.0;
         voice.smoothed_volume = 1.0;
@@ -680,8 +689,6 @@ mod tests {
         voice.sample_delta = 1.0;
         voice.base_volume = 1.0;
         voice.envelope_volume = 1.0;
-        voice.channel_volume = 1.0;
-        voice.global_volume = 1.0;
         voice.fade_out_volume = 1.0;
         voice.final_volume = 1.0;
         voice.smoothed_volume = 1.0;
@@ -714,8 +721,6 @@ mod tests {
         voice.sample_delta = 1.0;
         voice.base_volume = 1.0;
         voice.envelope_volume = 1.0;
-        voice.channel_volume = 1.0;
-        voice.global_volume = 1.0;
         voice.fade_out_volume = 1.0;
         voice.final_volume = 1.0;
         voice.smoothed_volume = 1.0;
@@ -754,8 +759,6 @@ mod tests {
             v.sample_delta = 1.0;
             v.base_volume = 1.0;
             v.envelope_volume = 1.0;
-            v.channel_volume = 1.0;
-            v.global_volume = 1.0;
             v.fade_out_volume = 1.0;
             v.final_volume = 1.0;
             v.smoothed_volume = 1.0;

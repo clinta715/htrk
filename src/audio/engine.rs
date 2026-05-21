@@ -34,6 +34,8 @@ pub struct AudioEngine {
     mix_right: Vec<f32>,
     ch_mix_left: Vec<Vec<f32>>,
     ch_mix_right: Vec<Vec<f32>>,
+    pre_ch_mix_left: Vec<Vec<f32>>,
+    pre_ch_mix_right: Vec<Vec<f32>>,
     send_buses: Vec<SendBus>,
 }
 
@@ -78,6 +80,8 @@ pub fn create_engine_and_sender(
         mix_right: vec![0.0; BUFFER_SIZE],
         ch_mix_left: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
         ch_mix_right: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
+        pre_ch_mix_left: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
+        pre_ch_mix_right: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
         send_buses: {
             let configs = [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None];
             let returns = [0.5, 0.0, 0.0, 0.0];
@@ -123,6 +127,8 @@ impl AudioEngine {
             for ch in 0..self.ch_mix_left.len() {
                 self.ch_mix_left[ch].resize(frame_count, 0.0);
                 self.ch_mix_right[ch].resize(frame_count, 0.0);
+                self.pre_ch_mix_left[ch].resize(frame_count, 0.0);
+                self.pre_ch_mix_right[ch].resize(frame_count, 0.0);
             }
             for bus in &mut self.send_buses {
                 bus.buffer_left.resize(frame_count, 0.0);
@@ -135,10 +141,14 @@ impl AudioEngine {
         while self.ch_mix_left.len() < num_ch {
             self.ch_mix_left.push(vec![0.0; frame_count]);
             self.ch_mix_right.push(vec![0.0; frame_count]);
+            self.pre_ch_mix_left.push(vec![0.0; frame_count]);
+            self.pre_ch_mix_right.push(vec![0.0; frame_count]);
         }
         while self.ch_mix_left.len() > num_ch {
             self.ch_mix_left.pop();
             self.ch_mix_right.pop();
+            self.pre_ch_mix_left.pop();
+            self.pre_ch_mix_right.pop();
         }
 
         for s in self.mix_left.iter_mut() {
@@ -152,6 +162,12 @@ impl AudioEngine {
                 *s = 0.0;
             }
             for s in self.ch_mix_right[ch].iter_mut() {
+                *s = 0.0;
+            }
+            for s in self.pre_ch_mix_left[ch].iter_mut() {
+                *s = 0.0;
+            }
+            for s in self.pre_ch_mix_right[ch].iter_mut() {
                 *s = 0.0;
             }
         }
@@ -195,11 +211,13 @@ impl AudioEngine {
                 };
 
                 mixer::mix_voices_per_channel(
-                    &mut self.sequencer.voices,
+                    &mut self.sequencer.voice_pool.voices,
                     &mut self.mix_left[samples_done..samples_done + chunk],
                     &mut self.mix_right[samples_done..samples_done + chunk],
                     &mut self.ch_mix_left,
                     &mut self.ch_mix_right,
+                    &mut self.pre_ch_mix_left,
+                    &mut self.pre_ch_mix_right,
                     samples_done,
                     chunk,
                     self.master_volume,
@@ -234,15 +252,19 @@ impl AudioEngine {
                 bus.buffer_right[..frame_count].fill(0.0);
             }
 
-            // Tap channels into send buses (post-fader: from ch_mix)
+            // Tap channels into send buses
             for ch in 0..channels.len() {
             for (si, bus) in self.send_buses.iter_mut().enumerate() {
-                    let level = channels[ch].send_levels[si];
+                    let level = channels[ch].send_levels[si] * channels[ch].auto_send_factor[si];
                     if level <= 0.0 { continue; }
-                    if bus.pre_fader { continue; }
+                    let (src_left, src_right) = if bus.pre_fader {
+                        (&self.pre_ch_mix_left[ch], &self.pre_ch_mix_right[ch])
+                    } else {
+                        (&self.ch_mix_left[ch], &self.ch_mix_right[ch])
+                    };
                     for i in 0..frame_count {
-                        bus.buffer_left[i] += self.ch_mix_left[ch][i] * level;
-                        bus.buffer_right[i] += self.ch_mix_right[ch][i] * level;
+                        bus.buffer_left[i] += src_left[i] * level;
+                        bus.buffer_right[i] += src_right[i] * level;
                     }
                 }
             }
@@ -313,7 +335,7 @@ impl AudioEngine {
                     self.sequencer.play();
                     #[cfg(feature = "audio_debug")]
                     {
-                        let num_active = self.sequencer.voices.iter().filter(|v| v.active).count();
+                        let num_active = self.sequencer.voice_pool.voices.iter().filter(|v| v.active).count();
                         let ch_vols: Vec<u8> = self.sequencer.state.channels.iter().take(4).map(|c| c.channel_volume).collect();
                         let ch_pans: Vec<u8> = self.sequencer.state.channels.iter().take(4).map(|c| c.channel_panning).collect();
                         debug_log!("[AUDIO] Play command: playing={}, module={}, active_voices={}, ch_vol={:?}, ch_pan={:?}",
@@ -346,7 +368,7 @@ impl AudioEngine {
                             buffer_left: vec![0.0; self.mix_left.len().max(BUFFER_SIZE)],
                             buffer_right: vec![0.0; self.mix_right.len().max(BUFFER_SIZE)],
                             return_level: module.send_return_levels.get(i).copied().unwrap_or(0.0),
-                            pre_fader: false,
+                            pre_fader: module.send_pre_fader.get(i).copied().unwrap_or(false),
                             effect: sendfx::create_send_effect(effect_type, self.output_sample_rate as f32),
                         };
                         bus
@@ -424,6 +446,18 @@ impl AudioEngine {
                         }
                     }
                 }
+                AudioCommand::SetSendPreFader { send_index, pre_fader } => {
+                    if send_index < self.send_buses.len() {
+                        self.send_buses[send_index].pre_fader = pre_fader;
+                        if let Some(ref mut module) = self.module {
+                            if let Some(arc_module) = Arc::get_mut(module) {
+                                if send_index < arc_module.send_pre_fader.len() {
+                                    arc_module.send_pre_fader[send_index] = pre_fader;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -451,7 +485,7 @@ impl AudioEngine {
         self.playback_state
             .set_play_mode(state.play_mode);
 
-        let active = self.sequencer.voices.iter().filter(|v| v.active).count();
+        let active = self.sequencer.voice_pool.voices.iter().filter(|v| v.active).count();
         self.playback_state
             .active_voices
             .store(active as u8, std::sync::atomic::Ordering::Relaxed);
@@ -471,7 +505,7 @@ impl AudioEngine {
 
         let num_ch = self.sequencer.state.channels.len();
         let mut ch_peaks = vec![0.0f32; num_ch];
-        for voice in &self.sequencer.voices {
+        for voice in &self.sequencer.voice_pool.voices {
             if voice.active {
                 if let Some(ch) = voice.channel {
                     if ch < ch_peaks.len() {
@@ -547,7 +581,7 @@ impl AudioEngine {
             sample.fine_tune,
         );
 
-        let voice = &mut self.sequencer.voices[0];
+        let voice = &mut self.sequencer.voice_pool.voices[0];
         voice.trigger(
             sample.data.clone(),
             sample.sample_rate as f64,
@@ -587,7 +621,7 @@ impl AudioEngine {
             sample.relative_note,
             sample.fine_tune,
         );
-        let voice = &mut self.sequencer.voices[PREVIEW_VOICE_INDEX];
+        let voice = &mut self.sequencer.voice_pool.voices[PREVIEW_VOICE_INDEX];
         voice.trigger(
             sample.data.clone(),
             sample.sample_rate as f64,
@@ -666,7 +700,7 @@ mod tests {
     fn create_engine_and_sender_works() {
         let state = Arc::new(AtomicPlaybackState::default());
         let (engine, _sender) = create_engine_and_sender(state.clone(), 48000, 2);
-        assert_eq!(engine.sequencer.voices.len(), MAX_VOICES);
+        assert_eq!(engine.sequencer.voice_pool.voices.len(), MAX_VOICES);
         assert!(engine.module.is_none());
     }
 

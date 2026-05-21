@@ -9,6 +9,7 @@ pub mod renderer;
 pub mod resampler;
 pub mod sequencer_engine;
 pub mod voice;
+pub mod voice_pool;
 
 #[allow(unused_imports)]
 pub use commands::{AudioCommand, InterpolationType};

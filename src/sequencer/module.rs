@@ -114,6 +114,8 @@ pub struct Module {
     pub send_bus_config: [SendEffectType; NUM_SEND_BUSES],
     #[serde(default = "default_send_return_levels")]
     pub send_return_levels: [f32; NUM_SEND_BUSES],
+    #[serde(default)]
+    pub send_pre_fader: [bool; NUM_SEND_BUSES],
 
     #[serde(default)]
     pub automation_tracks: Vec<crate::sequencer::automation::AutomationTrack>,
@@ -142,6 +144,7 @@ impl Default for Module {
             flags: ModuleFlags::default(),
             send_bus_config: [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None],
             send_return_levels: [0.5, 0.0, 0.0, 0.0],
+            send_pre_fader: [false; NUM_SEND_BUSES],
             automation_tracks: Vec::new(),
             next_automation_id: 0,
         }

@@ -2,14 +2,13 @@ use std::sync::Arc;
 
 use crate::audio::effects::{
     EffectProcessor,
-    VIBRATO_TABLE_SIZE, VIBRATO_SINE_TABLE, VIBRATO_RAMP_TABLE, FUNK_TRACK,
-    quantize_to_semitone, fastrand, compute_samples_per_tick, get_vibrato_value,
-    advance_single_envelope, evaluate_envelope, compute_playback_frequency,
+    VIBRATO_TABLE_SIZE, VIBRATO_SINE_TABLE, FUNK_TRACK,
+    quantize_to_semitone, compute_samples_per_tick, get_vibrato_value,
+    compute_playback_frequency,
 };
 use crate::audio::voice::{EnvelopeState, Voice};
-use crate::audio::filter::StateVariableFilter;
-use crate::sequencer::automation::AutomationTarget;
-use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, FilterType, NUM_SEND_BUSES};
+use crate::audio::voice_pool::VoicePool;
+use crate::sequencer::effect::{Effect, NUM_SEND_BUSES};
 use crate::sequencer::instrument::{
     DuplicateCheckAction, DuplicateCheckType, NewNoteAction,
 };
@@ -17,19 +16,19 @@ use crate::sequencer::module::{Module, ModuleFormat, MAX_VOICES};
 use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::player::{ActiveEffects, ChannelState, PlayMode, SequencerState};
-use crate::sequencer::sample::{Sample, VibratoWaveform, LoopType};
+use crate::sequencer::sample::{Sample, VibratoWaveform};
 use crate::debug_log;
 use crate::sequencer::period::{
     get_arp_tab, get_note_period, get_vib_tab, period_to_frequency, relocate_ton,
 };
+use crate::audio::filter::StateVariableFilter;
+use crate::sequencer::automation::AutomationTarget;
 
 pub struct SequencerEngine {
     pub state: SequencerState,
-    pub voices: Vec<Voice>,
-    next_voice: usize,
+    pub voice_pool: VoicePool,
     pub module: Option<Arc<Module>>,
     pub(crate) output_sample_rate: f64,
-    pub(crate) global_volume: f32,
     pub(crate) use_xm_model: bool,
     pub(crate) amiga_led_filter: bool,
     pub pending_send_fx_params: Vec<(usize, u32, f32)>,
@@ -42,11 +41,9 @@ impl SequencerEngine {
         let processor = EffectProcessor::from_module(&default_module);
         SequencerEngine {
             state: SequencerState::default(),
-            voices: vec![Voice::default(); MAX_VOICES],
-            next_voice: 0,
+            voice_pool: VoicePool::new(),
             module: None,
             output_sample_rate,
-            global_volume: 1.0,
             use_xm_model: false,
             amiga_led_filter: false,
             pending_send_fx_params: Vec::new(),
@@ -159,7 +156,7 @@ impl SequencerEngine {
 
     pub fn stop(&mut self) {
         self.stop_playback_state();
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             voice.deactivate();
         }
     }
@@ -474,32 +471,7 @@ impl SequencerEngine {
 }
 
     pub(crate) fn calculate_sample_offset(&self, channel: usize, cell: &Cell, sample: &Sample) -> usize {
-        let ch = &self.state.channels[channel];
-        let offset = match &cell.effect {
-            Effect::SetSampleOffset { offset } => {
-                let off = if *offset == 0 {
-                    ch.last_sample_offset as u32
-                } else {
-                    *offset as u32
-                };
-                ((ch.high_sample_offset as u32) << 16) | off
-            }
-            Effect::FormatSpecific(fe) => {
-                if let Some(offset) = fe.sample_offset() {
-                    let off = if offset == 0 {
-                        ch.last_sample_offset as u32
-                    } else {
-                        offset as u32
-                    };
-                    ((ch.high_sample_offset as u32) << 16) | off
-                } else {
-                    0
-                }
-            }
-            _ => 0,
-        } as usize;
-
-        offset.min(sample.data.len().saturating_sub(1))
+        calculate_sample_offset(&self.state, channel, cell, sample)
     }
 
 
@@ -638,7 +610,7 @@ impl SequencerEngine {
         ch.trem_pos = trem_pos.wrapping_add(trem_speed);
 
         let vol_f = self.compute_channel_volume(channel);
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.base_volume = vol_f;
             }
@@ -678,7 +650,7 @@ impl SequencerEngine {
         }
         ch.channel_volume = ch.real_vol;
         let vol = self.compute_channel_volume(channel);
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.base_volume = vol;
             }
@@ -709,7 +681,7 @@ impl SequencerEngine {
             ch.channel_volume = ch.real_vol;
         }
         let vol = self.compute_channel_volume(channel);
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.base_volume = vol;
             }
@@ -801,13 +773,13 @@ impl SequencerEngine {
 
         let voice_idx = self.allocate_voice(channel);
         let sample_offset = self.calculate_sample_offset(channel, &Cell::default(), sample);
-        self.voices[voice_idx].trigger(
+        self.voice_pool.voices[voice_idx].trigger(
             sample.data.clone(), sample.sample_rate as f64, sample.loop_type,
             sample.loop_start, sample.loop_end, playback_freq, self.output_sample_rate,
             vol, pan, sample_offset, Some(self.state.channels[channel].last_instrument), Some(sample_idx),
             note, NewNoteAction::NoteCut, 0,
         );
-        self.voices[voice_idx].channel = Some(channel);
+        self.voice_pool.voices[voice_idx].channel = Some(channel);
     }
 
     pub(crate) fn trigger_delayed_note_period(&mut self, channel: usize, linear: bool) {
@@ -857,13 +829,13 @@ impl SequencerEngine {
 
                 let voice_idx = self.allocate_voice(channel);
                 let sample_offset = self.calculate_sample_offset(channel, &cell, s);
-                self.voices[voice_idx].trigger(
+                self.voice_pool.voices[voice_idx].trigger(
                     s.data.clone(), s.sample_rate as f64, s.loop_type,
                     s.loop_start, s.loop_end, playback_freq, self.output_sample_rate,
                     vol, pan, sample_offset, Some(inst_idx as u8), Some(sample_idx as u8),
                     Note::On(key), NewNoteAction::NoteCut, fade_out,
                 );
-                self.voices[voice_idx].channel = Some(channel);
+                self.voice_pool.voices[voice_idx].channel = Some(channel);
 
                 {
                     let ch = &mut self.state.channels[channel];
@@ -879,7 +851,7 @@ impl SequencerEngine {
                 // Setup envelopes and auto-vibrato for delayed XM notes
                 if inst_idx > 0 && inst_idx < module.instruments.len() {
                     let inst = &module.instruments[inst_idx];
-                    let voice = &mut self.voices[voice_idx];
+                    let voice = &mut self.voice_pool.voices[voice_idx];
 
                     voice.fade_out_rate = fade_out;
                     voice.fade_out_amp = 32768i32;
@@ -958,114 +930,22 @@ impl SequencerEngine {
         } else {
             0.0
         };
-        for voice in &mut self.voices {
-            if voice.active && voice.channel == Some(channel) {
-                voice.current_frequency = freq;
-                voice.sample_delta = delta;
-            }
-        }
+        self.voice_pool.update_voices_from_period(channel, freq, delta);
     }
 
     pub(crate) fn handle_nna(&mut self, channel: usize, nna: NewNoteAction,
         dct: DuplicateCheckType, dca: DuplicateCheckAction,
         instr_idx: usize, sample_idx: usize) {
-        let mut indices: Vec<usize> = Vec::new();
-
-        if dct != DuplicateCheckType::Disabled {
-            for (i, voice) in self.voices.iter().enumerate() {
-                if !voice.active || voice.channel != Some(channel) {
-                    continue;
-                }
-                let matches = match dct {
-                    DuplicateCheckType::Note => {
-                        voice.note == self.state.channels[channel].last_note
-                    }
-                    DuplicateCheckType::Sample => voice.sample_index == Some(sample_idx as u8),
-                    DuplicateCheckType::Instrument => voice.instrument_index == Some(instr_idx as u8),
-                    _ => false,
-                };
-                if matches {
-                    indices.push(i);
-                }
-            }
-            for voice_idx in &indices {
-                match dca {
-                    DuplicateCheckAction::NoteCut => { self.voices[*voice_idx].deactivate(); }
-                    DuplicateCheckAction::NoteOff => {
-                        self.voices[*voice_idx].note_off = true;
-                        if let Some(ref mut env) = self.voices[*voice_idx].vol_env { env.released = true; }
-                        if let Some(ref mut env) = self.voices[*voice_idx].pan_env { env.released = true; }
-                        if let Some(ref mut env) = self.voices[*voice_idx].pitch_env { env.released = true; }
-                        if let Some(ref mut env) = self.voices[*voice_idx].filter_env { env.released = true; }
-                    }
-                    DuplicateCheckAction::NoteFade => {
-                        self.voices[*voice_idx].fading = true;
-                        if let Some(ref mut env) = self.voices[*voice_idx].vol_env { env.released = true; }
-                        if let Some(ref mut env) = self.voices[*voice_idx].filter_env { env.released = true; }
-                    }
-                }
-            }
-        }
-
-        indices.clear();
-        for (i, voice) in self.voices.iter().enumerate() {
-            if voice.active && voice.channel == Some(channel) {
-                indices.push(i);
-            }
-        }
-
-        for voice_idx in indices {
-            match nna {
-                NewNoteAction::NoteCut => {
-                    self.voices[voice_idx].deactivate();
-                }
-                NewNoteAction::Continue => {}
-                NewNoteAction::NoteOff => {
-                    self.voices[voice_idx].note_off = true;
-                    if let Some(ref mut env) = self.voices[voice_idx].vol_env {
-                        env.released = true;
-                    }
-                    if let Some(ref mut env) = self.voices[voice_idx].pan_env {
-                        env.released = true;
-                    }
-                    if let Some(ref mut env) = self.voices[voice_idx].pitch_env {
-                        env.released = true;
-                    }
-                    if let Some(ref mut env) = self.voices[voice_idx].filter_env {
-                        env.released = true;
-                    }
-                }
-                NewNoteAction::NoteFade => {
-                    self.voices[voice_idx].fading = true;
-                    if let Some(ref mut env) = self.voices[voice_idx].vol_env {
-                        env.released = true;
-                    }
-                    if let Some(ref mut env) = self.voices[voice_idx].filter_env {
-                        env.released = true;
-                    }
-                }
-            }
-        }
+        self.voice_pool.handle_nna(channel, nna, dct, dca, instr_idx, sample_idx, &self.state);
     }
 
 
     pub(crate) fn cut_channel_voices(&mut self, channel: usize) {
-        for voice in &mut self.voices {
-            if voice.active && voice.channel == Some(channel) {
-                voice.deactivate();
-            }
-        }
+        self.voice_pool.cut_channel_voices(channel);
     }
 
     fn fade_channel_voices(&mut self, channel: usize) {
-        for voice in &mut self.voices {
-            if voice.active && voice.channel == Some(channel) {
-                voice.fading = true;
-                if let Some(ref mut env) = voice.vol_env {
-                    env.released = true;
-                }
-            }
-        }
+        self.voice_pool.fade_channel_voices(channel);
     }
 
 
@@ -1084,7 +964,7 @@ impl SequencerEngine {
 
         let slide = speed as f64;
         let factor = 2.0_f64.powf(slide / (12.0 * 64.0));
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.current_frequency *= factor;
                 voice.sample_delta = voice.current_frequency / self.output_sample_rate;
@@ -1107,7 +987,7 @@ impl SequencerEngine {
 
         let slide = speed as f64;
         let factor = 2.0_f64.powf(slide / (12.0 * 64.0));
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.current_frequency /= factor;
                 voice.sample_delta = voice.current_frequency / self.output_sample_rate;
@@ -1153,7 +1033,7 @@ impl SequencerEngine {
         let slide = speed as f64 / (12.0 * 64.0);
         let glissando = self.state.channels[channel].glissando;
 
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if !voice.active || voice.channel != Some(channel) {
                 continue;
             }
@@ -1198,7 +1078,7 @@ impl SequencerEngine {
         ch.row_volume = ch.channel_volume;
 
         let vol_f = self.compute_channel_volume(channel);
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.base_volume = vol_f;
             }
@@ -1214,7 +1094,7 @@ impl SequencerEngine {
         let new_pan = (ch.channel_panning as i16 + delta).clamp(0, 255) as u8;
         ch.channel_panning = new_pan;
 
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.base_panning = new_pan as f32 / 255.0;
             }
@@ -1256,7 +1136,7 @@ impl SequencerEngine {
 
         let depth_f = depth as f32 / 64.0;
 
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if !voice.active || voice.channel != Some(channel) {
                 continue;
             }
@@ -1276,7 +1156,7 @@ impl SequencerEngine {
         }
         let depth_f = depth as f32 / 64.0;
 
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if !voice.active || voice.channel != Some(channel) {
                 continue;
             }
@@ -1299,7 +1179,7 @@ impl SequencerEngine {
         if semitone_offset == 0 {
             return;
         }
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 let freq_mod = 2.0_f64.powf(semitone_offset as f64 / 12.0);
                 voice.sample_delta = (voice.base_frequency * freq_mod) / self.output_sample_rate;
@@ -1313,7 +1193,7 @@ impl SequencerEngine {
         }
         let depth_f = depth as f32 / 64.0;
 
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if !voice.active || voice.channel != Some(channel) {
                 continue;
             }
@@ -1337,7 +1217,7 @@ impl SequencerEngine {
         let counter = self.state.channels[channel].tremor_counter as u16;
         let phase = counter % cycle;
         let mute = phase >= ontime as u16;
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.tremor_mute = mute;
             }
@@ -1377,17 +1257,17 @@ impl SequencerEngine {
             instrument_idx as usize, sample_idx as usize);
 
         let voice_idx = self.allocate_voice(channel);
-        self.voices[voice_idx].trigger(
+        self.voice_pool.voices[voice_idx].trigger(
             sample.data.clone(), sample.sample_rate as f64, sample.loop_type,
             sample.loop_start, sample.loop_end, playback_freq, self.output_sample_rate,
             vol, pan, 0, Some(instrument_idx), Some(sample_idx),
             note, NewNoteAction::NoteCut, 0,
         );
-        self.voices[voice_idx].channel = Some(channel);
+        self.voice_pool.voices[voice_idx].channel = Some(channel);
     }
 
     pub(crate) fn set_channel_cutoff_tick(&mut self, channel: usize, ticks: u8) {
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.cutoff_tick = Some(ticks as u16);
             }
@@ -1395,7 +1275,7 @@ impl SequencerEngine {
     }
 
     pub(crate) fn get_channel_cutoff_tick(&self, channel: usize) -> Option<u16> {
-        for voice in &self.voices {
+        for voice in &self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 return voice.cutoff_tick;
             }
@@ -1404,7 +1284,7 @@ impl SequencerEngine {
     }
 
     pub(crate) fn set_channel_delay_tick(&mut self, channel: usize, ticks: u8) {
-        for voice in &mut self.voices {
+        for voice in &mut self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.delay_tick = Some(ticks as u16);
             }
@@ -1416,7 +1296,7 @@ impl SequencerEngine {
         if ch.note_delay_ticks > 0 {
             return Some(ch.note_delay_ticks as u16);
         }
-        for voice in &self.voices {
+        for voice in &self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 return voice.delay_tick;
             }
@@ -1472,7 +1352,7 @@ impl SequencerEngine {
             self.processor = processor;
 
             if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-                let voice = self.voices.iter_mut().find(|v| v.active && v.channel == Some(channel));
+                let voice = self.voice_pool.voices.iter_mut().find(|v| v.active && v.channel == Some(channel));
                 if let Some(voice) = voice {
                     let fade_out = module.instruments[instrument_idx].fade_out;
                     voice.fade_out_rate = fade_out;
@@ -1485,242 +1365,18 @@ impl SequencerEngine {
     }
 
     pub(crate) fn set_envelope_position(&mut self, channel: usize, tick: u16) {
-        for voice in &mut self.voices {
-            if !voice.active || voice.channel != Some(channel) {
-                continue;
-            }
-            if let Some(ref mut env) = voice.vol_env {
-                env.position = tick as f32;
-                env.current_point = 0;
-                for (i, pt) in env.envelope.points.iter().enumerate() {
-                    if pt.tick as f32 <= env.position {
-                        env.current_point = i;
-                    }
-                }
-            }
-        }
+        self.voice_pool.set_envelope_position(channel, tick);
     }
 
     fn advance_envelopes(&mut self) {
         let is_xm = self.module.as_ref().map_or(false, |m| m.flags.xm_envelope_model);
-
-        for voice in &mut self.voices {
-            if !voice.active {
-                continue;
-            }
-
-            if let Some(ref mut env) = voice.vol_env {
-                advance_single_envelope(env);
-                let env_val = evaluate_envelope(env);
-                voice.envelope_volume = env_val / 64.0;
-            }
-
-            if let Some(ref mut env) = voice.pan_env {
-                advance_single_envelope(env);
-                let env_val = evaluate_envelope(env);
-                voice.envelope_panning = (env_val as f32 - 32.0) / 32.0;
-            }
-
-            if let Some(ref mut env) = voice.pitch_env {
-                advance_single_envelope(env);
-                let env_val = evaluate_envelope(env);
-                let pitch_offset = (env_val as f64 - 32.0) / 32.0;
-                let freq_mod = 2.0_f64.powf(pitch_offset / 12.0);
-                voice.sample_delta = voice.current_frequency * freq_mod / self.output_sample_rate;
-            }
-
-            if let Some(ref mut env) = voice.filter_env {
-                advance_single_envelope(env);
-                let env_val = evaluate_envelope(env);
-                voice.envelope_filter_cutoff = env_val / 64.0;
-            }
-
-            // XM volume/panning calculation (FT2-compatible)
-            if is_xm {
-                if !voice.env_sustain_active {
-                    if voice.fade_out_speed_i32 > voice.fade_out_amp {
-                        voice.fade_out_amp = 0;
-                        voice.fade_out_speed_i32 = 0;
-                    } else {
-                        voice.fade_out_amp -= voice.fade_out_speed_i32;
-                    }
-                }
-
-                let out_vol = if let Some(ch_idx) = voice.channel {
-                    if ch_idx < self.state.channels.len() {
-                        self.state.channels[ch_idx].channel_volume.min(64) as u32
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                };
-                let fade_amp = voice.fade_out_amp as u32;
-                let glob_vol = self.state.global_volume.max(1) as u32;
-
-                let has_vol_env = voice.vol_env.as_ref().map_or(false, |e| {
-                    e.envelope.flags.enabled
-                });
-
-                let vol = if has_vol_env {
-                    let env_val = (voice.envelope_volume * 64.0).round() as u32;
-                    (((env_val as u64) * (out_vol as u64) * (fade_amp as u64)) >> 18) as u32
-                } else {
-                    (((out_vol as u64) * 16 * (fade_amp as u64)) >> 16) as u32
-                };
-                let vol = (((vol as u64) * (glob_vol as u64)) >> 7) as u32;
-                voice.final_volume = (vol as f32 / 256.0).clamp(0.0, 1.0);
-
-                // Panning envelope (FT2-compatible)
-                let out_pan = if let Some(ch_idx) = voice.channel {
-                    if ch_idx < self.state.channels.len() {
-                        self.state.channels[ch_idx].old_pan
-                    } else {
-                        128
-                    }
-                } else {
-                    128
-                };
-                voice.final_panning = out_pan as f32 / 255.0;
-
-                if let Some(ref pan_env_ref) = voice.pan_env {
-                    if pan_env_ref.envelope.flags.enabled {
-                        let env_pan_val = (evaluate_envelope(pan_env_ref) as i32 - 32) * 256;
-                        let pan_tmp = (out_pan as i32 - 128).abs() + 128;
-                        let pan_tmp_scaled = pan_tmp * 8;
-                        let pan_add = (env_pan_val * pan_tmp_scaled) >> 16;
-                        let final_pan = (out_pan as i32 + pan_add).clamp(0, 255);
-                        voice.final_panning = final_pan as f32 / 255.0;
-                    }
-                }
-            } else {
-                // Non-XM fadeout
-                if voice.fading && voice.fade_out_rate > 0 {
-                    voice.fade_out_volume -= voice.fade_out_rate as f32 / 4096.0;
-                    if voice.fade_out_volume <= 0.0 {
-                        voice.fade_out_volume = 0.0;
-                        voice.deactivate();
-                        continue;
-                    }
-                }
-
-                if voice.note_off {
-                    let env_done = voice.vol_env.as_ref().map_or(true, |e| {
-                        e.finished || !e.envelope.flags.enabled
-                    });
-                    if env_done {
-                        if voice.fade_out_rate == 0 {
-                            voice.deactivate();
-                            continue;
-                        } else if !voice.fading {
-                            voice.fading = true;
-                        }
-                    }
-                }
-
-                if voice.tremor_mute {
-                    voice.final_volume = 0.0;
-                } else {
-                    voice.final_volume = voice.base_volume
-                        * voice.envelope_volume
-                        * voice.channel_volume
-                        * voice.global_volume
-                        * voice.fade_out_volume;
-                }
-
-                if voice.tremolo_depth > 0 {
-                    voice.final_volume *= 1.0 + voice.tremolo_volume;
-                }
-                voice.final_panning = (voice.base_panning + voice.envelope_panning).clamp(0.0, 1.0);
-            }
-
-            // Auto-vibrato for XM
-            if is_xm {
-                let linear_flag = self.module.as_ref().unwrap().flags.linear_slides;
-                let module = self.module.as_ref().unwrap();
-                let inst_idx = voice.instrument_index.unwrap_or(0) as usize;
-                if inst_idx > 0 && inst_idx < module.instruments.len() {
-                    let inst = &module.instruments[inst_idx];
-                    if inst.vib_depth > 0 {
-                        if voice.auto_vib_sweep > 0 {
-                            let mut amp = voice.auto_vib_sweep;
-                            if voice.env_sustain_active {
-                                amp += voice.auto_vib_amp;
-                                if (amp >> 8) > inst.vib_depth as i32 {
-                                    amp = (inst.vib_depth as i32) << 8;
-                                    voice.auto_vib_sweep = 0;
-                                }
-                                voice.auto_vib_amp = amp;
-                            }
-                        }
-
-                        voice.auto_vib_pos = voice.auto_vib_pos.wrapping_add(inst.vib_rate);
-
-                        let sine_tab = crate::sequencer::period::get_vib_sine();
-                        let auto_vib_val: i32 = match inst.vib_type {
-                            1 => {
-                                if voice.auto_vib_pos > 127 { 64 } else { -64 }
-                            }
-                            2 => {
-                                (((voice.auto_vib_pos as i32 >> 1) + 64) & 127) - 64
-                            }
-                            3 => {
-                                ((-(voice.auto_vib_pos as i32 >> 1) + 64) & 127) - 64
-                            }
-                            _ => {
-                                sine_tab[voice.auto_vib_pos as usize] as i32
-                            }
-                        };
-
-                        let val = auto_vib_val * 4;
-                        let period_offset = (val * voice.auto_vib_amp) >> 16;
-                        let mut tmp_period = voice.auto_vib_period_base as i32 + period_offset;
-                        if tmp_period >= 32000 {
-                            tmp_period = 0;
-                        }
-                        if tmp_period < 1 {
-                            tmp_period = 1;
-                        }
-
-                        let freq = period_to_frequency(tmp_period as u16, linear_flag, 8363);
-                        voice.sample_delta = freq / self.output_sample_rate;
-                    }
-                }
-            }
-
-            // XM: handle note_off with fade_out check
-            if is_xm && voice.note_off {
-                let has_vol_env = voice.vol_env.as_ref().map_or(false, |e| {
-                    !e.finished
-                });
-                if !has_vol_env && voice.fade_out_rate == 0 {
-                    voice.deactivate();
-                    continue;
-                }
-                if voice.fade_out_amp == 0 {
-                    voice.deactivate();
-                    continue;
-                }
-            }
-        }
+        self.voice_pool.advance_envelopes(is_xm, &self.state, self.output_sample_rate, self.module.as_ref());
     }
 
     fn advance_row(&mut self) {
         self.state.current_tick = 0;
 
-        for voice in &mut self.voices {
-            if voice.active {
-                voice.cutoff_tick = None;
-                voice.delay_tick = None;
-                if self.use_xm_model {
-                    if let Some(ch_idx) = voice.channel {
-                        if ch_idx < self.state.channels.len() {
-                            voice.auto_vib_period_base = self.state.channels[ch_idx].out_period;
-                        }
-                    }
-                }
-            }
-        }
+        self.voice_pool.advance_row_voice_reset(self.use_xm_model, &self.state);
 
         for ch in &mut self.state.channels {
             ch.delayed_cell = None;
@@ -1867,75 +1523,15 @@ impl SequencerEngine {
     }
 
     pub(crate) fn allocate_voice(&mut self, channel: usize) -> usize {
-        let start = self.next_voice;
-
-        for i in 0..MAX_VOICES {
-            let idx = (start + i) % MAX_VOICES;
-            let voice = &self.voices[idx];
-            if !voice.active && voice.channel == Some(channel) {
-                self.next_voice = (idx + 1) % MAX_VOICES;
-                return idx;
-            }
-        }
-
-        for i in 0..MAX_VOICES {
-            let idx = (start + i) % MAX_VOICES;
-            if !self.voices[idx].active {
-                self.next_voice = (idx + 1) % MAX_VOICES;
-                return idx;
-            }
-        }
-
-        let mut best_fading = None;
-        let mut best_same_channel = None;
-        let mut best_any = None;
-
-        for i in 0..MAX_VOICES {
-            let idx = (start + i) % MAX_VOICES;
-            let voice = &self.voices[idx];
-
-            if best_any.is_none() {
-                best_any = Some(idx);
-            }
-
-            if voice.channel == Some(channel) && best_same_channel.is_none() {
-                best_same_channel = Some(idx);
-            }
-
-            if voice.fading && voice.channel == Some(channel) && best_fading.is_none() {
-                best_fading = Some(idx);
-                break;
-            }
-        }
-
-        let chosen = best_fading
-            .or(best_same_channel)
-            .or(best_any)
-            .unwrap_or(start);
-
-        self.next_voice = (chosen + 1) % MAX_VOICES;
-        chosen
+        self.voice_pool.allocate_voice(channel)
     }
 
     pub(crate) fn compute_channel_volume(&self, channel: usize) -> f32 {
-        if channel >= self.state.channels.len() {
-            return 0.0;
-        }
-        let ch = &self.state.channels[channel];
-        if self.use_xm_model {
-            ch.channel_volume.min(64) as f32 / 64.0
-        } else {
-            let vol = ch.channel_volume.min(64) as f32 / 64.0;
-            let global = self.state.global_volume as f32 / 128.0;
-            vol * global
-        }
+        compute_channel_volume(&self.state, channel, self.use_xm_model)
     }
 
     pub(crate) fn compute_channel_panning(&self, channel: usize) -> f32 {
-        if channel >= self.state.channels.len() {
-            return 0.5;
-        }
-        self.state.channels[channel].channel_panning as f32 / 255.0
+        compute_channel_panning(&self.state, channel)
     }
 
     pub(crate) fn compute_portamento_target(
@@ -1947,29 +1543,92 @@ impl SequencerEngine {
         sample_idx: usize,
         module: &Module,
     ) -> (u16, f64) {
-        let freq = match Note::On(remapped_key).frequency() {
-            Some(f) => f,
-            None => return (0, 0.0),
-        };
-
-        let (s, _playback_freq) = if sample_idx > 0 && sample_idx < module.samples.len() {
-            let s = &module.samples[sample_idx];
-            let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
-            (s, pf)
-        } else {
-            match sample {
-                Some(s) => {
-                    let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
-                    (s, pf)
-                }
-                None => return ((8363.0 * 428.0 / freq) as u16, freq),
-            }
-        };
-
-        let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
-        let period = (8363.0 * 428.0 / pf).max(1.0) as u16;
-        (period, pf)
+        compute_portamento_target(_channel, _note_key, remapped_key, sample, sample_idx, module)
     }
+}
+
+// ─── Standalone helper functions ─────────────────────────────
+
+pub(crate) fn compute_channel_volume(state: &SequencerState, channel: usize, use_xm_model: bool) -> f32 {
+    if channel >= state.channels.len() {
+        return 0.0;
+    }
+    let ch = &state.channels[channel];
+    if use_xm_model {
+        ch.channel_volume.min(64) as f32 / 64.0
+    } else {
+        let vol = ch.channel_volume.min(64) as f32 / 64.0;
+        let global = state.global_volume as f32 / 128.0;
+        vol * global
+    }
+}
+
+pub(crate) fn compute_channel_panning(state: &SequencerState, channel: usize) -> f32 {
+    if channel >= state.channels.len() {
+        return 0.5;
+    }
+    state.channels[channel].channel_panning as f32 / 255.0
+}
+
+pub(crate) fn calculate_sample_offset(state: &SequencerState, channel: usize, cell: &Cell, sample: &Sample) -> usize {
+    let ch = &state.channels[channel];
+    let offset = match &cell.effect {
+        Effect::SetSampleOffset { offset } => {
+            let off = if *offset == 0 {
+                ch.last_sample_offset as u32
+            } else {
+                *offset as u32
+            };
+            ((ch.high_sample_offset as u32) << 16) | off
+        }
+        Effect::FormatSpecific(fe) => {
+            if let Some(offset) = fe.sample_offset() {
+                let off = if offset == 0 {
+                    ch.last_sample_offset as u32
+                } else {
+                    offset as u32
+                };
+                ((ch.high_sample_offset as u32) << 16) | off
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    } as usize;
+
+    offset.min(sample.data.len().saturating_sub(1))
+}
+
+pub(crate) fn compute_portamento_target(
+    _channel: usize,
+    _note_key: u8,
+    remapped_key: u8,
+    sample: Option<&Sample>,
+    sample_idx: usize,
+    module: &Module,
+) -> (u16, f64) {
+    let freq = match Note::On(remapped_key).frequency() {
+        Some(f) => f,
+        None => return (0, 0.0),
+    };
+
+    let (s, _playback_freq) = if sample_idx > 0 && sample_idx < module.samples.len() {
+        let s = &module.samples[sample_idx];
+        let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
+        (s, pf)
+    } else {
+        match sample {
+            Some(s) => {
+                let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
+                (s, pf)
+            }
+            None => return ((8363.0 * 428.0 / freq) as u16, freq),
+        }
+    };
+
+    let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
+    let period = (8363.0 * 428.0 / pf).max(1.0) as u16;
+    (period, pf)
 }
 
 #[cfg(test)]
@@ -1978,6 +1637,7 @@ mod tests {
     use crate::sequencer::Instrument;
     use crate::sequencer::module::ModuleFlags;
     use crate::sequencer::pattern::Pattern;
+    use crate::audio::effects::{advance_single_envelope, evaluate_envelope};
 
     #[test]
     fn compute_samples_per_tick_default() {
@@ -1995,7 +1655,7 @@ mod tests {
     #[test]
     fn sequencer_engine_new() {
         let engine = SequencerEngine::new(48000.0);
-        assert_eq!(engine.voices.len(), MAX_VOICES);
+        assert_eq!(engine.voice_pool.voices.len(), MAX_VOICES);
         assert!(!engine.state.playing);
     }
 
@@ -2094,7 +1754,7 @@ mod tests {
     fn allocate_voice_finds_inactive() {
         let mut engine = SequencerEngine::new(48000.0);
         let idx = engine.allocate_voice(0);
-        assert!(!engine.voices[idx].active);
+        assert!(!engine.voice_pool.voices[idx].active);
     }
 
     #[test]
@@ -2145,10 +1805,10 @@ mod tests {
 
         assert!(engine.state.playing, "Engine should be playing after play()");
 
-        let active_after_play = engine.voices.iter().filter(|v| v.active).count();
+        let active_after_play = engine.voice_pool.voices.iter().filter(|v| v.active).count();
         assert!(active_after_play > 0, "Should have at least 1 active voice after tick 0, got {}", active_after_play);
 
-        let voice = engine.voices.iter().find(|v| v.active).unwrap();
+        let voice = engine.voice_pool.voices.iter().find(|v| v.active).unwrap();
         assert!(voice.sample.is_some(), "Active voice should have sample data");
         let sample_ref = voice.sample.as_ref().unwrap();
         assert!(!sample_ref.is_empty(), "Sample data should not be empty");
@@ -2160,7 +1820,7 @@ mod tests {
         let mut left = vec![0.0f32; 4800];
         let mut right = vec![0.0f32; 4800];
         crate::audio::mixer::mix_voices(
-            &mut engine.voices,
+            &mut engine.voice_pool.voices,
             &mut left,
             &mut right,
             1.0,
@@ -2262,7 +1922,7 @@ mod tests {
         engine.process_tick_zero_unified();
 
         // Find the active voice on channel 0
-        let voice = engine.voices.iter()
+        let voice = engine.voice_pool.voices.iter()
             .find(|v| v.active && v.channel == Some(0))
             .expect("Should have an active voice on channel 0");
 
@@ -2361,7 +2021,7 @@ mod tests {
         let linear = module.flags.linear_slides;
         engine.trigger_delayed_note_period(0, linear);
 
-        let voice = engine.voices.iter()
+        let voice = engine.voice_pool.voices.iter()
             .find(|v| v.active && v.channel == Some(0))
             .expect("Should have active voice after delayed trigger");
 
@@ -2448,7 +2108,7 @@ mod tests {
 
         let period_c5 = crate::sequencer::period::get_note_period(60, 0, true);
 
-        let voice = engine.voices.iter()
+        let voice = engine.voice_pool.voices.iter()
             .find(|v| v.active && v.channel == Some(0))
             .expect("Should have voice after first trigger");
         assert_eq!(
@@ -2468,7 +2128,7 @@ mod tests {
 
         let period_c6 = crate::sequencer::period::get_note_period(72, 0, true);
 
-        let voice2 = engine.voices.iter()
+        let voice2 = engine.voice_pool.voices.iter()
             .find(|v| v.active && v.channel == Some(0))
             .expect("Should have voice after second trigger");
         assert_eq!(
@@ -2654,7 +2314,7 @@ mod tests {
 
         // No voice should be active yet (note is delayed)
         assert!(
-            engine.voices.iter().all(|v| !v.active || v.channel != Some(0)),
+            engine.voice_pool.voices.iter().all(|v| !v.active || v.channel != Some(0)),
             "No voice on ch0 after tick 0 with NoteDelay"
         );
         assert_eq!(engine.state.channels[0].note_delay_ticks, 3);
@@ -2664,7 +2324,7 @@ mod tests {
         engine.state.current_tick = 1;
         engine.process_effects_tick_unified();
         assert!(
-            engine.voices.iter().all(|v| !v.active || v.channel != Some(0)),
+            engine.voice_pool.voices.iter().all(|v| !v.active || v.channel != Some(0)),
             "No voice on ch0 at tick 1"
         );
 
@@ -2672,7 +2332,7 @@ mod tests {
         engine.state.current_tick = 2;
         engine.process_effects_tick_unified();
         assert!(
-            engine.voices.iter().all(|v| !v.active || v.channel != Some(0)),
+            engine.voice_pool.voices.iter().all(|v| !v.active || v.channel != Some(0)),
             "No voice on ch0 at tick 2"
         );
 
@@ -2680,7 +2340,7 @@ mod tests {
         engine.state.current_tick = 3;
         engine.process_effects_tick_unified();
         assert!(
-            engine.voices.iter().any(|v| v.active && v.channel == Some(0)),
+            engine.voice_pool.voices.iter().any(|v| v.active && v.channel == Some(0)),
             "Voice should be active on ch0 at tick 3 (delayed note trigger)"
         );
     }
@@ -3049,7 +2709,7 @@ mod tests {
         voice.sample_delta = 440.0 / 48000.0;
         voice.vibrato_waveform = VibratoWaveform::Sine;
         voice.vibrato_phase = 0.0;
-        engine.voices[0] = voice;
+        engine.voice_pool.voices[0] = voice;
 
         engine.state.channels[0].real_period = 856;
         engine.state.channels[0].out_period = 856;
@@ -3376,11 +3036,11 @@ mod tests {
         engine.state.channels[ch].funk_speed = 4;
         engine.state.channels[ch].funk_toggle = true;
         engine.state.current_tick = FUNK_TRACK[4] as u8;
-        engine.voices[0].active = true;
-        engine.voices[0].channel = Some(0);
-        engine.voices[0].position = 100.0;
+        engine.voice_pool.voices[0].active = true;
+        engine.voice_pool.voices[0].channel = Some(0);
+        engine.voice_pool.voices[0].position = 100.0;
         engine.process_effects_tick_unified();
-        assert!(engine.voices[0].position >= 100.0, "FunkIt should modulate voice position");
+        assert!(engine.voice_pool.voices[0].position >= 100.0, "FunkIt should modulate voice position");
     }
 
     #[test]
@@ -3399,10 +3059,10 @@ mod tests {
         engine.play();
 
         engine.state.channels[0].funk_speed = 0;
-        let pos_before = engine.voices[0].position;
+        let pos_before = engine.voice_pool.voices[0].position;
         engine.state.current_tick = 5;
         engine.process_effects_tick_unified();
-        assert_eq!(engine.voices[0].position, pos_before, "funk_speed=0 should not move position");
+        assert_eq!(engine.voice_pool.voices[0].position, pos_before, "funk_speed=0 should not move position");
     }
 
     #[test]
@@ -3428,7 +3088,7 @@ mod tests {
     #[test]
     fn karplus_strong_disabled_when_param_zero() {
         let mut engine = SequencerEngine::new(48000.0);
-        let voice = &mut engine.voices[0];
+        let voice = &mut engine.voice_pool.voices[0];
         voice.karplus_strong = false;
         assert!(!voice.karplus_strong);
         voice.karplus_strong = true;

@@ -107,7 +107,7 @@ impl WavRenderer {
                 let muted: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.muted).collect();
 
                 mixer::mix_voices(
-                    &mut self.sequencer.voices,
+                    &mut self.sequencer.voice_pool.voices,
                     &mut left[samples_done..samples_done + chunk],
                     &mut right[samples_done..samples_done + chunk],
                     self.master_volume,

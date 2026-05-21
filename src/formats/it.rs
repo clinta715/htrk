@@ -8,7 +8,7 @@ use crate::sequencer::{
     Instrument, LoopType, Module, ModuleFlags, ModuleFormat, NewNoteAction, Note, Pattern, Sample,
     SampleFlags, VibratoWaveform, MAX_CHANNELS, MAX_ENVELOPE_POINTS,
 };
-use crate::sequencer::effect::{FormatEffect, ItEffect};
+use crate::sequencer::effect::{FormatEffect, ItEffect, SendEffectType};
 
 pub struct ItHandler;
 
@@ -167,12 +167,13 @@ impl FormatHandler for ItHandler {
                 ..module_flags
             },
             send_bus_config: [
-                crate::sequencer::effect::SendEffectType::Delay,
-                crate::sequencer::effect::SendEffectType::Reverb,
-                crate::sequencer::effect::SendEffectType::None,
-                crate::sequencer::effect::SendEffectType::None,
+                SendEffectType::Reverb,
+                SendEffectType::Delay,
+                SendEffectType::None,
+                SendEffectType::None,
             ],
             send_return_levels: [0.5, 0.0, 0.0, 0.0],
+            send_pre_fader: Default::default(),
             automation_tracks: Vec::new(),
             next_automation_id: 0,
         })

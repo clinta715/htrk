@@ -43,10 +43,9 @@ impl XmProcessor {
                 ch.row_volume = (*volume).min(64);
                 ch.real_vol = (*volume).min(64);
                 let vol = engine.compute_channel_volume(channel);
-                for voice in &mut engine.voices {
+                for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(channel) {
                         voice.base_volume = vol;
-                        voice.channel_volume = 1.0;
                     }
                 }
             }
@@ -127,7 +126,7 @@ impl XmProcessor {
                         let module = engine.module.as_ref().unwrap().clone();
                         let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
                         let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                        for voice in &mut engine.voices {
+                        for voice in &mut engine.voice_pool.voices {
                             if voice.active && voice.channel == Some(channel) {
                                 voice.current_frequency = freq;
                                 voice.sample_delta = delta;
@@ -151,7 +150,7 @@ impl XmProcessor {
                         let module = engine.module.as_ref().unwrap().clone();
                         let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
                         let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                        for voice in &mut engine.voices {
+                        for voice in &mut engine.voice_pool.voices {
                             if voice.active && voice.channel == Some(channel) {
                                 voice.current_frequency = freq;
                                 voice.sample_delta = delta;
@@ -170,7 +169,7 @@ impl XmProcessor {
                     let module = engine.module.as_ref().unwrap().clone();
                     let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
                     let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                    for voice in &mut engine.voices {
+                    for voice in &mut engine.voice_pool.voices {
                         if voice.active && voice.channel == Some(channel) {
                             voice.current_frequency = freq;
                             voice.sample_delta = delta;
@@ -188,7 +187,7 @@ impl XmProcessor {
                     let module = engine.module.as_ref().unwrap().clone();
                     let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
                     let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                    for voice in &mut engine.voices {
+                    for voice in &mut engine.voice_pool.voices {
                         if voice.active && voice.channel == Some(channel) {
                             voice.current_frequency = freq;
                             voice.sample_delta = delta;
@@ -207,7 +206,7 @@ impl XmProcessor {
                         let module = engine.module.as_ref().unwrap().clone();
                         let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
                         let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                        for voice in &mut engine.voices {
+                        for voice in &mut engine.voice_pool.voices {
                             if voice.active && voice.channel == Some(channel) {
                                 voice.current_frequency = freq;
                                 voice.sample_delta = delta;
@@ -227,7 +226,7 @@ impl XmProcessor {
                         let module = engine.module.as_ref().unwrap().clone();
                         let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
                         let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                        for voice in &mut engine.voices {
+                        for voice in &mut engine.voice_pool.voices {
                             if voice.active && voice.channel == Some(channel) {
                                 voice.current_frequency = freq;
                                 voice.sample_delta = delta;
@@ -297,7 +296,6 @@ impl XmProcessor {
 
             Effect::SetGlobalVolume { volume } => {
                 engine.state.global_volume = (*volume).min(64);
-                engine.global_volume = engine.state.global_volume as f32 / 64.0;
             }
 
             Effect::PatternDelay { ticks } => {
@@ -329,7 +327,7 @@ impl XmProcessor {
                 if inst_idx > 0 && inst_idx < module.instruments.len() {
                     let inst = &module.instruments[inst_idx];
                     let tick_val = *tick as f32;
-                    for voice in &mut engine.voices {
+                    for voice in &mut engine.voice_pool.voices {
                         if !voice.active || voice.channel != Some(channel) {
                             continue;
                         }
@@ -380,7 +378,7 @@ impl XmProcessor {
                 ch.channel_volume = (ch.channel_volume + amount).min(64);
                 ch.real_vol = ch.channel_volume;
                 let vol = engine.compute_channel_volume(channel);
-                for voice in &mut engine.voices {
+                for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(channel) {
                         voice.base_volume = vol;
                     }
@@ -391,7 +389,7 @@ impl XmProcessor {
                 ch.channel_volume = ch.channel_volume.saturating_sub(*amount);
                 ch.real_vol = ch.channel_volume;
                 let vol = engine.compute_channel_volume(channel);
-                for voice in &mut engine.voices {
+                for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(channel) {
                         voice.base_volume = vol;
                     }
@@ -430,7 +428,7 @@ impl XmProcessor {
             Effect::SetFilterCutoff { cutoff } => {
                 let cutoff_f = *cutoff as f32;
                 engine.state.channels[channel].filter_cutoff = cutoff_f;
-                for voice in &mut engine.voices {
+                for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(channel) {
                         voice.filter_cutoff = cutoff_f;
                     }
@@ -440,7 +438,7 @@ impl XmProcessor {
             Effect::SetFilterResonance { resonance } => {
                 let res_f = *resonance as f32 / 128.0;
                 engine.state.channels[channel].filter_resonance = res_f;
-                for voice in &mut engine.voices {
+                for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(channel) {
                         voice.filter_resonance = res_f;
                     }
@@ -450,7 +448,7 @@ impl XmProcessor {
             Effect::SetFilterType { filter_type } => {
                 let ft = FilterType::from_u8(*filter_type);
                 engine.state.channels[channel].filter_type = ft;
-                for voice in &mut engine.voices {
+                for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(channel) {
                         voice.filter_type = ft;
                         voice.svf.filter_type = ft;
@@ -464,7 +462,7 @@ impl XmProcessor {
                 let slide = *amount as f32;
                 let new_cutoff = (engine.state.channels[channel].filter_cutoff + slide).clamp(0.0, 0xFFFF as f32);
                 engine.state.channels[channel].filter_cutoff = new_cutoff;
-                for voice in &mut engine.voices {
+                for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(channel) {
                         voice.filter_cutoff = new_cutoff;
                     }
@@ -547,7 +545,7 @@ impl XmProcessor {
                     let module = engine.module.as_ref().unwrap().clone();
                     let freq = crate::sequencer::period::period_to_frequency(engine.state.channels[ch].out_period, module.flags.linear_slides, 8363);
                     let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                    for voice in &mut engine.voices {
+                    for voice in &mut engine.voice_pool.voices {
                         if voice.active && voice.channel == Some(ch) {
                             voice.current_frequency = freq;
                             voice.sample_delta = delta;
@@ -567,7 +565,7 @@ impl XmProcessor {
                     let module = engine.module.as_ref().unwrap().clone();
                     let freq = crate::sequencer::period::period_to_frequency(engine.state.channels[ch].out_period, module.flags.linear_slides, 8363);
                     let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                    for voice in &mut engine.voices {
+                    for voice in &mut engine.voice_pool.voices {
                         if voice.active && voice.channel == Some(ch) {
                             voice.current_frequency = freq;
                             voice.sample_delta = delta;
@@ -599,7 +597,7 @@ impl XmProcessor {
                 let slide = engine.state.channels[ch].last_filter_cutoff_slide as f32;
                 let new_cutoff = (engine.state.channels[ch].filter_cutoff + slide).clamp(0.0, 0xFFFF as f32);
                 engine.state.channels[ch].filter_cutoff = new_cutoff;
-                for voice in &mut engine.voices {
+                for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(ch) {
                         voice.filter_cutoff = new_cutoff;
                     }
@@ -629,7 +627,7 @@ impl XmProcessor {
 
             if engine.state.channels[ch].active_effects.key_off {
                 engine.state.channels[ch].active_effects.key_off = false;
-                for voice in &mut engine.voices {
+                for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(ch) {
                         if let Some(ref mut env) = voice.vol_env { env.released = true; }
                         if let Some(ref mut env) = voice.pan_env { env.released = true; }
@@ -641,7 +639,7 @@ impl XmProcessor {
 
             if !ae.tremolo {
                 let vol = engine.compute_channel_volume(ch);
-                for voice in &mut engine.voices {
+                for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(ch) {
                         voice.base_volume = vol;
                     }
@@ -717,7 +715,7 @@ impl XmProcessor {
         let vol = engine.compute_channel_volume(channel);
         let pan = engine.compute_channel_panning(channel);
 
-        let voice = &mut engine.voices[voice_idx];
+        let voice = &mut engine.voice_pool.voices[voice_idx];
         voice.trigger(
             sample.data.clone(),
             sample.sample_rate as f64,
@@ -746,7 +744,7 @@ impl XmProcessor {
 
         if instrument_idx > 0 && instrument_idx < module.instruments.len() {
             let inst = &module.instruments[instrument_idx];
-            let voice = &mut engine.voices[voice_idx];
+            let voice = &mut engine.voice_pool.voices[voice_idx];
 
             voice.fade_out_rate = fade_out;
             voice.fade_out_amp = 32768i32;
@@ -869,7 +867,7 @@ impl XmProcessor {
             None => return,
         };
 
-        for voice in &mut engine.voices {
+        for voice in &mut engine.voice_pool.voices {
             if !voice.active || voice.channel != Some(channel) {
                 continue;
             }

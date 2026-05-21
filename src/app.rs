@@ -74,6 +74,7 @@ pub struct HtrkApp {
     pub(crate) last_visible_channels: usize,
     pub(crate) send_bus_effect_types: [SendEffectType; NUM_SEND_BUSES],
     pub(crate) send_bus_params: [[f32; 5]; NUM_SEND_BUSES],
+    pub(crate) send_pre_fader: [bool; NUM_SEND_BUSES],
     pub(crate) automation_dragging: Option<(usize, f32)>,
     pub(crate) automation_editor_state: crate::ui::automation_editor::AutomationEditorState,
 }
@@ -137,6 +138,7 @@ impl Default for HtrkApp {
                 [0.0, 0.0, 0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0, 0.0],
             ],
+            send_pre_fader: [false; NUM_SEND_BUSES],
             automation_dragging: None,
             automation_editor_state: crate::ui::automation_editor::AutomationEditorState::default(),
         }
@@ -364,8 +366,19 @@ impl HtrkApp {
             for i in old..count {
                 self.channel_names[i] = format!("Ch{}", i + 1);
             }
-        } else {
-            self.channel_names.truncate(count);
+        }
+    }
+
+    pub(crate) fn sync_send_bus_state(&mut self) {
+        if let Some(ref module) = self.core.module {
+            self.send_bus_effect_types = module.send_bus_config;
+            self.send_bus_params = [
+                [module.send_return_levels[0], 0.0, 0.0, 0.0, 0.0],
+                [module.send_return_levels[1], 0.0, 0.0, 0.0, 0.0],
+                [module.send_return_levels[2], 0.0, 0.0, 0.0, 0.0],
+                [module.send_return_levels[3], 0.0, 0.0, 0.0, 0.0],
+            ];
+            self.send_pre_fader = module.send_pre_fader;
         }
     }
 
@@ -408,6 +421,7 @@ impl HtrkApp {
         self.scroll_row = 0;
         self.scroll_channel = 0;
         self.sync_channel_fields();
+        self.sync_send_bus_state();
     }
 
     pub(crate) fn current_pattern(&self) -> Option<&crate::sequencer::Pattern> {
@@ -1188,6 +1202,7 @@ impl eframe::App for HtrkApp {
                         &mut self.core.command_sender,
                         &mut self.send_bus_effect_types,
                         &mut self.send_bus_params,
+                        &mut self.send_pre_fader,
                     );
                 }
                 AppView::Playback => {

@@ -32,6 +32,7 @@ pub(crate) fn load_file(app: &mut HtrkApp, path: &str) {
             app.scroll_row = 0;
             app.scroll_channel = 0;
             app.sync_channel_fields();
+            app.sync_send_bus_state();
         }
         Err(e) => {
             eprintln!("Failed to load module: {}", e);

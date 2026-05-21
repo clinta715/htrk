@@ -48,4 +48,5 @@ pub enum AudioCommand {
     SetSendReturnLevel { send_index: usize, level: f32 },
     SetSendFxParam { send_index: usize, param: u32, value: f32 },
     SetSendEffectType { send_index: usize, effect_type: SendEffectType },
+    SetSendPreFader { send_index: usize, pre_fader: bool },
 }

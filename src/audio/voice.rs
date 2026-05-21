@@ -34,8 +34,6 @@ pub struct Voice {
     pub base_volume: f32,
     pub envelope_volume: f32,
     pub tremolo_volume: f32,
-    pub channel_volume: f32,
-    pub global_volume: f32,
     pub fade_out_volume: f32,
     pub final_volume: f32,
 
@@ -148,8 +146,6 @@ impl Voice {
         self.base_volume = volume;
         self.envelope_volume = 1.0;
         self.tremolo_volume = 0.0;
-        self.channel_volume = 1.0;
-        self.global_volume = 1.0;
         self.fade_out_volume = 1.0;
         self.final_volume = volume;
         self.smoothed_volume = volume;
@@ -229,8 +225,6 @@ impl Default for Voice {
             base_volume: 0.0,
             envelope_volume: 1.0,
             tremolo_volume: 0.0,
-            channel_volume: 1.0,
-            global_volume: 1.0,
             fade_out_volume: 0.0,
             final_volume: 1.0,
             smoothed_volume: 1.0,
