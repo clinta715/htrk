@@ -49,7 +49,11 @@ pub fn draw_transport(
         ui.visuals_mut().widgets.inactive.fg_stroke.color = theme.transport_fg;
 
         let play_label = if playing { "|| Pause" } else { "> Play" };
-        if ui.button(play_label).clicked() {
+        let play_color = if playing { theme.transport_active } else { theme.transport_fg };
+        let play_btn = egui::Button::new(
+            egui::RichText::new(play_label).color(play_color),
+        );
+        if ui.add(play_btn).clicked() {
             if let Some(ref mut sender) = command_sender {
                 if playing {
                     sender.send(AudioCommand::Pause);

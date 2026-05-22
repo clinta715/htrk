@@ -1,5 +1,6 @@
 use eframe::egui;
 use std::sync::Arc;
+use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::Module;
 use crate::ui::TrackerTheme;
 
@@ -35,6 +36,7 @@ pub fn draw_sample_editor(
     selection: &mut Option<(usize, usize)>,
     clipboard: &mut Option<Arc<Vec<f32>>>,
     amplify_factor: &mut f32,
+    playback_state: &AtomicPlaybackState,
 ) -> Option<SampleEditEvent> {
     let mut event = None;
 
@@ -101,10 +103,15 @@ pub fn draw_sample_editor(
                                 String::new()
                             };
 
-                            let label = format!("{:02X}: {}{}", i, name, detail);
+                            let is_playing = !playback_state.sample_positions_for(i).is_empty();
+
+                            let play_dot = if is_playing { "  " } else { "  " };
+                            let label = format!("{}{:02X}: {}{}", play_dot, i, name, detail);
 
                             let bg = if is_selected {
                                 egui::Color32::from_rgb(60, 60, 120)
+                            } else if is_playing {
+                                egui::Color32::from_rgb(30, 30, 40)
                             } else if has_data {
                                 egui::Color32::from_rgb(24, 24, 32)
                             } else {
@@ -113,6 +120,8 @@ pub fn draw_sample_editor(
 
                             let fg = if is_selected {
                                 egui::Color32::from_rgb(255, 255, 255)
+                            } else if is_playing {
+                                egui::Color32::from_rgb(220, 220, 240)
                             } else if has_data || has_name {
                                 egui::Color32::from_rgb(200, 200, 220)
                             } else {
@@ -133,6 +142,14 @@ pub fn draw_sample_editor(
                             if response.clicked() {
                                 *selected_sample = i;
                                 *selection = None;
+                            }
+                            if is_playing {
+                                let painter = ui.painter_at(response.rect);
+                                painter.circle_filled(
+                                    egui::pos2(response.rect.left() + 8.0, response.rect.center().y),
+                                    3.0,
+                                    _theme.playback_position_line,
+                                );
                             }
                             if has_data && i > 0 {
                                 response.context_menu(|ui| {
@@ -171,6 +188,7 @@ pub fn draw_sample_editor(
                 // Waveform display
                 ui.group(|ui| {
                     ui.set_min_height(200.0);
+                    let playback_positions = playback_state.sample_positions_for(*selected_sample);
                     if let Some(w_event) = crate::ui::waveform::draw_waveform(
                         ui,
                         &sample.data,
@@ -179,6 +197,8 @@ pub fn draw_sample_editor(
                         sample.loop_type != crate::sequencer::sample::LoopType::None,
                         selection,
                         *selected_sample,
+                        &playback_positions,
+                        _theme,
                     ) {
                         match w_event {
                             crate::ui::waveform::WaveformEvent::LoopStartChanged(pos) => {

@@ -72,11 +72,15 @@ pub struct HtrkApp {
     pub(crate) col_vis: ColumnVisibility,
     pub(crate) last_visible_rows: usize,
     pub(crate) last_visible_channels: usize,
+    pub(crate) playback_scroll_row: usize,
+    pub(crate) playback_scroll_channel: usize,
+    pub(crate) playback_last_visible_rows: usize,
     pub(crate) send_bus_effect_types: [SendEffectType; NUM_SEND_BUSES],
     pub(crate) send_bus_params: [[f32; 5]; NUM_SEND_BUSES],
     pub(crate) send_pre_fader: [bool; NUM_SEND_BUSES],
     pub(crate) automation_dragging: Option<(usize, f32)>,
     pub(crate) automation_editor_state: crate::ui::automation_editor::AutomationEditorState,
+    pub(crate) prev_channel_notes: [u16; 64],
 }
 
 impl Default for HtrkApp {
@@ -126,6 +130,9 @@ impl Default for HtrkApp {
             config,
             last_visible_rows: VISIBLE_ROWS,
             last_visible_channels: 16,
+            playback_scroll_row: 0,
+            playback_scroll_channel: 0,
+            playback_last_visible_rows: VISIBLE_ROWS,
             send_bus_effect_types: [
                 SendEffectType::Delay,
                 SendEffectType::Reverb,
@@ -141,6 +148,7 @@ impl Default for HtrkApp {
             send_pre_fader: [false; NUM_SEND_BUSES],
             automation_dragging: None,
             automation_editor_state: crate::ui::automation_editor::AutomationEditorState::default(),
+            prev_channel_notes: [0; 64],
         }
     }
 }
@@ -691,16 +699,32 @@ impl eframe::App for HtrkApp {
 
         crate::actions::update_wav_export_progress(self);
 
-        let (playback_row, playback_order, playback_pattern) = {
+        let (playback_row, playback_order, playback_pattern, playback_tick, playback_speed) = {
             let playing = self.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
             if playing {
                 let order = self.core.playback_state.current_order.load(std::sync::atomic::Ordering::Relaxed) as usize;
                 let row = self.core.playback_state.current_row.load(std::sync::atomic::Ordering::Relaxed) as usize;
                 let pat = self.core.playback_state.current_pattern.load(std::sync::atomic::Ordering::Relaxed) as usize;
-                (Some(row), Some(order), Some(pat))
+                let tick = self.core.playback_state.current_tick.load(std::sync::atomic::Ordering::Relaxed);
+                let speed = self.core.playback_state.speed.load(std::sync::atomic::Ordering::Relaxed);
+                (Some(row), Some(order), Some(pat), Some(tick), speed)
             } else {
-                (None, None, None)
+                (None, None, None, None, 6)
             }
+        };
+
+        let note_on_flash = {
+            let mut flash = [false; 64];
+            let playing = self.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
+            if playing {
+                for ch in 0..64 {
+                    let current = self.core.playback_state.channel_note(ch);
+                    let prev = self.prev_channel_notes[ch];
+                    flash[ch] = current > 0 && current < 0xFD && (prev == 0 || prev >= 0xFD);
+                    self.prev_channel_notes[ch] = current;
+                }
+            }
+            flash
         };
 
         if let Some(order) = playback_order {
@@ -920,6 +944,9 @@ impl eframe::App for HtrkApp {
                         module,
                         self.core.selected_order,
                         playback_order,
+                        playback_row,
+                        playback_tick,
+                        playback_speed,
                         &self.theme,
                     );
                     let should_insert = order_resp.insert_clicked;
@@ -1080,6 +1107,7 @@ impl eframe::App for HtrkApp {
                         &self.core.playback_state,
                         metrics,
                         &self.core.automation_targets,
+                        &note_on_flash,
                     );
 
                     if let Some(ch) = ch_resp.toggle_mute {
@@ -1146,6 +1174,8 @@ impl eframe::App for HtrkApp {
                                     &self.core.cursor,
                                     self.core.selection.as_ref(),
                                     grid_playback_row,
+                                    if grid_playback_row.is_some() { playback_tick } else { None },
+                                    playback_speed,
                                     self.scroll_row,
                                     self.scroll_channel,
                                     num_channels,
@@ -1207,6 +1237,7 @@ impl eframe::App for HtrkApp {
                             &mut self.sample_selection,
                             &mut self.sample_clipboard,
                             &mut self.amplify_factor,
+                            &self.core.playback_state,
                         ) {
                             crate::actions::handle_sample_edit(self, event);
                         }
@@ -1220,6 +1251,7 @@ impl eframe::App for HtrkApp {
                             &mut self.core.selected_instrument,
                             &mut self.core.selected_sample,
                             &self.theme,
+                            &self.core.playback_state,
                         ) {
                             match event {
                                 crate::ui::instrument_editor::InstrumentEditEvent::SaveInstrument => {
@@ -1250,13 +1282,52 @@ impl eframe::App for HtrkApp {
                 }
                 AppView::Playback => {
                     let num_channels = self.num_channels();
-                    crate::ui::playback_view::draw_playback_view(
+
+                    let metrics = crate::ui::pattern_grid::GridMetrics::new(
+                        self.config.editor_font_size as f32,
+                        self.config.get_spacing_mode(),
+                        self.config.get_col_vis(),
+                    );
+
+                    let current_pattern = playback_pattern
+                        .and_then(|pat| self.core.module.as_ref()?.patterns.get(pat));
+                    let current_module = self.core.module.as_ref().map(|m| &**m);
+
+                    let grid_playback_row = playback_row;
+
+                    let visible_rows = crate::ui::playback_view::draw_playback_view(
                         ui,
                         &self.core.playback_state,
                         &mut self.core.command_sender,
                         &self.theme,
                         num_channels,
+                        current_pattern,
+                        current_module,
+                        self.playback_scroll_row,
+                        self.playback_scroll_channel,
+                        metrics,
+                        self.config.get_col_vis(),
+                        self.config.row_highlight_minor,
+                        self.config.row_highlight_major,
+                        self.config.get_sample_length_bg(),
+                        grid_playback_row,
+                        if grid_playback_row.is_some() { playback_tick } else { None },
+                        playback_speed,
                     );
+
+                    self.playback_last_visible_rows = visible_rows;
+
+                    // Auto-scroll playback view to follow the playhead
+                    if let Some(row) = playback_row {
+                        if row < self.playback_scroll_row {
+                            self.playback_scroll_row = row;
+                        }
+                        if self.playback_last_visible_rows > 0
+                            && row >= self.playback_scroll_row + self.playback_last_visible_rows
+                        {
+                            self.playback_scroll_row = row - self.playback_last_visible_rows + 1;
+                        }
+                    }
                 }
                 AppView::Automation => {
                     self.automation_editor_state.selected_order = self.core.selected_order as u16;
@@ -1353,7 +1424,7 @@ impl eframe::App for HtrkApp {
                 .default_width(350.0)
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
-                        ui.heading("htrk v0.6.0");
+                        ui.heading(concat!("htrk v", env!("CARGO_PKG_VERSION")));
                         ui.add_space(8.0);
                         ui.label("A modern tracker / music sequencer");
                         ui.add_space(4.0);

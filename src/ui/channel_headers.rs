@@ -44,6 +44,7 @@ pub fn draw_channel_headers(
     playback_state: &AtomicPlaybackState,
     metrics: GridMetrics,
     automation_targets: &[Option<AutomationTarget>],
+    note_on_flash: &[bool; 64],
 ) -> ChannelHeadersResponse {
     let mut resp = ChannelHeadersResponse {
         toggle_mute: None,
@@ -83,6 +84,22 @@ pub fn draw_channel_headers(
         );
 
         painter.rect_filled(ch_rect, 0.0, theme.channel_header_bg);
+
+        if note_on_flash.get(ch).copied().unwrap_or(false) {
+            let flash_id = ui.id().with("note_flash").with(ch);
+            let flash_val = ui.ctx().animate_bool_with_time(flash_id, true, 0.3);
+            if flash_val > 0.01 {
+                let flash_rect = egui::Rect::from_min_size(
+                    egui::pos2(ch_rect.left(), ch_rect.top()),
+                    egui::vec2(ch_rect.width(), 2.0),
+                );
+                let flash_alpha = (flash_val * 220.0) as u8;
+                painter.rect_filled(flash_rect, 0.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, flash_alpha));
+            }
+        } else {
+            let flash_id = ui.id().with("note_flash").with(ch);
+            ui.ctx().animate_bool_with_time(flash_id, false, 0.3);
+        }
 
         let muted = muted_channels.get(ch).copied().unwrap_or(false);
         let solo = solo_channels.get(ch).copied().unwrap_or(false);

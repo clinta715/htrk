@@ -303,6 +303,8 @@ pub fn draw_pattern_grid(
     cursor: &CursorPosition,
     selection: Option<&Selection>,
     playback_row: Option<usize>,
+    playback_tick: Option<u8>,
+    playback_speed: u8,
     scroll_row: usize,
     scroll_channel: usize,
     num_channels: usize,
@@ -375,7 +377,13 @@ pub fn draw_pattern_grid(
         let is_playback = playback_row == Some(row);
 
         let bg = if is_playback {
-            theme.bg_playback
+            let t = ui.input(|i| i.time) as f32;
+            let pulse = (t * std::f32::consts::PI).sin() * 0.15 + 0.85;
+            let base = theme.bg_playback;
+            egui::Color32::from_rgba_premultiplied(
+                base.r(), base.g(), base.b(),
+                ((base.a() as f32 * pulse) as u8).max(base.a()),
+            )
         } else if is_measure {
             theme.bg_measure
         } else if is_highlight {
@@ -514,6 +522,16 @@ pub fn draw_pattern_grid(
                 Pos2::new(rect.right(), cursor_y + metrics.row_height),
             );
             painter.rect_stroke(line_rect, 0.0, Stroke::new(1.5, theme.playback_cursor), egui::StrokeKind::Outside);
+
+            if let Some(tick) = playback_tick {
+                let progress = tick as f32 / playback_speed.max(1) as f32;
+                let bar_h = 2.0;
+                let bar_rect = Rect::from_min_max(
+                    Pos2::new(rect.left(), cursor_y + metrics.row_height - bar_h),
+                    Pos2::new(rect.left() + rect.width() * progress, cursor_y + metrics.row_height),
+                );
+                painter.rect_filled(bar_rect, 0.0, theme.playback_cursor);
+            }
         }
     }
 

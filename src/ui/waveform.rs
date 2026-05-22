@@ -1,6 +1,8 @@
 use eframe::egui;
 use std::sync::Arc;
 
+use crate::ui::TrackerTheme;
+
 pub enum WaveformEvent {
     LoopStartChanged(usize),
     LoopEndChanged(usize),
@@ -14,6 +16,8 @@ pub fn draw_waveform(
     has_loop: bool,
     selection: &mut Option<(usize, usize)>,
     sample_index: usize,
+    playback_positions: &[f64],
+    theme: &TrackerTheme,
 ) -> Option<WaveformEvent> {
     let mut event = None;
     let desired_size = ui.available_size();
@@ -83,6 +87,16 @@ pub fn draw_waveform(
             ],
             egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 200, 0)),
         );
+    }
+
+    for &pos in playback_positions {
+        let x_pos = rect.left() + (pos as f32 / len as f32) * width;
+        if x_pos >= rect.left() && x_pos <= rect.right() {
+            painter.line_segment(
+                [egui::pos2(x_pos, rect.top()), egui::pos2(x_pos, rect.bottom())],
+                egui::Stroke::new(2.0, theme.playback_position_line),
+            );
+        }
     }
 
     // Loop markers and region selection

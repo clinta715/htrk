@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU8};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -11,10 +11,14 @@ static MASTER_VOLUME_DEFAULT: f32 = 0.25;
 pub const CHANNEL_SCOPE_SIZE: usize = 512;
 pub const MAX_CHANNELS: usize = 64;
 
+pub const NUM_ENVELOPE_TYPES: usize = 4;
+pub const ENV_POS_NONE: u32 = 0x7FC00000; // f32::NAN bits
+
 pub struct AtomicPlaybackState {
     pub current_order: AtomicU16,
     pub current_row: AtomicU16,
     pub current_pattern: AtomicU16,
+    pub current_tick: AtomicU8,
     pub bpm: AtomicU16,
     pub speed: AtomicU8,
     pub playing: AtomicBool,
@@ -34,6 +38,12 @@ pub struct AtomicPlaybackState {
 
     pub channel_note: [AtomicU16; MAX_CHANNELS],
     pub channel_instrument: [AtomicU16; MAX_CHANNELS],
+
+    channel_sample_position: [AtomicU64; MAX_CHANNELS],
+    channel_sample_index: [AtomicU16; MAX_CHANNELS],
+
+    channel_env_pos: [[AtomicU32; MAX_CHANNELS]; NUM_ENVELOPE_TYPES],
+    channel_env_instrument: [AtomicU16; MAX_CHANNELS],
 }
 
 impl AtomicPlaybackState {
@@ -125,6 +135,127 @@ impl AtomicPlaybackState {
         }
         (left, right)
     }
+
+    const SAMPLE_POS_NONE: u64 = u64::MAX;
+    const SAMPLE_IDX_NONE: u16 = 0xFFFF;
+
+    pub fn set_channel_sample_position(&self, ch: usize, pos: Option<f64>) {
+        if ch < MAX_CHANNELS {
+            let bits = pos.map(|p| p.to_bits()).unwrap_or(Self::SAMPLE_POS_NONE);
+            self.channel_sample_position[ch].store(bits, Ordering::Relaxed);
+        }
+    }
+
+    pub fn channel_sample_position(&self, ch: usize) -> Option<f64> {
+        if ch < MAX_CHANNELS {
+            let bits = self.channel_sample_position[ch].load(Ordering::Relaxed);
+            if bits == Self::SAMPLE_POS_NONE {
+                None
+            } else {
+                Some(f64::from_bits(bits))
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn set_channel_sample_index(&self, ch: usize, idx: Option<u8>) {
+        if ch < MAX_CHANNELS {
+            let val = idx.map(|i| i as u16).unwrap_or(Self::SAMPLE_IDX_NONE);
+            self.channel_sample_index[ch].store(val, Ordering::Relaxed);
+        }
+    }
+
+    pub fn channel_sample_index_val(&self, ch: usize) -> Option<u8> {
+        if ch < MAX_CHANNELS {
+            let val = self.channel_sample_index[ch].load(Ordering::Relaxed);
+            if val == Self::SAMPLE_IDX_NONE {
+                None
+            } else {
+                Some(val as u8)
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn sample_positions_for(&self, sample_idx: usize) -> Vec<f64> {
+        let mut positions = Vec::new();
+        let target = sample_idx as u16;
+        for ch in 0..MAX_CHANNELS {
+            let idx = self.channel_sample_index[ch].load(Ordering::Relaxed);
+            if idx == target {
+                let bits = self.channel_sample_position[ch].load(Ordering::Relaxed);
+                if bits != Self::SAMPLE_POS_NONE {
+                    positions.push(f64::from_bits(bits));
+                }
+            }
+        }
+        positions
+    }
+
+    pub fn clear_all_sample_positions(&self) {
+        for ch in 0..MAX_CHANNELS {
+            self.channel_sample_position[ch].store(Self::SAMPLE_POS_NONE, Ordering::Relaxed);
+            self.channel_sample_index[ch].store(Self::SAMPLE_IDX_NONE, Ordering::Relaxed);
+        }
+    }
+
+    pub fn set_channel_env_pos(&self, env_type: usize, ch: usize, pos: Option<f32>) {
+        if ch < MAX_CHANNELS && env_type < NUM_ENVELOPE_TYPES {
+            let bits = pos.map(|p| p.to_bits()).unwrap_or(ENV_POS_NONE);
+            self.channel_env_pos[env_type][ch].store(bits, Ordering::Relaxed);
+        }
+    }
+
+    pub fn channel_env_pos(&self, env_type: usize, ch: usize) -> Option<f32> {
+        if ch < MAX_CHANNELS && env_type < NUM_ENVELOPE_TYPES {
+            let bits = self.channel_env_pos[env_type][ch].load(Ordering::Relaxed);
+            if bits == ENV_POS_NONE || f32::from_bits(bits).is_nan() {
+                None
+            } else {
+                Some(f32::from_bits(bits))
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn clear_all_env_positions(&self) {
+        for env_type in 0..NUM_ENVELOPE_TYPES {
+            for ch in 0..MAX_CHANNELS {
+                self.channel_env_pos[env_type][ch].store(ENV_POS_NONE, Ordering::Relaxed);
+            }
+        }
+        for ch in 0..MAX_CHANNELS {
+            self.channel_env_instrument[ch].store(Self::SAMPLE_IDX_NONE, Ordering::Relaxed);
+        }
+    }
+
+    pub fn set_channel_env_instrument(&self, ch: usize, instr: Option<u8>) {
+        if ch < MAX_CHANNELS {
+            let val = instr.map(|i| i as u16).unwrap_or(Self::SAMPLE_IDX_NONE);
+            self.channel_env_instrument[ch].store(val, Ordering::Relaxed);
+        }
+    }
+
+    pub fn env_positions_for_instrument(&self, env_type: usize, instrument_idx: u8) -> Vec<f32> {
+        let mut positions = Vec::new();
+        if env_type >= NUM_ENVELOPE_TYPES {
+            return positions;
+        }
+        let target = instrument_idx as u16;
+        for ch in 0..MAX_CHANNELS {
+            let instr = self.channel_env_instrument[ch].load(Ordering::Relaxed);
+            if instr == target {
+                let bits = self.channel_env_pos[env_type][ch].load(Ordering::Relaxed);
+                if bits != ENV_POS_NONE && !f32::from_bits(bits).is_nan() {
+                    positions.push(f32::from_bits(bits));
+                }
+            }
+        }
+        positions
+    }
 }
 
 impl Default for AtomicPlaybackState {
@@ -139,6 +270,7 @@ impl Default for AtomicPlaybackState {
             current_order: AtomicU16::new(0),
             current_row: AtomicU16::new(0),
             current_pattern: AtomicU16::new(0),
+            current_tick: AtomicU8::new(0),
             bpm: AtomicU16::new(125),
             speed: AtomicU8::new(6),
             playing: AtomicBool::new(false),
@@ -155,6 +287,10 @@ impl Default for AtomicPlaybackState {
             channel_scope_available: AtomicU32::new(0),
             channel_note: std::array::from_fn(|_| AtomicU16::new(0)),
             channel_instrument: std::array::from_fn(|_| AtomicU16::new(0)),
+            channel_sample_position: std::array::from_fn(|_| AtomicU64::new(u64::MAX)),
+            channel_sample_index: std::array::from_fn(|_| AtomicU16::new(0xFFFF)),
+            channel_env_pos: std::array::from_fn(|_| std::array::from_fn(|_| AtomicU32::new(ENV_POS_NONE))),
+            channel_env_instrument: std::array::from_fn(|_| AtomicU16::new(0xFFFF)),
         }
     }
 }

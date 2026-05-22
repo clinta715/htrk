@@ -463,6 +463,9 @@ impl AudioEngine {
     }
 
     fn update_playback_state(&self) {
+        use crate::audio::playback_state::MAX_CHANNELS;
+        use crate::sequencer::note::Note;
+
         let state = &self.sequencer.state;
         self.playback_state
             .playing
@@ -483,12 +486,62 @@ impl AudioEngine {
             .current_pattern
             .store(state.current_pattern as u16, std::sync::atomic::Ordering::Relaxed);
         self.playback_state
+            .current_tick
+            .store(state.current_tick, std::sync::atomic::Ordering::Relaxed);
+        self.playback_state
             .set_play_mode(state.play_mode);
 
         let active = self.sequencer.voice_pool.voices.iter().filter(|v| v.active).count();
         self.playback_state
             .active_voices
             .store(active as u8, std::sync::atomic::Ordering::Relaxed);
+
+        let num_ch = state.channels.len();
+        for ch in 0..num_ch.min(MAX_CHANNELS) {
+            let ch_state = &state.channels[ch];
+            let note_val = match ch_state.last_note {
+                Note::On(key) => key as u16,
+                Note::Off => 0xFF,
+                Note::Cut => 0xFE,
+                Note::Fade => 0xFD,
+                Note::None => 0,
+            };
+            self.playback_state.set_channel_note(ch, note_val);
+            self.playback_state.set_channel_instrument(ch, ch_state.last_instrument as u16);
+        }
+
+        self.playback_state.clear_all_sample_positions();
+        self.playback_state.clear_all_env_positions();
+        for voice in &self.sequencer.voice_pool.voices {
+            if voice.active {
+                if let (Some(ch), Some(si)) = (voice.channel, voice.sample_index) {
+                    if ch < MAX_CHANNELS {
+                        self.playback_state.set_channel_sample_position(ch, Some(voice.position));
+                        self.playback_state.set_channel_sample_index(ch, Some(si));
+                    }
+                }
+                if let Some(ch) = voice.channel {
+                    if ch < MAX_CHANNELS {
+                        if let Some(instr) = voice.instrument_index {
+                            self.playback_state.set_channel_env_instrument(ch, Some(instr));
+                        }
+                        let env_sets: [(usize, Option<&crate::audio::voice::EnvelopeState>); 4] = [
+                            (0, voice.vol_env.as_ref()),
+                            (1, voice.pan_env.as_ref()),
+                            (2, voice.pitch_env.as_ref()),
+                            (3, voice.filter_env.as_ref()),
+                        ];
+                        for (env_type, env_opt) in &env_sets {
+                            if let Some(env) = env_opt {
+                                if !env.finished {
+                                    self.playback_state.set_channel_env_pos(*env_type, ch, Some(env.position));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn capture_monitoring(&self, frame_count: usize) {

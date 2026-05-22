@@ -1,5 +1,7 @@
 use eframe::egui;
+use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::Module;
+use crate::ui::TrackerTheme;
 
 const INLINE_PALETTE_HEIGHT: f32 = 80.0;
 
@@ -7,6 +9,8 @@ pub fn draw_inline_sample_palette(
     ui: &mut egui::Ui,
     module: &Module,
     paint_sample: &mut u8,
+    playback_state: &AtomicPlaybackState,
+    theme: &TrackerTheme,
 ) {
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
@@ -55,8 +59,25 @@ pub fn draw_inline_sample_palette(
                         let painter = ui.painter_at(rect);
                         painter.rect_filled(rect, 2.0, bg);
 
+                        let positions = if has_data {
+                            playback_state.sample_positions_for(i)
+                        } else {
+                            Vec::new()
+                        };
+
                         if has_data {
-                            draw_waveform_thumbnail(&painter, rect, &sample.data, is_selected);
+                            draw_waveform_thumbnail(&painter, rect, &sample.data, is_selected, &positions, theme);
+                        }
+
+                        if !positions.is_empty() {
+                            painter.rect_filled(
+                                egui::Rect::from_min_max(
+                                    egui::pos2(rect.left(), rect.top()),
+                                    egui::pos2(rect.left() + 2.0, rect.bottom()),
+                                ),
+                                0.0,
+                                theme.playback_position_line,
+                            );
                         }
 
                         let text_color = if is_selected {
@@ -103,6 +124,8 @@ fn draw_waveform_thumbnail(
     rect: egui::Rect,
     data: &std::sync::Arc<Vec<f32>>,
     is_selected: bool,
+    playback_positions: &[f64],
+    theme: &TrackerTheme,
 ) {
     let thumb_left = rect.right() - 70.0;
     let thumb_width = 64.0;
@@ -110,7 +133,10 @@ fn draw_waveform_thumbnail(
     let mid_y = rect.center().y;
     let half_h = thumb_height / 2.0;
 
-    let color = if is_selected {
+    let is_playing = !playback_positions.is_empty();
+    let color = if is_playing {
+        egui::Color32::from_rgb(160, 255, 180)
+    } else if is_selected {
         egui::Color32::from_rgb(100, 200, 120)
     } else {
         egui::Color32::from_rgb(60, 100, 70)
@@ -150,6 +176,16 @@ fn draw_waveform_thumbnail(
             egui::Stroke::new(1.0, color),
         );
     }
+
+    for &pos in playback_positions {
+        let x_pos = thumb_left + (pos as f32 / len as f32) * thumb_width;
+        if x_pos >= thumb_left && x_pos <= thumb_left + thumb_width {
+            painter.line_segment(
+                [egui::pos2(x_pos, rect.top()), egui::pos2(x_pos, rect.bottom())],
+                egui::Stroke::new(1.0, theme.playback_position_line),
+            );
+        }
+    }
 }
 
 pub struct SampleBrowserResult {
@@ -162,6 +198,8 @@ pub fn draw_sample_browser_popup(
     module: &Module,
     paint_sample: u8,
     open: &mut bool,
+    playback_state: &AtomicPlaybackState,
+    theme: &TrackerTheme,
 ) -> Option<u8> {
     let mut result = None;
 
@@ -246,7 +284,7 @@ pub fn draw_sample_browser_popup(
                                         );
                                         let painter = ui.painter_at(rect);
                                         painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(15, 15, 18));
-                                        draw_waveform_thumbnail_browser(&painter, rect, &sample.data, is_selected);
+                                        draw_waveform_thumbnail_browser(&painter, rect, &sample.data, is_selected, &playback_state.sample_positions_for(i), theme);
                                     }
                                 });
 
@@ -267,13 +305,18 @@ fn draw_waveform_thumbnail_browser(
     rect: egui::Rect,
     data: &std::sync::Arc<Vec<f32>>,
     is_selected: bool,
+    playback_positions: &[f64],
+    theme: &TrackerTheme,
 ) {
     let mid_y = rect.center().y;
     let half_h = (rect.height() - 4.0) / 2.0;
     let width = rect.width() - 4.0;
     let left = rect.left() + 2.0;
 
-    let color = if is_selected {
+    let is_playing = !playback_positions.is_empty();
+    let color = if is_playing {
+        egui::Color32::from_rgb(140, 230, 160)
+    } else if is_selected {
         egui::Color32::from_rgb(90, 190, 110)
     } else {
         egui::Color32::from_rgb(50, 90, 60)
@@ -312,5 +355,15 @@ fn draw_waveform_thumbnail_browser(
             ],
             egui::Stroke::new(1.0, color),
         );
+    }
+
+    for &pos in playback_positions {
+        let x_pos = left + (pos as f32 / len as f32) * width;
+        if x_pos >= left && x_pos <= left + width {
+            painter.line_segment(
+                [egui::pos2(x_pos, rect.top()), egui::pos2(x_pos, rect.bottom())],
+                egui::Stroke::new(1.0, theme.playback_position_line),
+            );
+        }
     }
 }

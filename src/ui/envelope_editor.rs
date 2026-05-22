@@ -17,6 +17,7 @@ pub fn draw_envelope_editor(
     ui: &mut egui::Ui,
     envelope: &Envelope,
     env_type: EnvelopeType,
+    playback_positions: &[f32],
 ) -> EnvelopeResponse {
     let mut event = None;
     let mut hovered_point = None;
@@ -117,6 +118,35 @@ pub fn draw_envelope_editor(
             [egui::pos2(x1, y1), egui::pos2(x2, y2)],
             egui::Stroke::new(2.5, line_color),
         );
+    }
+
+    for &pos in playback_positions {
+        let x = rect.left() + (pos / max_tick as f32) * rect.width();
+        if x < rect.left() || x > rect.right() { continue; }
+
+        painter.line_segment(
+            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+            egui::Stroke::new(1.5, egui::Color32::from_rgba_premultiplied(255, 255, 100, 140)),
+        );
+
+        if envelope.points.len() >= 2 {
+            let mut interp_val = envelope.points[0].value;
+            for i in 0..envelope.points.len().saturating_sub(1) {
+                let p1 = envelope.points[i];
+                let p2 = envelope.points[i + 1];
+                if pos >= p1.tick as f32 && pos <= p2.tick as f32 {
+                    let t = if p2.tick > p1.tick {
+                        (pos - p1.tick as f32) / (p2.tick - p1.tick) as f32
+                    } else {
+                        0.0
+                    };
+                    interp_val = (p1.value as f32 + (p2.value as f32 - p1.value as f32) * t).round() as u8;
+                    break;
+                }
+            }
+            let dot_pos = to_screen(pos.max(0.0) as u16, interp_val);
+            painter.circle_filled(dot_pos, 4.0, egui::Color32::from_rgba_premultiplied(255, 255, 100, 220));
+        }
     }
 
     // Determine hovered point

@@ -1,4 +1,5 @@
 use eframe::egui;
+use crate::audio::playback_state::AtomicPlaybackState;
 use crate::edit::EnvelopeType;
 use crate::sequencer::instrument::EnvelopeFlags;
 use crate::sequencer::Module;
@@ -44,6 +45,7 @@ pub fn draw_instrument_editor(
     selected_instrument: &mut usize,
     selected_sample: &mut usize,
     _theme: &TrackerTheme,
+    playback_state: &AtomicPlaybackState,
 ) -> Option<InstrumentEditEvent> {
     let mut event = None;
 
@@ -241,7 +243,17 @@ pub fn draw_instrument_editor(
                         });
 
                         // Envelope graph
-                        let env_resp = crate::ui::envelope_editor::draw_envelope_editor(ui, env, env_type);
+                        let env_type_idx = match env_type {
+                            EnvelopeType::Volume => 0,
+                            EnvelopeType::Panning => 1,
+                            EnvelopeType::Pitch => 2,
+                            EnvelopeType::Filter => 3,
+                        };
+                        let env_positions = playback_state.env_positions_for_instrument(
+                            env_type_idx,
+                            *selected_instrument as u8,
+                        );
+                        let env_resp = crate::ui::envelope_editor::draw_envelope_editor(ui, env, env_type, &env_positions);
                         ui.data_mut(|d| d.insert_temp(env_hovered_id, env_resp.hovered_point));
                         if let Some(env_event) = env_resp.event {
                             match env_event {
@@ -482,7 +494,7 @@ pub fn draw_instrument_editor(
                             });
                         });
 
-                        crate::ui::sample_palette::draw_inline_sample_palette(ui, module, &mut paint_sample_idx);
+                        crate::ui::sample_palette::draw_inline_sample_palette(ui, module, &mut paint_sample_idx, playback_state, _theme);
 
                         if let Some(map_event) = crate::ui::sample_map::draw_sample_map(
                             ui,
@@ -529,6 +541,8 @@ pub fn draw_instrument_editor(
             module,
             paint_sample_idx,
             &mut browser_open,
+            playback_state,
+            _theme,
         ) {
             paint_sample_idx = idx;
         }

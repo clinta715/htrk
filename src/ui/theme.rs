@@ -97,6 +97,8 @@ pub struct TrackerTheme {
     pub transport_active: Color32,
 
     pub sample_len_shift: f32,
+
+    pub playback_position_line: Color32,
 }
 
 impl Default for TrackerTheme {
@@ -140,6 +142,8 @@ impl Default for TrackerTheme {
             transport_active: Color32::from_rgb(80, 200, 80),
 
             sample_len_shift: 0.15,
+
+            playback_position_line: Color32::from_rgba_premultiplied(255, 100, 100, 180),
         }
     }
 }
@@ -180,6 +184,7 @@ impl TrackerTheme {
                 transport_fg: Color32::from_rgb(0, 160, 0),
                 transport_active: Color32::from_rgb(0, 255, 0),
                 sample_len_shift: 0.15,
+                playback_position_line: Color32::from_rgba_premultiplied(0, 255, 0, 180),
             },
             ThemePreset::Light => TrackerTheme {
                 bg_default: Color32::from_rgb(240, 240, 240),
@@ -213,6 +218,7 @@ impl TrackerTheme {
                 transport_fg: Color32::from_rgb(40, 40, 80),
                 transport_active: Color32::from_rgb(0, 128, 0),
                 sample_len_shift: 0.12,
+                playback_position_line: Color32::from_rgba_premultiplied(0, 100, 200, 180),
             },
             ThemePreset::AmberTerminal => TrackerTheme {
                 bg_default: Color32::from_rgb(0, 0, 0),
@@ -246,6 +252,7 @@ impl TrackerTheme {
                 transport_fg: Color32::from_rgb(200, 140, 0),
                 transport_active: Color32::from_rgb(255, 176, 0),
                 sample_len_shift: 0.18,
+                playback_position_line: Color32::from_rgba_premultiplied(255, 220, 100, 180),
             },
             ThemePreset::BlueFusion => TrackerTheme {
                 bg_default: Color32::from_rgb(10, 10, 26),
@@ -279,6 +286,7 @@ impl TrackerTheme {
                 transport_fg: Color32::from_rgb(0, 140, 200),
                 transport_active: Color32::from_rgb(0, 221, 255),
                 sample_len_shift: 0.15,
+                playback_position_line: Color32::from_rgba_premultiplied(0, 255, 200, 200),
             },
             ThemePreset::HighContrast => TrackerTheme {
                 bg_default: Color32::from_rgb(0, 0, 0),
@@ -312,6 +320,7 @@ impl TrackerTheme {
                 transport_fg: Color32::from_rgb(200, 200, 200),
                 transport_active: Color32::from_rgb(80, 255, 80),
                 sample_len_shift: 0.20,
+                playback_position_line: Color32::from_rgba_premultiplied(255, 255, 0, 220),
             },
             ThemePreset::MatrixGreen => TrackerTheme {
                 bg_default: Color32::from_rgb(0, 4, 0),
@@ -345,6 +354,7 @@ impl TrackerTheme {
                 transport_fg: Color32::from_rgb(0, 128, 0),
                 transport_active: Color32::from_rgb(0, 255, 0),
                 sample_len_shift: 0.25,
+                playback_position_line: Color32::from_rgba_premultiplied(0, 255, 0, 200),
             },
             ThemePreset::Ft2Classic => TrackerTheme {
                 bg_default: Color32::from_rgb(0, 0, 128),
@@ -378,6 +388,7 @@ impl TrackerTheme {
                 transport_fg: Color32::from_rgb(200, 200, 255),
                 transport_active: Color32::from_rgb(80, 255, 80),
                 sample_len_shift: 0.10,
+                playback_position_line: Color32::from_rgba_premultiplied(80, 255, 80, 200),
             },
         }
     }

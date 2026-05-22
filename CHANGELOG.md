@@ -2,6 +2,25 @@
 
 All notable changes to htrk will be documented in this file.
 
+## [0.11.0] - 2026-05-22
+
+### Added
+
+- **Pattern data display in Playback tab**: The Playback tab now shows the currently playing pattern as a read-only grid with playback-row highlighting and auto-scroll to follow the playhead. Scroll state is independent from the Pattern tab.
+- **Oscilloscope and Spectrum labels**: Added "Oscilloscope" and "Channel Spectrum" labels to clarify the real-time monitoring widgets.
+
+### Changed
+
+- **Version**: 0.10.0 → 0.11.0
+- **Version strings are now dynamic**: About dialog, status bar, and help screen now use `env!("CARGO_PKG_VERSION")` instead of hardcoded `v0.6.0`.
+- **Oscilloscope cells scale dynamically**: Cell dimensions adapt to channel count — ≤4 channels get one row of wide cells, ≥5 channels use up to 8 compact columns. `CELL_HEIGHT` reduced from 45 to 32 for the fixed-size path.
+- **VU meter blocks compacted**: Block width reduced from ~110px to ~70px, bar width from 100 to 55, fonts from 11/12 to 9/10.
+- **Monitoring section scrollable**: VU meters, oscilloscope, and spectrum are now wrapped in a `ScrollArea`. Pattern grid takes ~55% of available height; monitoring section uses the remainder with internal scroll if needed.
+
+### Fixed
+
+- **Spectrum energy always zero**: Read channel scope returns `f32` samples, but the energy calculation was dividing by `u32::MAX` (giving ~0). Fixed to use `s.abs()` directly.
+
 ## [0.10.0] - 2026-05-19
 
 ### Added

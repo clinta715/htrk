@@ -4,9 +4,34 @@ use crate::audio::playback_state::AtomicPlaybackState;
 
 use super::theme::TrackerTheme;
 
-const CELL_WIDTH: f32 = 60.0;
-const CELL_HEIGHT: f32 = 45.0;
 const CELL_GAP: f32 = 2.0;
+const MAX_SCOPE_COLS: usize = 8;
+const MIN_CELL_WIDTH: f32 = 35.0;
+const MAX_CELL_WIDTH: f32 = 150.0;
+
+struct ScopeLayout {
+    cols: usize,
+    rows: usize,
+    cell_width: f32,
+    cell_height: f32,
+}
+
+fn compute_scope_layout(panel_width: f32, num_channels: usize) -> ScopeLayout {
+    if num_channels == 0 {
+        return ScopeLayout { cols: 0, rows: 0, cell_width: 0.0, cell_height: 0.0 };
+    }
+    let cols = if num_channels <= 4 {
+        num_channels
+    } else {
+        let ideal = (panel_width / 60.0).floor() as usize;
+        ideal.max(1).min(num_channels).min(MAX_SCOPE_COLS)
+    };
+    let total_gap = (cols - 1) as f32 * CELL_GAP;
+    let cell_width = ((panel_width - total_gap) / cols as f32).clamp(MIN_CELL_WIDTH, MAX_CELL_WIDTH);
+    let cell_height = cell_width * 0.53;
+    let rows = (num_channels + cols - 1) / cols;
+    ScopeLayout { cols, rows, cell_width, cell_height }
+}
 
 fn channel_color(ch: usize) -> egui::Color32 {
     let hue = (ch as f32 * 37.0) % 360.0;
@@ -43,14 +68,8 @@ pub fn compute_scope_height(panel_width: f32, num_channels: usize) -> f32 {
     if num_channels == 0 {
         return 0.0;
     }
-    let cols = compute_cols(panel_width, num_channels);
-    let rows = (num_channels + cols - 1) / cols;
-    rows as f32 * CELL_HEIGHT
-}
-
-fn compute_cols(panel_width: f32, num_channels: usize) -> usize {
-    let cols = ((panel_width - CELL_GAP) / (CELL_WIDTH + CELL_GAP)).floor() as usize;
-    cols.max(1).min(num_channels)
+    let layout = compute_scope_layout(panel_width, num_channels);
+    layout.rows as f32 * layout.cell_height
 }
 
 pub fn draw_oscilloscope(
@@ -64,9 +83,8 @@ pub fn draw_oscilloscope(
     }
 
     let panel_width = ui.available_width();
-    let cols = compute_cols(panel_width, num_channels);
-    let rows = (num_channels + cols - 1) / cols;
-    let total_height = rows as f32 * CELL_HEIGHT;
+    let layout = compute_scope_layout(panel_width, num_channels);
+    let total_height = layout.rows as f32 * layout.cell_height;
 
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(panel_width, total_height),
@@ -77,14 +95,14 @@ pub fn draw_oscilloscope(
     painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(8, 8, 8));
 
     for ch in 0..num_channels {
-        let col = ch % cols;
-        let row = ch / cols;
-        let cell_x = rect.left() + col as f32 * (CELL_WIDTH + CELL_GAP);
-        let cell_y = rect.top() + row as f32 * (CELL_HEIGHT + CELL_GAP);
+        let col = ch % layout.cols;
+        let row = ch / layout.cols;
+        let cell_x = rect.left() + col as f32 * (layout.cell_width + CELL_GAP);
+        let cell_y = rect.top() + row as f32 * (layout.cell_height + CELL_GAP);
 
         let cell_rect = egui::Rect::from_min_size(
             egui::pos2(cell_x, cell_y),
-            egui::vec2(CELL_WIDTH, CELL_HEIGHT),
+            egui::vec2(layout.cell_width, layout.cell_height),
         );
 
         let cell_painter = ui.painter_at(cell_rect);
@@ -99,10 +117,10 @@ pub fn draw_oscilloscope(
 
         let label = format!("{}", ch + 1);
         cell_painter.text(
-            egui::pos2(cell_rect.left() + 3.0, cell_rect.top() + 2.0),
+            egui::pos2(cell_rect.left() + 2.0, cell_rect.top() + 1.0),
             egui::Align2::LEFT_TOP,
             &label,
-            egui::FontId::monospace(8.0),
+            egui::FontId::monospace(7.0),
             egui::Color32::from_rgb(70, 70, 80),
         );
 
@@ -112,10 +130,10 @@ pub fn draw_oscilloscope(
             continue;
         }
 
-        let scope_left = cell_rect.left() + 3.0;
-        let scope_top = cell_rect.top() + 12.0;
-        let scope_width = cell_rect.width() - 6.0;
-        let scope_height = cell_rect.height() - 14.0;
+        let scope_left = cell_rect.left() + 2.0;
+        let scope_top = cell_rect.top() + 10.0;
+        let scope_width = cell_rect.width() - 4.0;
+        let scope_height = cell_rect.height() - 12.0;
         let scope_mid_y = scope_top + scope_height / 2.0;
         let samples_per_pixel = left.len() as f32 / scope_width.max(1.0);
 

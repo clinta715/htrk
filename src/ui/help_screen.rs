@@ -161,7 +161,7 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                     ui.add_space(10.0);
                     ui.separator();
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new("htrk v0.6.0 — A Modern Music Tracker").italics().color(egui::Color32::GRAY));
+                    ui.label(egui::RichText::new(concat!("htrk v", env!("CARGO_PKG_VERSION"), " — A Modern Music Tracker")).italics().color(egui::Color32::GRAY));
                 });
         });
 }

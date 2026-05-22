@@ -19,6 +19,9 @@ pub fn draw_order_list(
     module: &Module,
     selected_order: usize,
     playback_order: Option<usize>,
+    playback_row: Option<usize>,
+    playback_tick: Option<u8>,
+    playback_speed: u8,
     theme: &TrackerTheme,
 ) -> OrderListResponse {
     let mut resp = OrderListResponse {
@@ -97,6 +100,24 @@ pub fn draw_order_list(
                         if (dragged_from as usize) != i {
                             resp.order_reordered = Some((dragged_from as usize, i));
                         }
+                    }
+
+                    if is_playing {
+                        let total_rows = module.patterns.get(pat_idx as usize).map(|p| p.num_rows).unwrap_or(64);
+                        let progress = if let (Some(row), Some(tick)) = (playback_row, playback_tick) {
+                            let total_ticks = total_rows as f32 * playback_speed.max(1) as f32;
+                            let current = row as f32 * playback_speed.max(1) as f32 + tick as f32;
+                            (current / total_ticks).clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        let bar_h = 2.0;
+                        let bar_y = response.rect.bottom() - bar_h;
+                        let bar_rect = egui::Rect::from_min_max(
+                            egui::pos2(response.rect.left(), bar_y),
+                            egui::pos2(response.rect.left() + response.rect.width() * progress, response.rect.bottom()),
+                        );
+                        ui.painter().rect_filled(bar_rect, 0.0, theme.order_playing);
                     }
 
                     if is_selected {

@@ -26,7 +26,7 @@ pub fn draw_status_bar(
         let fg = theme.status_fg;
         let font = egui::FontId::monospace(11.0);
 
-        ui.label(egui::RichText::new("htrk v0.6.0").font(font.clone()).color(fg));
+        ui.label(egui::RichText::new(concat!("htrk v", env!("CARGO_PKG_VERSION"))).font(font.clone()).color(fg));
         ui.separator();
 
         let mode_color = if edit_mode { theme.fg_note } else { egui::Color32::from_rgb(200, 160, 80) };
