@@ -88,11 +88,11 @@ pub fn draw_instrument_editor(
                         response.context_menu(|ui| {
                             if ui.button("Export...").clicked() {
                                 event = Some(InstrumentEditEvent::ExportInstrument(i));
-                                ui.close_menu();
+                                ui.close();
                             }
                             if ui.button("Import...").clicked() {
                                 event = Some(InstrumentEditEvent::ImportInstrument);
-                                ui.close_menu();
+                                ui.close();
                             }
                         });
                     }

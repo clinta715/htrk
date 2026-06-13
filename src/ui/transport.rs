@@ -1,4 +1,5 @@
 use eframe::egui;
+use eguidev::DevUiExt;
 
 use crate::audio::commands::AudioCommand;
 use crate::audio::playback_state::AtomicPlaybackState;
@@ -50,10 +51,9 @@ pub fn draw_transport(
 
         let play_label = if playing { "|| Pause" } else { "> Play" };
         let play_color = if playing { theme.transport_active } else { theme.transport_fg };
-        let play_btn = egui::Button::new(
-            egui::RichText::new(play_label).color(play_color),
-        );
-        if ui.add(play_btn).clicked() {
+        let play_text = egui::RichText::new(play_label).color(play_color);
+        let play_resp = ui.dev_button("transport.play", play_text);
+        if play_resp.clicked() {
             if let Some(ref mut sender) = command_sender {
                 if playing {
                     sender.send(AudioCommand::Pause);
@@ -65,33 +65,33 @@ pub fn draw_transport(
             }
         }
 
-        if ui.button("[ ] Stop").clicked() {
+        if ui.dev_button("transport.stop", "[ ] Stop").clicked() {
             if let Some(ref mut sender) = command_sender {
                 sender.send(AudioCommand::Stop);
             }
             resp.stop_clicked = true;
         }
 
-        if ui.button("[<<]").clicked() {
+        if ui.dev_button("transport.prev_pattern", "[<<]").clicked() {
             resp.prev_pattern_clicked = true;
         }
 
-        if ui.button("[>>]").clicked() {
+        if ui.dev_button("transport.next_pattern", "[>>]").clicked() {
             resp.next_pattern_clicked = true;
         }
 
-        if ui.button(">| Play From").clicked() {
+        if ui.dev_button("transport.play_from", ">| Play From").clicked() {
             if let Some(ref mut sender) = command_sender {
                 sender.send(AudioCommand::PlayFrom { order, row });
             }
             resp.play_from_clicked = true;
         }
 
-        ui.separator();
+        ui.dev_separator("transport.sep1");
 
         let is_pattern_mode = play_mode == PlayMode::Pattern;
         let pat_label = if is_pattern_mode { "[Pat]" } else { " Pat " };
-        if ui.selectable_label(is_pattern_mode, pat_label).clicked() {
+        if ui.dev_button("transport.mode.pattern", pat_label).clicked() {
             if let Some(ref mut sender) = command_sender {
                 sender.send(AudioCommand::SetPlayMode(PlayMode::Pattern));
             }
@@ -99,7 +99,7 @@ pub fn draw_transport(
 
         let is_song_mode = play_mode == PlayMode::Order;
         let song_label = if is_song_mode { "[Song]" } else { " Song " };
-        if ui.selectable_label(is_song_mode, song_label).clicked() {
+        if ui.dev_button("transport.mode.song", song_label).clicked() {
             if let Some(ref mut sender) = command_sender {
                 sender.send(AudioCommand::SetPlayMode(PlayMode::Order));
             }
@@ -107,7 +107,7 @@ pub fn draw_transport(
 
         let is_loop = play_mode == PlayMode::Loop;
         let loop_label = if is_loop { "[Loop]" } else { " Loop " };
-        if ui.selectable_label(is_loop, loop_label).clicked() {
+        if ui.dev_button("transport.mode.loop", loop_label).clicked() {
             if let Some(ref mut sender) = command_sender {
                 if is_loop {
                     sender.send(AudioCommand::SetPlayMode(PlayMode::Once));
@@ -135,18 +135,13 @@ pub fn draw_transport(
                 .color(theme.transport_fg),
         );
 
-        ui.separator();
+        ui.dev_separator("transport.sep2");
 
-        ui.label(
-            egui::RichText::new("BPM:")
-                .font(egui::FontId::monospace(12.0))
-                .color(theme.transport_fg),
-        );
-        let mut bpm_val = bpm as f64;
-        let bpm_drag = egui::DragValue::new(&mut bpm_val)
-            .range(32..=255)
-            .speed(1.0);
-        let bpm_resp = ui.add(bpm_drag);
+        ui.dev_label("transport.bpm_label", egui::RichText::new("BPM:")
+            .font(egui::FontId::monospace(12.0))
+            .color(theme.transport_fg));
+        let mut bpm_val = bpm as i32;
+        let bpm_resp = ui.dev_drag_value_i32_range("transport.bpm", &mut bpm_val, 32..=255);
         if bpm_resp.changed() {
             resp.bpm_changed = Some(bpm_val as u16);
             if let Some(ref mut sender) = command_sender {
@@ -154,16 +149,11 @@ pub fn draw_transport(
             }
         }
 
-        ui.label(
-            egui::RichText::new("Spd:")
-                .font(egui::FontId::monospace(12.0))
-                .color(theme.transport_fg),
-        );
-        let mut speed_val = speed as f64;
-        let speed_drag = egui::DragValue::new(&mut speed_val)
-            .range(1..=255)
-            .speed(1.0);
-        let speed_resp = ui.add(speed_drag);
+        ui.dev_label("transport.speed_label", egui::RichText::new("Spd:")
+            .font(egui::FontId::monospace(12.0))
+            .color(theme.transport_fg));
+        let mut speed_val = speed as i32;
+        let speed_resp = ui.dev_drag_value_i32_range("transport.speed", &mut speed_val, 1..=255);
         if speed_resp.changed() {
             resp.speed_changed = Some(speed_val as u8);
             if let Some(ref mut sender) = command_sender {
@@ -171,19 +161,13 @@ pub fn draw_transport(
             }
         }
 
-        ui.separator();
+        ui.dev_separator("transport.sep3");
 
-        ui.label(
-            egui::RichText::new("Vol:")
-                .font(egui::FontId::monospace(12.0))
-                .color(theme.transport_fg),
-        );
+        ui.dev_label("transport.vol_label", egui::RichText::new("Vol:")
+            .font(egui::FontId::monospace(12.0))
+            .color(theme.transport_fg));
         let mut vol_val = playback_state.master_volume();
-        let vol_resp = ui.add(
-            egui::Slider::new(&mut vol_val, 0.0..=1.0)
-                .show_value(true)
-                .step_by(0.01)
-        );
+        let vol_resp = ui.dev_slider("transport.volume", &mut vol_val, 0.0..=1.0);
         if vol_resp.changed() {
             resp.volume_changed = Some(vol_val);
             if let Some(ref mut sender) = command_sender {

@@ -6,9 +6,12 @@ edition = "2021"
 [features]
 audio_debug = []
 debug_log = []
+devtools = ["eguidev_runtime"]
 
 [dependencies]
-eframe = "0.31"
+eguidev = "0.0.2"
+eguidev_runtime = { version = "0.0.2", optional = true }
+eframe = "0.34"
 cpal = "0.17"
 ringbuf = "0.4"
 hound = "3.5"

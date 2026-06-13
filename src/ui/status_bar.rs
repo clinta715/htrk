@@ -1,4 +1,5 @@
 use eframe::egui;
+use eguidev::DevUiExt;
 
 use crate::sequencer::ModuleFormat;
 
@@ -26,13 +27,13 @@ pub fn draw_status_bar(
         let fg = theme.status_fg;
         let font = egui::FontId::monospace(11.0);
 
-        ui.label(egui::RichText::new(concat!("htrk v", env!("CARGO_PKG_VERSION"))).font(font.clone()).color(fg));
-        ui.separator();
+        ui.dev_label("status.version", egui::RichText::new(concat!("htrk v", env!("CARGO_PKG_VERSION"))).font(font.clone()).color(fg));
+        ui.dev_separator("status.sep1");
 
         let mode_color = if edit_mode { theme.fg_note } else { egui::Color32::from_rgb(200, 160, 80) };
         let mode_text = if edit_mode { "EDT" } else { "VIEW" };
-        ui.label(egui::RichText::new(mode_text).font(font.clone()).color(mode_color).strong());
-        ui.separator();
+        ui.dev_label("status.mode", egui::RichText::new(mode_text).font(font.clone()).color(mode_color).strong());
+        ui.dev_separator("status.sep2");
 
         let format_str = match module {
             Some(m) => match m.format {
@@ -48,9 +49,9 @@ pub fn draw_status_bar(
             },
             None => "---",
         };
-        ui.label(egui::RichText::new(format!("Fmt:{}", format_str)).font(font.clone()).color(fg));
+        ui.dev_label("status.format", egui::RichText::new(format!("Fmt:{}", format_str)).font(font.clone()).color(fg));
 
-        ui.separator();
+        ui.dev_separator("status.sep3");
 
         ui.label(
             egui::RichText::new(format!("Pat:{:03} Row:{}/{}", current_pattern, cursor_row, total_rows))

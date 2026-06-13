@@ -596,23 +596,23 @@ pub fn draw_pattern_grid(
         ui.separator();
         if ui.add_enabled(has_selection, egui::Button::new("Fill Instrument")).clicked() {
             context_menu_action = Some(ContextMenuAction::FillInstrument);
-            ui.close_menu();
+            ui.close();
         }
         if ui.add_enabled(has_selection, egui::Button::new("Interpolate Volume")).clicked() {
             context_menu_action = Some(ContextMenuAction::InterpolateVolume);
-            ui.close_menu();
+            ui.close();
         }
         if ui.add_enabled(has_selection, egui::Button::new("Interpolate Effect")).clicked() {
             context_menu_action = Some(ContextMenuAction::InterpolateEffect);
-            ui.close_menu();
+            ui.close();
         }
         if ui.add_enabled(has_selection, egui::Button::new("Reverse")).clicked() {
             context_menu_action = Some(ContextMenuAction::Reverse);
-            ui.close_menu();
+            ui.close();
         }
         if ui.add_enabled(has_selection, egui::Button::new("Randomize")).clicked() {
             context_menu_action = Some(ContextMenuAction::Randomize);
-            ui.close_menu();
+            ui.close();
         }
     });
 

@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use eframe::egui;
+use eguidev::{DevMcp, DevUiExt, FixtureSpec, FrameGuard};
 
 use crate::app_config::AppConfig;
 use crate::audio::commands::AudioCommand;
@@ -83,6 +84,7 @@ pub struct HtrkApp {
     pub(crate) prev_channel_notes: [u16; 64],
     pub(crate) playback_split: f32,
     pub(crate) playback_zoom: u8,
+    pub(crate) devmcp: Arc<DevMcp>,
 }
 
 impl Default for HtrkApp {
@@ -154,6 +156,34 @@ impl Default for HtrkApp {
             prev_channel_notes: [0; 64],
             playback_split: 0.35,
             playback_zoom: default_zoom,
+            devmcp: Arc::new(
+                DevMcp::new()
+                    .verbose_logging(true)
+                    .fixtures([
+                        FixtureSpec::new("empty_project", "A brand new empty project (default after launch)")
+                            .anchor("view.pattern"),
+                        FixtureSpec::new("pattern_view", "Switch to the pattern editor view")
+                            .anchor("view.pattern"),
+                        FixtureSpec::new("sample_view", "Switch to the sample editor view")
+                            .anchor("view.sample"),
+                        FixtureSpec::new("instrument_view", "Switch to the instrument editor view")
+                            .anchor("view.instrument"),
+                        FixtureSpec::new("sendfx_view", "Switch to the send FX editor view")
+                            .anchor("view.sendfx"),
+                        FixtureSpec::new("playback_view", "Switch to the playback monitoring view")
+                            .anchor("view.playback"),
+                        FixtureSpec::new("automation_view", "Switch to the automation editor view")
+                            .anchor("view.automation"),
+                    ])
+                    .on_fixture(|name| {
+                        match name {
+                            "empty_project" | "pattern_view" | "sample_view"
+                            | "instrument_view" | "sendfx_view" | "playback_view"
+                            | "automation_view" => Ok(()),
+                            _ => Err(format!("unknown fixture: {name}")),
+                        }
+                    }),
+            ),
         }
     }
 }
@@ -688,14 +718,17 @@ impl HtrkApp {
 }
 
 impl eframe::App for HtrkApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let devmcp = self.devmcp.clone();
+        let _guard = FrameGuard::new(devmcp.as_ref(), &ctx);
         ctx.set_zoom_factor(self.config.zoom_factor);
 
         if self.stream.is_none() && !self.audio_init_failed {
             self.init_audio();
         }
 
-        crate::actions::handle_keyboard_input(self, ctx);
+        crate::actions::handle_keyboard_input(self, &ctx);
 
         if ctx.memory(|m| m.focused().is_none()) {
             ctx.input_mut(|i| {
@@ -775,7 +808,7 @@ impl eframe::App for HtrkApp {
             }
         }
 
-        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+        egui::Panel::top("menu_bar").show_inside(ui, |ui| {
             let menu_resp = crate::ui::menu_bar::draw_menu_bar(
                 ui,
                 self.core.undo_manager.can_undo(),
@@ -898,7 +931,7 @@ impl eframe::App for HtrkApp {
             }
         }
 
-        egui::TopBottomPanel::top("transport_bar").show(ctx, |ui| {
+        egui::Panel::top("transport_bar").show_inside(ui, |ui| {
             let transport_resp = crate::ui::transport::draw_transport(
                 ui,
                 &self.core.playback_state,
@@ -914,11 +947,11 @@ impl eframe::App for HtrkApp {
         });
 
         let num_ch = self.num_channels();
-        let panel_w = ctx.available_rect().width() - 12.0;
+        let panel_w = ctx.content_rect().width() - 12.0;
         let scope_height = crate::ui::oscilloscope::compute_scope_height(panel_w, num_ch);
-        egui::TopBottomPanel::top("oscilloscope")
-            .exact_height(scope_height)
-            .show(ctx, |ui| {
+        egui::Panel::top("oscilloscope")
+            .exact_size(scope_height)
+            .show_inside(ui, |ui| {
                 crate::ui::oscilloscope::draw_oscilloscope(
                     ui,
                     &self.core.playback_state,
@@ -927,9 +960,9 @@ impl eframe::App for HtrkApp {
                 );
             });
 
-        egui::TopBottomPanel::bottom("status_bar")
-            .exact_height(22.0)
-            .show(ctx, |ui| {
+        egui::Panel::bottom("status_bar")
+            .exact_size(22.0)
+            .show_inside(ui, |ui| {
                 let cpu = self.core.playback_state.cpu_usage_pct.load(std::sync::atomic::Ordering::Relaxed);
                 let total_rows = self.current_pattern().map_or(64, |p| p.num_rows);
                 let hint = format!("Ins: {} | Smp: {}", self.core.selected_instrument, self.core.selected_sample);
@@ -951,10 +984,10 @@ impl eframe::App for HtrkApp {
                 );
             });
 
-        egui::SidePanel::left("order_list")
-            .min_width(120.0)
-            .default_width(150.0)
-            .show(ctx, |ui| {
+        egui::Panel::left("order_list")
+            .min_size(120.0)
+            .default_size(150.0)
+            .show_inside(ui, |ui| {
                 if let Some(ref module) = self.core.module {
                     let order_resp = crate::ui::order_list::draw_order_list(
                         ui,
@@ -1043,7 +1076,7 @@ impl eframe::App for HtrkApp {
                 }
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             if self.core.module.is_none() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(100.0);
@@ -1055,14 +1088,14 @@ impl eframe::App for HtrkApp {
             }
 
             ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.current_view, AppView::Pattern, "Pattern");
-            ui.selectable_value(&mut self.current_view, AppView::Sample, "Sample");
-            ui.selectable_value(&mut self.current_view, AppView::Instrument, "Instrument");
-            ui.selectable_value(&mut self.current_view, AppView::SendFx, "Send FX");
-            ui.selectable_value(&mut self.current_view, AppView::Playback, "Playback");
-            ui.selectable_value(&mut self.current_view, AppView::Automation, "Automation");
+            ui.dev_selectable_value("view.pattern", &mut self.current_view, AppView::Pattern, "Pattern");
+            ui.dev_selectable_value("view.sample", &mut self.current_view, AppView::Sample, "Sample");
+            ui.dev_selectable_value("view.instrument", &mut self.current_view, AppView::Instrument, "Instrument");
+            ui.dev_selectable_value("view.sendfx", &mut self.current_view, AppView::SendFx, "Send FX");
+            ui.dev_selectable_value("view.playback", &mut self.current_view, AppView::Playback, "Playback");
+            ui.dev_selectable_value("view.automation", &mut self.current_view, AppView::Automation, "Automation");
             });
-            ui.separator();
+            ui.dev_separator("view.separator");
 
             match self.current_view {
                 AppView::Pattern => {
@@ -1075,7 +1108,7 @@ impl eframe::App for HtrkApp {
                     // Channel add/remove buttons
                     ui.horizontal(|ui| {
                         ui.set_min_height(0.0);
-                        if ui.button("+").clicked() {
+                        if ui.dev_button("pattern.add_channel", "+").clicked() {
                             self.ensure_module_ownership();
                             if let Some(ref mut module) = self.core.module {
                                 if let Some(arc_module) = Arc::get_mut(module) {
@@ -1090,7 +1123,7 @@ impl eframe::App for HtrkApp {
                         }
                         let can_remove = self.core.module.as_ref()
                             .map(|m| m.channel_panning.len() > 1).unwrap_or(false);
-                        if ui.button("−").clicked() && can_remove {
+                        if ui.dev_button("pattern.remove_channel", "−").clicked() && can_remove {
                             self.ensure_module_ownership();
                             if let Some(ref mut module) = self.core.module {
                                 if let Some(arc_module) = Arc::get_mut(module) {
@@ -1401,12 +1434,12 @@ impl eframe::App for HtrkApp {
         });
 
         if self.show_shortcuts {
-            crate::ui::help_screen::draw_shortcuts_window(ctx, &mut self.show_shortcuts);
+            crate::ui::help_screen::draw_shortcuts_window(&ctx, &mut self.show_shortcuts);
         }
 
         if self.settings_state.open {
             let action = crate::ui::settings_window::draw_settings_window(
-                ctx,
+                &ctx,
                 &mut self.settings_state,
                 &self.output_device_names,
                 self.selected_device_name.as_deref(),
@@ -1431,7 +1464,7 @@ impl eframe::App for HtrkApp {
             }
         }
 
-        if crate::ui::wav_export_window::draw_wav_export(ctx, &mut self.wav_export_state) {
+        if crate::ui::wav_export_window::draw_wav_export(&ctx, &mut self.wav_export_state) {
             crate::actions::export_wav_with_settings(self);
         }
 
@@ -1441,7 +1474,7 @@ impl eframe::App for HtrkApp {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .resizable(false)
                 .default_width(350.0)
-                .show(ctx, |ui| {
+                .show(&ctx, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.heading(concat!("htrk v", env!("CARGO_PKG_VERSION")));
                         ui.add_space(8.0);
@@ -1477,7 +1510,7 @@ impl eframe::App for HtrkApp {
         }
 
         if let Some(ref mut dialog) = self.sample_export_dialog {
-            if let Some((path, bit_depth)) = dialog.show(ctx) {
+            if let Some((path, bit_depth)) = dialog.show(&ctx) {
                 let sample_idx = dialog.sample_index;
                 if let Some(ref module) = self.core.module {
                     if let Some(sample) = module.samples.get(sample_idx) {
@@ -1503,7 +1536,7 @@ impl eframe::App for HtrkApp {
                 .default_size([600.0, 400.0])
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .resizable(true)
-                .show(ctx, |ui| {
+                .show(&ctx, |ui| {
                     if let Some(path) = self.file_browser.render(ui, Some(&mut self.config)) {
                         let path_str = path.to_string_lossy().to_string();
                         let ext = path.extension()
@@ -1527,7 +1560,11 @@ impl eframe::App for HtrkApp {
         ctx.request_repaint();
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         crate::actions::save_config(self);
+    }
+
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        eguidev::raw_input_hook(self.devmcp.as_ref(), ctx, raw_input);
     }
 }

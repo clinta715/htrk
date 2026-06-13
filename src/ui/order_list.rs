@@ -1,4 +1,5 @@
 use eframe::egui;
+use eguidev::DevUiExt;
 
 use crate::sequencer::Module;
 
@@ -35,13 +36,13 @@ pub fn draw_order_list(
     };
 
     ui.vertical(|ui| {
-        ui.heading(
+        ui.dev_label("order_list.heading",
             egui::RichText::new("Song Order")
                 .font(egui::FontId::proportional(12.0))
                 .color(theme.order_fg),
         );
 
-        ui.separator();
+        ui.dev_separator("order_list.sep1");
 
         let mut pattern_changed: Option<(usize, u8)> = None;
 
@@ -117,7 +118,7 @@ pub fn draw_order_list(
                             egui::pos2(response.rect.left(), bar_y),
                             egui::pos2(response.rect.left() + response.rect.width() * progress, response.rect.bottom()),
                         );
-                        ui.painter().rect_filled(bar_rect, 0.0, theme.order_playing);
+                        ui.painter().rect_filled(bar_rect, 0.0, egui::Color32::WHITE);
                     }
 
                     if is_selected {
@@ -157,13 +158,13 @@ pub fn draw_order_list(
         ui.separator();
 
         ui.horizontal(|ui| {
-            if ui.button("+Ins").clicked() {
+            if ui.dev_button("order_list.insert", "+Ins").clicked() {
                 resp.insert_clicked = true;
             }
-            if ui.button("Dup").clicked() {
+            if ui.dev_button("order_list.duplicate", "Dup").clicked() {
                 resp.duplicate_clicked = true;
             }
-            if ui.button("-Del").clicked() {
+            if ui.dev_button("order_list.delete", "-Del").clicked() {
                 resp.delete_clicked = true;
             }
         });

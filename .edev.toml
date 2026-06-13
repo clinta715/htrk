@@ -1,0 +1,8 @@
+[app]
+command = ["cargo", "run", "--features", "devtools"]
+
+[smoke]
+suite_dir = "smoketest"
+
+[mcp]
+verbose = true

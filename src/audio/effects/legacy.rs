@@ -762,6 +762,9 @@ impl LegacyProcessor {
             fade_out_rate,
         );
         engine.voice_pool.voices[voice_idx].channel = Some(channel);
+        if engine.amiga_led_filter {
+            engine.voice_pool.voices[voice_idx].amiga_led_filter = true;
+        }
         if sample.loop_type == LoopType::Backward {
             engine.voice_pool.voices[voice_idx].direction = -1.0;
             if sample_offset == 0 {
@@ -940,6 +943,7 @@ impl LegacyProcessor {
         if cell.instrument.is_some() {
             if let Some(s) = sample {
                 engine.state.channels[channel].channel_volume = s.default_volume.min(64);
+                engine.state.channels[channel].channel_panning = s.default_panning;
             }
         }
     }

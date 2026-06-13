@@ -155,7 +155,7 @@ pub fn draw_sample_editor(
                                 response.context_menu(|ui| {
                                     if ui.button("Export Sample...").clicked() {
                                         event = Some(SampleEditEvent::ExportSample(i));
-                                        ui.close_menu();
+                                        ui.close();
                                     }
                                 });
                             }
