@@ -47,6 +47,10 @@ const NOTE_KEYS_UPPER: [(egui::Key, u8); 12] = [
 pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
     let modifiers = ctx.input(|i| i.modifiers);
 
+    if ctx.memory(|m| m.focused().is_some()) {
+        return;
+    }
+
     if modifiers.ctrl && !modifiers.shift {
         let mut handled = false;
         ctx.input(|i| {

@@ -81,6 +81,8 @@ pub struct HtrkApp {
     pub(crate) automation_dragging: Option<(usize, f32)>,
     pub(crate) automation_editor_state: crate::ui::automation_editor::AutomationEditorState,
     pub(crate) prev_channel_notes: [u16; 64],
+    pub(crate) playback_split: f32,
+    pub(crate) playback_zoom: u8,
 }
 
 impl Default for HtrkApp {
@@ -90,6 +92,7 @@ impl Default for HtrkApp {
         file_browser.restore_last_dirs(&config);
         file_browser.restore_favorites(&config.favorites);
         let playback_state = Arc::new(AtomicPlaybackState::default());
+        let default_zoom = config.editor_font_size as u8;
         HtrkApp {
             core: crate::core::HtrkCore::new(playback_state.clone()),
             stream: None,
@@ -149,6 +152,8 @@ impl Default for HtrkApp {
             automation_dragging: None,
             automation_editor_state: crate::ui::automation_editor::AutomationEditorState::default(),
             prev_channel_notes: [0; 64],
+            playback_split: 0.35,
+            playback_zoom: default_zoom,
         }
     }
 }
@@ -691,6 +696,18 @@ impl eframe::App for HtrkApp {
         }
 
         crate::actions::handle_keyboard_input(self, ctx);
+
+        if ctx.memory(|m| m.focused().is_none()) {
+            ctx.input_mut(|i| {
+                i.events.retain(|e| !matches!(e,
+                    egui::Event::Key { key: egui::Key::Tab, pressed: true, .. }
+                    | egui::Event::Key { key: egui::Key::ArrowUp, pressed: true, .. }
+                    | egui::Event::Key { key: egui::Key::ArrowDown, pressed: true, .. }
+                    | egui::Event::Key { key: egui::Key::ArrowLeft, pressed: true, .. }
+                    | egui::Event::Key { key: egui::Key::ArrowRight, pressed: true, .. }
+                ));
+            });
+        }
 
         // Clamp cursor and scroll to active channel count
         let nch = self.num_channels();
@@ -1284,7 +1301,7 @@ impl eframe::App for HtrkApp {
                     let num_channels = self.num_channels();
 
                     let metrics = crate::ui::pattern_grid::GridMetrics::new(
-                        self.config.editor_font_size as f32,
+                        self.playback_zoom as f32,
                         self.config.get_spacing_mode(),
                         self.config.get_col_vis(),
                     );
@@ -1313,6 +1330,8 @@ impl eframe::App for HtrkApp {
                         grid_playback_row,
                         if grid_playback_row.is_some() { playback_tick } else { None },
                         playback_speed,
+                        &mut self.playback_split,
+                        &mut self.playback_zoom,
                     );
 
                     self.playback_last_visible_rows = visible_rows;
