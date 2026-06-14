@@ -73,3 +73,20 @@ When the sequencer processes a universal effect that needs format-specific behav
 - **Caching**: `FileBrowser.get_preview_data()` stores `Option<(PathBuf, Arc<Vec<f32>>, u32)>` in `self.preview_sample`. WAV is decoded once per path via `formats::wav::import_wav`. Cache is cleared on `refresh()` (navigation).
 - **Wiring**: `HtrkApp::preview_browser_sample(note_key)` checks `self.file_browser.show && mode == Samples`, loads the selected entry, decodes via `get_preview_data`, sends `PreviewBuffer`. Keyboard handler calls this before `preview_note` in `handle_text_input`; if it returns `true`, note recording is skipped. The Preview button in the browser footer sets `preview_requested` flag, handled after render.
 - **Verification**: No existing audio tests should break; `trigger_preview_buffer` shares the same voice-pool infrastructure as `trigger_preview_note`.
+
+## 8. Keyboard Focus Gate and Note-Preview Path
+
+### The Problem
+When any egui widget has keyboard focus, the `handle_keyboard_input` function in `src/actions/keyboard.rs` must still allow `Event::Text` to reach note preview (for qwerty keyboard preview), while blocking cursor/editing keys (arrows, backspace, delete, insert, space, etc.) that would corrupt the widget's own editing state.
+
+### The Fix (commit `51604c8`)
+- **Scope `any_dialog_open` at function level**, before the `ctx.input()` closure, so all branches (including `Event::Text` and Ctrl+Shift modifiers) see the same value.
+- **Process `Event::Text` in a separate early `ctx.input()` pass** — before the main focus gate — so text events reach `note_key_preview_only()` regardless of widget focus.
+- **Gate destructive keys** (`Arrow*`, `Space`, `Insert`, `Backspace`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, `Tab`) on `!any_dialog_open` inside their match arms.
+- **Extract the Delete arm** into `delete_row()` and `delete_cell_or_automation()` helpers to eliminate deep nesting that obscured the `any_dialog_open` scoping bug.
+- **Remove the stale `Event::Text` handler** from the main match block (the early `ctx.input()` pass now handles it).
+
+### Rule for Future Changes
+- `Event::Text` must always be handled **before** the focus gate, because it carries both widget text input AND note-preview keystrokes.
+- Never compute `any_dialog_open` inside `ctx.input()` — compute it outside so all branches agree on the same dialog-state snapshot.
+- When adding a new keyboard shortcut that should work regardless of widget focus, add it to a pre-gate `ctx.input()` pass, not the main match block.
