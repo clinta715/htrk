@@ -76,14 +76,14 @@ pub fn draw_automation_editor(
                     let label = track.label();
                     let is_selected = state.selected_track_id == Some(tid);
                     let fg = if is_selected {
-                        egui::Color32::from_rgb(255, 255, 100)
+                        theme.order_selected
                     } else {
                         theme.fg_note
                     };
                     let bg = if is_selected {
-                        egui::Color32::from_rgb(60, 60, 100)
+                        theme.bg_selected
                     } else {
-                        egui::Color32::from_rgb(30, 30, 40)
+                        theme.status_bg
                     };
 
                     ui.horizontal(|ui| {
@@ -94,7 +94,7 @@ pub fn draw_automation_editor(
                             egui::Sense::click(),
                         );
                         let cb_icon = if enabled { "\u{2713}" } else { " " };
-                        let cb_color = if enabled { egui::Color32::GREEN } else { egui::Color32::GRAY };
+                        let cb_color = if enabled { theme.vu_green } else { theme.fg_dim };
                         ui.painter().text(
                             cb_rect.center(),
                             egui::Align2::CENTER_CENTER,
@@ -134,7 +134,7 @@ pub fn draw_automation_editor(
                             egui::Align2::CENTER_CENTER,
                             "\u{00d7}",
                             egui::FontId::monospace(13.0),
-                            egui::Color32::RED,
+                            theme.vu_red,
                         );
                         if del_resp.clicked() {
                             resp.track_removed = Some(tid);
@@ -143,10 +143,10 @@ pub fn draw_automation_editor(
                 }
 
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new("+ Add Track").size(11.0).color(egui::Color32::from_rgb(100, 160, 255)));
+                ui.label(egui::RichText::new("+ Add Track").size(11.0).color(theme.fg_instrument));
 
                 ui.add_space(4.0);
-                ui.label(egui::RichText::new("Per-Channel:").size(10.0).color(egui::Color32::GRAY));
+                ui.label(egui::RichText::new("Per-Channel:").size(10.0).color(theme.fg_dim));
                 ui.horizontal(|ui| {
                     ui.label("Ch:");
                     let max_ch = if module.channel_volume.is_empty() { 0 } else { module.channel_volume.len().saturating_sub(1) };
@@ -158,7 +158,7 @@ pub fn draw_automation_editor(
                     }
                 }
                 ui.add_space(4.0);
-                ui.label(egui::RichText::new("Global:").size(10.0).color(egui::Color32::GRAY));
+                ui.label(egui::RichText::new("Global:").size(10.0).color(theme.fg_dim));
                 for target in AutomationTarget::all_global() {
                     if ui.small_button(target.label()).clicked() {
                         resp.track_added = Some((target, None));
@@ -182,8 +182,8 @@ pub fn draw_automation_editor(
                     None => {
                         ui.vertical_centered(|ui| {
                             ui.add_space(80.0);
-                            ui.label(egui::RichText::new("Select a track from the sidebar").size(14.0).color(egui::Color32::GRAY));
-                            ui.label(egui::RichText::new("or click '+ Add Track' to create one").size(12.0).color(egui::Color32::DARK_GRAY));
+                            ui.label(egui::RichText::new("Select a track from the sidebar").size(14.0).color(theme.fg_dim));
+                            ui.label(egui::RichText::new("or click '+ Add Track' to create one").size(12.0).color(theme.fg_dimmer));
                         });
                     }
                 }
@@ -237,7 +237,7 @@ fn draw_lane_editor(
         let y = rect.top() + row_idx as f32 * row_height * (300.0 / total_height.max(1.0));
         painter.line_segment(
             [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-            egui::Stroke::new(0.5, egui::Color32::from_rgb(40, 40, 55)),
+            egui::Stroke::new(0.5, theme.grid_line),
         );
     }
 
@@ -249,12 +249,12 @@ fn draw_lane_editor(
             egui::Align2::CENTER_CENTER,
             "Click to add points",
             egui::FontId::monospace(12.0),
-            egui::Color32::from_rgb(80, 80, 100),
+            theme.fg_note_empty,
         );
     } else {
         let point_radius = 4.0;
-        let curve_color = egui::Color32::from_rgb(100, 200, 255);
-        let dim_color = egui::Color32::from_rgba_premultiplied(60, 120, 160, 80);
+        let curve_color = theme.automation_curve;
+        let dim_color = theme.automation_curve_dim;
 
         for i in 0..track.points.len() {
             let pt = &track.points[i];
@@ -320,7 +320,7 @@ fn draw_lane_editor(
                 egui::Align2::LEFT_CENTER,
                 format!("{:02X}", hex_val),
                 egui::FontId::monospace(9.0),
-                egui::Color32::from_rgb(180, 220, 255),
+                theme.automation_value_text,
             );
         }
     }

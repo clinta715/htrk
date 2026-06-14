@@ -119,7 +119,7 @@ pub fn draw_inline_sample_palette(
     });
 }
 
-fn draw_waveform_thumbnail(
+pub(crate) fn draw_waveform_thumbnail(
     painter: &egui::Painter,
     rect: egui::Rect,
     data: &std::sync::Arc<Vec<f32>>,

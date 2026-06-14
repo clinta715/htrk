@@ -82,7 +82,7 @@ pub fn draw_playback_view(
         let used_h = grid_ui.min_rect().height();
         ui.allocate_space(egui::vec2(0.0, used_h));
 
-        draw_splitter(ui, avail_h, split);
+        draw_splitter(ui, avail_h, split, theme);
     }
 
     ui.separator();
@@ -106,8 +106,8 @@ pub fn draw_playback_view(
         );
 
         let painter = ui.painter_at(block_rect);
-        painter.rect_filled(block_rect, BLOCK_CORNER_RADIUS, egui::Color32::from_rgb(16, 16, 18));
-        painter.rect_stroke(block_rect, BLOCK_CORNER_RADIUS, egui::Stroke::new(0.5, egui::Color32::from_rgb(30, 30, 35)), egui::StrokeKind::Outside);
+        painter.rect_filled(block_rect, BLOCK_CORNER_RADIUS, theme.panel_bg);
+        painter.rect_stroke(block_rect, BLOCK_CORNER_RADIUS, egui::Stroke::new(0.5, theme.panel_border), egui::StrokeKind::Outside);
 
         let mut block_ui = ui.new_child(
             egui::UiBuilder::new().max_rect(block_rect.shrink2(egui::vec2(3.0, 2.0))),
@@ -144,7 +144,7 @@ pub fn draw_playback_view(
         block_ui.painter().rect_filled(
             egui::Rect::from_min_size(meter_pos, egui::vec2(meter_w, METER_H)),
             2.0,
-            egui::Color32::from_gray(40),
+            theme.meter_bg,
         );
         block_ui.painter().rect_filled(
             egui::Rect::from_min_size(meter_pos, egui::vec2(fill, METER_H)),
@@ -188,7 +188,7 @@ fn draw_zoom_toolbar(ui: &mut egui::Ui, theme: &TrackerTheme, zoom: &mut u8) {
     });
 }
 
-fn draw_splitter(ui: &mut egui::Ui, avail_h: f32, split: &mut f32) {
+fn draw_splitter(ui: &mut egui::Ui, avail_h: f32, split: &mut f32, theme: &TrackerTheme) {
     let separator_rect = egui::Rect::from_min_size(
         egui::pos2(ui.cursor().min.x, ui.cursor().min.y),
         egui::vec2(ui.available_width(), SPLITTER_HEIGHT),
@@ -196,8 +196,8 @@ fn draw_splitter(ui: &mut egui::Ui, avail_h: f32, split: &mut f32) {
 
     let response = ui.allocate_rect(separator_rect, egui::Sense::click_and_drag());
     let painter = ui.painter_at(separator_rect);
-    painter.rect_filled(separator_rect, 2.0, egui::Color32::from_rgb(40, 40, 45));
-    painter.rect_stroke(separator_rect, 2.0, egui::Stroke::new(0.5, egui::Color32::from_rgb(55, 55, 60)), egui::StrokeKind::Outside);
+    painter.rect_filled(separator_rect, 2.0, theme.splitter_bg);
+    painter.rect_stroke(separator_rect, 2.0, egui::Stroke::new(0.5, theme.splitter_border), egui::StrokeKind::Outside);
 
     if response.dragged_by(egui::PointerButton::Primary) {
         let dy = response.drag_delta().y;
@@ -205,20 +205,20 @@ fn draw_splitter(ui: &mut egui::Ui, avail_h: f32, split: &mut f32) {
     }
 }
 
-fn info_fill_color(frac: f32) -> egui::Color32 {
+fn info_fill_color(frac: f32, theme: &TrackerTheme) -> egui::Color32 {
     if frac < 0.5 {
-        egui::Color32::from_rgb(60, 160, 80)
+        theme.vu_green
     } else if frac < 0.8 {
-        egui::Color32::from_rgb(180, 160, 40)
+        theme.vu_yellow
     } else {
-        egui::Color32::from_rgb(200, 60, 60)
+        theme.vu_red
     }
 }
 
 fn draw_info_footer(
     ui: &mut egui::Ui,
     playback_state: &AtomicPlaybackState,
-    _theme: &TrackerTheme,
+    theme: &TrackerTheme,
     num_channels: usize,
     module: Option<&crate::sequencer::module::Module>,
     cols: usize,
@@ -237,8 +237,8 @@ fn draw_info_footer(
         );
 
         let painter = ui.painter_at(cell_rect);
-        painter.rect_filled(cell_rect, 2.0, egui::Color32::from_rgb(14, 14, 16));
-        painter.rect_stroke(cell_rect, 2.0, egui::Stroke::new(0.5, egui::Color32::from_rgb(28, 28, 32)), egui::StrokeKind::Outside);
+        painter.rect_filled(cell_rect, 2.0, theme.panel_bg);
+        painter.rect_stroke(cell_rect, 2.0, egui::Stroke::new(0.5, theme.panel_border), egui::StrokeKind::Outside);
 
         let inner = cell_rect.shrink2(egui::vec2(3.0, 2.0));
 
@@ -254,7 +254,7 @@ fn draw_info_footer(
             egui::Align2::LEFT_CENTER,
             &label_str,
             egui::FontId::monospace(8.0),
-            egui::Color32::from_gray(110),
+            theme.fg_dim,
         );
 
         let label_w = 20.0;
@@ -272,14 +272,14 @@ fn draw_info_footer(
         painter.rect_filled(
             egui::Rect::from_min_size(egui::pos2(bar_x, bar_y), egui::vec2(bar_w, bar_h)),
             1.0,
-            egui::Color32::from_gray(30),
+            theme.meter_bg,
         );
         if let Some(frac) = progress {
             let fill_w = (frac * bar_w).max(1.0);
             painter.rect_filled(
                 egui::Rect::from_min_size(egui::pos2(bar_x, bar_y), egui::vec2(fill_w, bar_h)),
                 1.0,
-                info_fill_color(frac),
+                info_fill_color(frac, theme),
             );
         }
 
@@ -289,7 +289,7 @@ fn draw_info_footer(
             egui::pos2(env_x, inner.top()),
             egui::vec2(6.0, inner.height()),
         );
-        painter.rect_filled(env_rect, 1.0, egui::Color32::from_gray(25));
+        painter.rect_filled(env_rect, 1.0, theme.meter_bg);
         if let Some(ep) = env_pos {
             let env_frac = (ep as f64 / 1.0).min(1.0) as f32;
             let env_fill_h = (env_frac * env_rect.height()).max(1.0);
@@ -299,7 +299,7 @@ fn draw_info_footer(
                     egui::vec2(6.0, env_fill_h),
                 ),
                 1.0,
-                egui::Color32::from_rgb(80, 120, 200),
+                theme.automation_curve,
             );
         }
     }

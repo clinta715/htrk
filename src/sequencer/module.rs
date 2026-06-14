@@ -34,7 +34,7 @@ pub const DEFAULT_ROWS: usize = 64;
 #[allow(dead_code)]
 pub const DEFAULT_OCTAVE: u8 = 4;
 
-pub const COMMAND_BUFFER_SIZE: usize = 256;
+pub const COMMAND_BUFFER_SIZE: usize = 8192;
 
 #[allow(dead_code)]
 pub const VOLUME_MIN: u8 = 0;

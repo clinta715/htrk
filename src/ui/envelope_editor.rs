@@ -1,6 +1,7 @@
 use eframe::egui;
 use crate::edit::EnvelopeType;
 use crate::sequencer::instrument::Envelope;
+use crate::ui::TrackerTheme;
 
 pub struct EnvelopeResponse {
     pub event: Option<EnvelopeEditEvent>,
@@ -18,38 +19,23 @@ pub fn draw_envelope_editor(
     envelope: &Envelope,
     env_type: EnvelopeType,
     playback_positions: &[f32],
+    theme: &TrackerTheme,
 ) -> EnvelopeResponse {
     let mut event = None;
     let mut hovered_point = None;
 
     let (line_color, fill_color, label) = match env_type {
-        EnvelopeType::Volume => (
-            egui::Color32::from_rgb(80, 220, 80),
-            egui::Color32::from_rgba_premultiplied(40, 140, 40, 40),
-            "Volume",
-        ),
-        EnvelopeType::Panning => (
-            egui::Color32::from_rgb(60, 180, 255),
-            egui::Color32::from_rgba_premultiplied(30, 90, 180, 40),
-            "Panning",
-        ),
-        EnvelopeType::Pitch => (
-            egui::Color32::from_rgb(255, 180, 60),
-            egui::Color32::from_rgba_premultiplied(180, 100, 30, 40),
-            "Pitch",
-        ),
-        EnvelopeType::Filter => (
-            egui::Color32::from_rgb(200, 100, 255),
-            egui::Color32::from_rgba_premultiplied(120, 50, 160, 40),
-            "Filter",
-        ),
+        EnvelopeType::Volume => (theme.envelope_colors[0].0, theme.envelope_colors[0].1, "Volume"),
+        EnvelopeType::Panning => (theme.envelope_colors[1].0, theme.envelope_colors[1].1, "Panning"),
+        EnvelopeType::Pitch => (theme.envelope_colors[2].0, theme.envelope_colors[2].1, "Pitch"),
+        EnvelopeType::Filter => (theme.envelope_colors[3].0, theme.envelope_colors[3].1, "Filter"),
     };
 
     let desired_size = ui.available_size();
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
 
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 28));
+    painter.rect_filled(rect, 0.0, theme.panel_bg);
 
     if envelope.points.is_empty() {
         painter.text(
@@ -57,7 +43,7 @@ pub fn draw_envelope_editor(
             egui::Align2::CENTER_CENTER,
             format!("No {} envelope points", label),
             egui::FontId::proportional(14.0),
-            egui::Color32::GRAY,
+            theme.fg_dim,
         );
         return EnvelopeResponse { event: None, hovered_point: None };
     }
@@ -82,14 +68,14 @@ pub fn draw_envelope_editor(
         let y = rect.bottom() - (i as f32 / 4.0) * rect.height();
         painter.line_segment(
             [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-            egui::Stroke::new(1.0, egui::Color32::from_gray(50)),
+            egui::Stroke::new(1.0, theme.grid_line),
         );
     }
     for i in 0..=5 {
         let x = rect.left() + (i as f32 / 5.0) * rect.width();
         painter.line_segment(
             [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-            egui::Stroke::new(1.0, egui::Color32::from_gray(40)),
+            egui::Stroke::new(1.0, theme.grid_line_minor),
         );
     }
 
@@ -126,7 +112,7 @@ pub fn draw_envelope_editor(
 
         painter.line_segment(
             [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-            egui::Stroke::new(1.5, egui::Color32::from_rgba_premultiplied(255, 255, 100, 140)),
+            egui::Stroke::new(1.5, theme.playback_position_line),
         );
 
         if envelope.points.len() >= 2 {
@@ -145,7 +131,7 @@ pub fn draw_envelope_editor(
                 }
             }
             let dot_pos = to_screen(pos.max(0.0) as u16, interp_val);
-            painter.circle_filled(dot_pos, 4.0, egui::Color32::from_rgba_premultiplied(255, 255, 100, 220));
+            painter.circle_filled(dot_pos, 4.0, theme.playback_position_dot);
         }
     }
 
@@ -169,9 +155,9 @@ pub fn draw_envelope_editor(
                 let lx = to_screen(envelope.points[ls].tick, 0).x;
                 painter.line_segment(
                     [egui::pos2(lx, rect.top()), egui::pos2(lx, rect.bottom())],
-                    egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(0, 200, 255, 120)),
+                    egui::Stroke::new(1.0,             theme.loop_marker),
                 );
-                painter.circle_stroke(egui::pos2(lx, rect.top() + 8.0), 4.0, egui::Stroke::new(1.5, egui::Color32::from_rgb(0, 200, 255)));
+                painter.circle_stroke(egui::pos2(lx, rect.top() + 8.0), 4.0,             egui::Stroke::new(1.5, theme.loop_marker));
             }
         }
         if let Some(le) = envelope.loop_end {
@@ -179,9 +165,9 @@ pub fn draw_envelope_editor(
                 let lx = to_screen(envelope.points[le].tick, 0).x;
                 painter.line_segment(
                     [egui::pos2(lx, rect.top()), egui::pos2(lx, rect.bottom())],
-                    egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(0, 200, 255, 120)),
+                    egui::Stroke::new(1.0,             theme.loop_marker),
                 );
-                painter.circle_stroke(egui::pos2(lx, rect.bottom() - 8.0), 4.0, egui::Stroke::new(1.5, egui::Color32::from_rgb(0, 200, 255)));
+                painter.circle_stroke(egui::pos2(lx, rect.bottom() - 8.0), 4.0,             egui::Stroke::new(1.5, theme.loop_marker));
             }
         }
     }
@@ -193,9 +179,9 @@ pub fn draw_envelope_editor(
         let is_sustain = envelope.sustain_point == Some(i);
 
         let color = if is_hovered {
-            egui::Color32::WHITE
+            theme.fg_text
         } else if is_sustain {
-            egui::Color32::from_rgb(0, 255, 128)
+            theme.fg_volume
         } else {
             line_color
         };

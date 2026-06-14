@@ -1,5 +1,6 @@
 use eframe::egui;
 use crate::sequencer::note::Note;
+use crate::ui::TrackerTheme;
 
 fn note_name(key: u8) -> String {
     Note::On(key).to_string()
@@ -14,6 +15,7 @@ pub fn draw_note_map(
     ui: &mut egui::Ui,
     note_map: &[u8; 120],
     _selected_sample: u8,
+    theme: &TrackerTheme,
 ) -> Option<NoteMapEvent> {
     let mut event = None;
 
@@ -22,7 +24,7 @@ pub fn draw_note_map(
         ui.label(
             egui::RichText::new("Click a cell to cycle destination note. Cells that differ from identity are highlighted.")
                 .size(10.0)
-                .color(egui::Color32::GRAY),
+                .color(theme.fg_dim),
         );
 
         let cell_size = 20.0;
@@ -54,11 +56,11 @@ pub fn draw_note_map(
 
                             let label = note_name(dest);
                             let bg = if !is_identity {
-                                egui::Color32::from_rgb(40, 60, 100)
+                                theme.bg_selected
                             } else if key % 2 == 0 {
-                                egui::Color32::from_rgb(24, 24, 32)
+                                theme.bg_default
                             } else {
-                                egui::Color32::from_rgb(20, 20, 28)
+                                theme.bg_channel_alt
                             };
 
                             let resp = ui.add_sized(
@@ -67,7 +69,7 @@ pub fn draw_note_map(
                                     egui::RichText::new(label)
                                         .size(9.0)
                                         .monospace()
-                                        .color(egui::Color32::from_rgb(200, 200, 220))
+                                        .color(theme.fg_text)
                                         .background_color(bg),
                                 ).sense(egui::Sense::click()),
                             );

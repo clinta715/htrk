@@ -46,6 +46,7 @@ pub fn draw_instrument_editor(
     selected_sample: &mut usize,
     _theme: &TrackerTheme,
     playback_state: &AtomicPlaybackState,
+    instrument_split: &mut f32,
 ) -> Option<InstrumentEditEvent> {
     let mut event = None;
 
@@ -58,9 +59,12 @@ pub fn draw_instrument_editor(
     let mut env_type = ui.data(|d| d.get_temp::<crate::edit::EnvelopeType>(env_type_id).unwrap_or(crate::edit::EnvelopeType::Volume));
 
     ui.horizontal(|ui| {
+        let total_w = ui.available_width();
+        let list_w = (total_w * *instrument_split).max(100.0);
+
         // Instrument List
         ui.vertical(|ui| {
-            ui.set_width(150.0);
+            ui.set_width(list_w);
             ui.set_height(ui.available_height());
             ui.heading("Instruments");
             egui::ScrollArea::vertical()
@@ -100,7 +104,7 @@ pub fn draw_instrument_editor(
             });
         });
 
-        ui.separator();
+        crate::ui::draw_vertical_splitter(ui, total_w, instrument_split, 0.08, 0.40, _theme);
 
         // Instrument Editor Main Area
         if let Some(inst) = module.instruments.get(*selected_instrument) {
@@ -253,7 +257,7 @@ pub fn draw_instrument_editor(
                             env_type_idx,
                             *selected_instrument as u8,
                         );
-                        let env_resp = crate::ui::envelope_editor::draw_envelope_editor(ui, env, env_type, &env_positions);
+                        let env_resp = crate::ui::envelope_editor::draw_envelope_editor(ui, env, env_type, &env_positions, _theme);
                         ui.data_mut(|d| d.insert_temp(env_hovered_id, env_resp.hovered_point));
                         if let Some(env_event) = env_resp.event {
                             match env_event {
@@ -519,7 +523,7 @@ pub fn draw_instrument_editor(
                     });
 
                     ui.group(|ui| {
-                        if let Some(nm_event) = crate::ui::note_map::draw_note_map(ui, &inst.note_map, paint_sample_idx) {
+                        if let Some(nm_event) = crate::ui::note_map::draw_note_map(ui, &inst.note_map, paint_sample_idx, _theme) {
                             if inst.note_map[nm_event.note as usize] != nm_event.new_dest {
                                 event = Some(InstrumentEditEvent::NoteMapChanged(nm_event.note, nm_event.new_dest));
                             }

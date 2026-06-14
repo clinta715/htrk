@@ -1,8 +1,10 @@
 use eframe::egui;
 use eguidev::DevUiExt;
 
+use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::ModuleFormat;
 
+use super::sample_palette::draw_waveform_thumbnail;
 use super::theme::TrackerTheme;
 
 pub fn draw_status_bar(
@@ -17,10 +19,12 @@ pub fn draw_status_bar(
     cursor_skip: u8,
     selected_instrument: usize,
     selected_sample: usize,
+    playback_state: &AtomicPlaybackState,
     edit_mode: bool,
     hint: &str,
     theme: &TrackerTheme,
-) {
+) -> Option<i32> {
+    let mut sample_delta: Option<i32> = None;
     ui.horizontal(|ui| {
         ui.set_height(20.0);
 
@@ -30,7 +34,7 @@ pub fn draw_status_bar(
         ui.dev_label("status.version", egui::RichText::new(concat!("htrk v", env!("CARGO_PKG_VERSION"))).font(font.clone()).color(fg));
         ui.dev_separator("status.sep1");
 
-        let mode_color = if edit_mode { theme.fg_note } else { egui::Color32::from_rgb(200, 160, 80) };
+        let mode_color = if edit_mode { theme.fg_note } else { theme.fg_effect };
         let mode_text = if edit_mode { "EDT" } else { "VIEW" };
         ui.dev_label("status.mode", egui::RichText::new(mode_text).font(font.clone()).color(mode_color).strong());
         ui.dev_separator("status.sep2");
@@ -78,6 +82,22 @@ pub fn draw_status_bar(
         ui.label(egui::RichText::new(inst_str).font(font.clone()).color(theme.fg_instrument));
         ui.label(egui::RichText::new(format!(" Smp:{:02}", selected_sample)).font(font.clone()).color(theme.fg_volume));
 
+        if ui.available_width() > 300.0 {
+            if ui.small_button("<").clicked() {
+                sample_delta = Some(-1);
+            }
+            let (thumb_rect, _) = ui.allocate_exact_size(egui::vec2(70.0, 18.0), egui::Sense::hover());
+            if let Some(sample) = module.and_then(|m| m.samples.get(selected_sample)) {
+                if !sample.data.is_empty() {
+                    let positions = playback_state.sample_positions_for(selected_sample);
+                    draw_waveform_thumbnail(ui.painter(), thumb_rect, &sample.data, true, &positions, theme);
+                }
+            }
+            if ui.small_button(">").clicked() {
+                sample_delta = Some(1);
+            }
+        }
+
         ui.separator();
 
         ui.label(egui::RichText::new(format!("{}ch", num_channels)).font(font.clone()).color(fg));
@@ -95,4 +115,5 @@ pub fn draw_status_bar(
             ui.label(egui::RichText::new(hint).font(font).color(theme.fg_note));
         });
     });
+    sample_delta
 }

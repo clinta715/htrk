@@ -118,7 +118,7 @@ pub fn draw_channel_headers(
         let mute_fill = if muted || mute_resp.hovered() {
             egui::Color32::from_rgb(60, 30, 30)
         } else {
-            egui::Color32::from_rgb(40, 40, 50)
+            theme.status_bg
         };
         painter.rect_filled(mute_rect, 2.0, mute_fill);
         painter.text(
@@ -143,7 +143,7 @@ pub fn draw_channel_headers(
         let solo_fill = if solo || solo_resp.hovered() {
             egui::Color32::from_rgb(30, 60, 30)
         } else {
-            egui::Color32::from_rgb(40, 40, 50)
+            theme.status_bg
         };
         painter.rect_filled(solo_rect, 2.0, solo_fill);
         painter.text(
@@ -217,7 +217,7 @@ pub fn draw_channel_headers(
             egui::pos2(vu_x, y),
             egui::vec2(vu_w, vu_bar_height),
         );
-        painter.rect_filled(vu_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+        painter.rect_filled(vu_rect, 0.0, theme.meter_bg);
         let peak = playback_state.channel_peak(ch);
         let fill_w = (peak.clamp(0.0, 1.0) * vu_w).min(vu_w);
         if fill_w > 0.0 {
@@ -226,11 +226,11 @@ pub fn draw_channel_headers(
                 egui::pos2(vu_rect.left() + fill_w, vu_rect.bottom()),
             );
             let color = if peak < 0.6 {
-                egui::Color32::from_rgb(0, 160, 0)
+                theme.vu_green
             } else if peak < 0.85 {
-                egui::Color32::from_rgb(180, 180, 0)
+                theme.vu_yellow
             } else {
-                egui::Color32::from_rgb(200, 40, 40)
+                theme.vu_red
             };
             painter.rect_filled(fill_rect, 0.0, color);
         }
@@ -241,36 +241,31 @@ pub fn draw_channel_headers(
             egui::pos2(vu_x, y),
             egui::vec2(vu_w, pan_bar_height),
         );
-        painter.rect_filled(pan_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+        painter.rect_filled(pan_rect, 0.0, theme.meter_bg);
         let center_x = pan_rect.center().x;
         let dot_x = pan_rect.left() + (pan_val as f32 / 64.0) * pan_rect.width();
         painter.line_segment(
             [egui::pos2(center_x, pan_rect.top()), egui::pos2(center_x, pan_rect.bottom())],
-            egui::Stroke::new(0.5, egui::Color32::from_rgb(50, 50, 60)),
+            egui::Stroke::new(0.5, theme.grid_line),
         );
         let dot_r = 2.0;
         let dot_color = if pan_val < 20 {
-            egui::Color32::from_rgb(100, 100, 255)
+            theme.pan_left
         } else if pan_val > 44 {
-            egui::Color32::from_rgb(255, 100, 100)
+            theme.pan_right
         } else {
-            egui::Color32::from_rgb(180, 180, 200)
+            theme.pan_center
         };
         painter.circle_filled(egui::pos2(dot_x, pan_rect.center().y), dot_r, dot_color);
         y += pan_bar_height + 2.0;
 
-        let bar_colors = [
-            egui::Color32::from_rgb(60, 100, 200),
-            egui::Color32::from_rgb(180, 80, 160),
-            egui::Color32::from_rgb(80, 180, 80),
-            egui::Color32::from_rgb(200, 160, 40),
-        ];
+        let bar_colors = theme.send_bus_colors;
         for si in 0..NUM_SEND_BUSES.min(4) {
             let bar_rect = egui::Rect::from_min_size(
                 egui::pos2(vu_x, y),
                 egui::vec2(vu_w, send_bar_h),
             );
-            painter.rect_filled(bar_rect, 0.0, egui::Color32::from_rgb(20, 20, 30));
+            painter.rect_filled(bar_rect, 0.0, theme.meter_bg);
 
             if let Some(lvl) = send_levels.get(ch).map(|sl| sl[si]) {
                 if lvl > 0.0 {
@@ -311,14 +306,14 @@ pub fn draw_channel_headers(
         let auto_fill = if current_auto.is_some() {
             egui::Color32::from_rgb(40, 50, 70)
         } else if auto_resp.hovered() {
-            egui::Color32::from_rgb(40, 40, 50)
+            theme.status_bg
         } else {
-            egui::Color32::from_rgb(30, 30, 38)
+            theme.status_bg
         };
         painter.rect_filled(auto_rect, 2.0, auto_fill);
         let auto_font = egui::FontId::monospace(metrics.font_size * 0.7);
         let auto_color = if current_auto.is_some() {
-            egui::Color32::from_rgb(120, 180, 255)
+            theme.automation_value_text
         } else {
             theme.fg_note_empty
         };

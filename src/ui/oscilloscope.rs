@@ -28,7 +28,7 @@ fn compute_scope_layout(panel_width: f32, num_channels: usize) -> ScopeLayout {
     };
     let total_gap = (cols - 1) as f32 * CELL_GAP;
     let cell_width = ((panel_width - total_gap) / cols as f32).clamp(MIN_CELL_WIDTH, MAX_CELL_WIDTH);
-    let cell_height = cell_width * 0.53;
+    let cell_height = 42.0;
     let rows = (num_channels + cols - 1) / cols;
     ScopeLayout { cols, rows, cell_width, cell_height }
 }
@@ -75,7 +75,7 @@ pub fn compute_scope_height(panel_width: f32, num_channels: usize) -> f32 {
 pub fn draw_oscilloscope(
     ui: &mut egui::Ui,
     playback_state: &AtomicPlaybackState,
-    _theme: &TrackerTheme,
+    theme: &TrackerTheme,
     num_channels: usize,
 ) {
     if num_channels == 0 {
@@ -92,7 +92,7 @@ pub fn draw_oscilloscope(
     );
 
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(8, 8, 8));
+    painter.rect_filled(rect, 0.0, theme.scope_bg);
 
     for ch in 0..num_channels {
         let col = ch % layout.cols;
@@ -106,13 +106,13 @@ pub fn draw_oscilloscope(
         );
 
         let cell_painter = ui.painter_at(cell_rect);
-        cell_painter.rect_filled(cell_rect, 1.0, egui::Color32::from_rgb(12, 12, 14));
+        cell_painter.rect_filled(cell_rect, 1.0, theme.scope_cell_bg);
 
         let mid_y = cell_rect.center().y;
 
         cell_painter.line_segment(
             [egui::pos2(cell_rect.left(), mid_y), egui::pos2(cell_rect.right(), mid_y)],
-            egui::Stroke::new(0.5, egui::Color32::from_rgb(35, 35, 40)),
+            egui::Stroke::new(0.5, theme.grid_line),
         );
 
         let label = format!("{}", ch + 1);
@@ -121,7 +121,7 @@ pub fn draw_oscilloscope(
             egui::Align2::LEFT_TOP,
             &label,
             egui::FontId::monospace(7.0),
-            egui::Color32::from_rgb(70, 70, 80),
+            theme.fg_dim,
         );
 
         let (left, right) = playback_state.read_channel_scope(ch);

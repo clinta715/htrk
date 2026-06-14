@@ -183,7 +183,17 @@ impl HtrkCore {
         #[cfg(feature = "audio_debug")]
         crate::debug_log!("[CMD] {:?}", cmd);
         if let Some(ref mut sender) = self.command_sender {
-            sender.send(cmd);
+            if !sender.send(cmd.clone()) {
+                // Buffer full — retry with yield to let audio callback drain.
+                // This prevents silent drops that cause UI/audio engine desync.
+                for _ in 0..100 {
+                    std::thread::yield_now();
+                    if sender.send(cmd.clone()) {
+                        return;
+                    }
+                }
+                eprintln!("[WARN] Audio command buffer full, command dropped: {:?}", cmd);
+            }
         }
     }
 

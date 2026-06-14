@@ -32,30 +32,26 @@ pub fn draw_sample_editor(
     ui: &mut egui::Ui,
     module: &Module,
     selected_sample: &mut usize,
-    _theme: &TrackerTheme,
+    theme: &TrackerTheme,
     selection: &mut Option<(usize, usize)>,
     clipboard: &mut Option<Arc<Vec<f32>>>,
     amplify_factor: &mut f32,
     playback_state: &AtomicPlaybackState,
+    sample_split: &mut f32,
 ) -> Option<SampleEditEvent> {
     let mut event = None;
 
     ui.horizontal(|ui| {
+        let total_w = ui.available_width();
+        let list_w = (total_w * *sample_split).max(120.0);
+
         // Sample List
         ui.vertical(|ui| {
-            ui.set_width(220.0);
+            ui.set_width(list_w);
             ui.set_height(ui.available_height());
 
             ui.horizontal(|ui| {
                 ui.heading("Samples");
-                if ui.button("<<").clicked() && *selected_sample > 1 {
-                    *selected_sample -= 1;
-                    *selection = None;
-                }
-                if ui.button(">>").clicked() && *selected_sample + 1 < module.samples.len() {
-                    *selected_sample += 1;
-                    *selection = None;
-                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Open...").clicked() {
                         event = Some(SampleEditEvent::ImportSample);
@@ -72,86 +68,135 @@ pub fn draw_sample_editor(
                     if num_samples <= 1 {
                         ui.label("No samples");
                     } else {
+                        let row_h = 18.0_f32;
+                        let mono_font = egui::FontId::monospace(11.0);
+                        let char_w = ui
+                            .painter()
+                            .layout("0".to_string(), mono_font.clone(), egui::Color32::WHITE, f32::INFINITY)
+                            .size()
+                            .x;
                         for i in 1..num_samples {
                             let is_selected = i == *selected_sample;
                             let sample = &module.samples[i];
                             let has_data = !sample.data.is_empty();
                             let has_name = !sample.name.is_empty();
-
-                            let name = if has_name { sample.name.as_str() } else { "" };
+                            let name = if has_name { sample.name.as_str() } else { "---" };
 
                             let len_str = if sample.data.len() >= 1_048_576 {
                                 format!("{:.1}MB", sample.data.len() as f64 / 1_048_576.0)
                             } else if sample.data.len() >= 1024 {
                                 format!("{:.1}KB", sample.data.len() as f64 / 1024.0)
-                            } else if sample.data.len() > 0 {
-                                format!("{}B", sample.data.len())
+                            } else if has_data {
+                                format!("{}smp", sample.data.len())
                             } else {
                                 String::new()
                             };
 
                             let loop_info = match sample.loop_type {
                                 crate::sequencer::sample::LoopType::None => "",
-                                crate::sequencer::sample::LoopType::Forward => " [F]",
-                                crate::sequencer::sample::LoopType::PingPong => " [PP]",
-                                crate::sequencer::sample::LoopType::Backward => " [B]",
+                                crate::sequencer::sample::LoopType::Forward => " · fwd",
+                                crate::sequencer::sample::LoopType::PingPong => " · pong",
+                                crate::sequencer::sample::LoopType::Backward => " · bwd",
                             };
 
                             let detail = if has_data {
-                                format!(" | {} | {}Hz{}", len_str, sample.sample_rate, loop_info)
+                                format!("{} · {}Hz{}", len_str, sample.sample_rate, loop_info)
                             } else {
                                 String::new()
                             };
 
-                            let is_playing = !playback_state.sample_positions_for(i).is_empty();
-
-                            let play_dot = if is_playing { "  " } else { "  " };
-                            let label = format!("{}{:02X}: {}{}", play_dot, i, name, detail);
+                            let positions = playback_state.sample_positions_for(i);
+                            let is_playing = !positions.is_empty();
 
                             let bg = if is_selected {
-                                egui::Color32::from_rgb(60, 60, 120)
+                                theme.bg_selected
                             } else if is_playing {
-                                egui::Color32::from_rgb(30, 30, 40)
-                            } else if has_data {
-                                egui::Color32::from_rgb(24, 24, 32)
+                                theme.bg_playback
                             } else {
-                                egui::Color32::from_rgb(16, 16, 24)
+                                theme.bg_default
                             };
-
                             let fg = if is_selected {
-                                egui::Color32::from_rgb(255, 255, 255)
-                            } else if is_playing {
-                                egui::Color32::from_rgb(220, 220, 240)
+                                theme.fg_note
                             } else if has_data || has_name {
-                                egui::Color32::from_rgb(200, 200, 220)
+                                theme.channel_header_fg
                             } else {
-                                egui::Color32::from_rgb(80, 80, 100)
+                                theme.fg_note_empty
                             };
 
-                            let response = ui.add_sized(
-                                [ui.available_width(), 16.0],
-                                egui::Label::new(
-                                    egui::RichText::new(label)
-                                        .font(egui::FontId::monospace(12.0))
-                                        .color(fg)
-                                        .background_color(bg),
-                                )
-                                .sense(egui::Sense::click()),
+                            let (rect, response) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), row_h),
+                                egui::Sense::click(),
                             );
+                            let painter = ui.painter_at(rect);
+                            painter.rect_filled(rect, 3.0, bg);
+
+                            let text_x = rect.left() + 10.0;
+                            let primary = format!("{:02X}: {}", i, name);
+                            let avail_w = (rect.right() - 76.0 - 8.0 - text_x).max(40.0);
+                            let primary = if primary.chars().count() as f32 * char_w <= avail_w {
+                                primary
+                            } else {
+                                let take = ((avail_w / char_w).floor() as usize).saturating_sub(1).max(1);
+                                let trunc: String = primary.chars().take(take).collect();
+                                format!("{trunc}\u{2026}")
+                            };
+                            let prim_w = painter
+                                .layout(primary.clone(), mono_font.clone(), fg, f32::INFINITY)
+                                .size()
+                                .x;
+                            painter.text(
+                                egui::pos2(text_x, rect.center().y),
+                                egui::Align2::LEFT_CENTER,
+                                primary,
+                                mono_font.clone(),
+                                fg,
+                            );
+
+                            if has_data && !detail.is_empty() {
+                                let dw = painter
+                                    .layout(detail.clone(), egui::FontId::monospace(9.0), theme.fg_note_empty, f32::INFINITY)
+                                    .size()
+                                    .x;
+                                let dx = text_x + prim_w + 8.0;
+                                if dx + dw < rect.right() - 76.0 {
+                                    painter.text(
+                                        egui::pos2(dx, rect.center().y),
+                                        egui::Align2::LEFT_CENTER,
+                                        detail,
+                                        egui::FontId::monospace(9.0),
+                                        theme.fg_note_empty,
+                                    );
+                                }
+                            }
+
+                            if has_data {
+                                crate::ui::sample_palette::draw_waveform_thumbnail(
+                                    &painter,
+                                    rect,
+                                    &sample.data,
+                                    is_selected,
+                                    &positions,
+                                    theme,
+                                );
+                            }
+
+                            if is_selected || is_playing {
+                                let bar = if is_selected { theme.fg_volume } else { theme.playback_position_line };
+                                painter.rect_filled(
+                                    egui::Rect::from_min_size(
+                                        egui::pos2(rect.left(), rect.top()),
+                                        egui::vec2(3.0, rect.height()),
+                                    ),
+                                    0.0,
+                                    bar,
+                                );
+                            }
 
                             if response.clicked() {
                                 *selected_sample = i;
                                 *selection = None;
                             }
-                            if is_playing {
-                                let painter = ui.painter_at(response.rect);
-                                painter.circle_filled(
-                                    egui::pos2(response.rect.left() + 8.0, response.rect.center().y),
-                                    3.0,
-                                    _theme.playback_position_line,
-                                );
-                            }
-                            if has_data && i > 0 {
+                            if has_data {
                                 response.context_menu(|ui| {
                                     if ui.button("Export Sample...").clicked() {
                                         event = Some(SampleEditEvent::ExportSample(i));
@@ -164,7 +209,7 @@ pub fn draw_sample_editor(
                 });
         });
 
-        ui.separator();
+        crate::ui::draw_vertical_splitter(ui, total_w, sample_split, 0.15, 0.70, theme);
 
         // Sample Editor Main Area
         if let Some(sample) = module.samples.get(*selected_sample) {
@@ -198,7 +243,7 @@ pub fn draw_sample_editor(
                         selection,
                         *selected_sample,
                         &playback_positions,
-                        _theme,
+                        theme,
                     ) {
                         match w_event {
                             crate::ui::waveform::WaveformEvent::LoopStartChanged(pos) => {
@@ -212,10 +257,12 @@ pub fn draw_sample_editor(
                 });
 
                 ui.horizontal(|ui| {
+                    let col_w = ui.available_width() / 3.0;
+
                     // Properties Left Column
                     ui.vertical(|ui| {
                         ui.group(|ui| {
-                            ui.set_width(200.0);
+                            ui.set_min_width(col_w);
                             ui.heading("Playback");
                             egui::Grid::new(format!("sample_playback_{}", *selected_sample)).show(ui, |ui| {
                                 ui.label("Default Vol:");
@@ -245,7 +292,7 @@ pub fn draw_sample_editor(
                     // Properties Middle Column
                     ui.vertical(|ui| {
                         ui.group(|ui| {
-                            ui.set_width(200.0);
+                            ui.set_min_width(col_w);
                             ui.heading("Tuning");
                             egui::Grid::new(format!("sample_tuning_{}", *selected_sample)).show(ui, |ui| {
                                 ui.label("Relative Note:");
@@ -272,7 +319,7 @@ pub fn draw_sample_editor(
                     // Properties Right Column (Loops)
                     ui.vertical(|ui| {
                         ui.group(|ui| {
-                            ui.set_width(250.0);
+                            ui.set_min_width(col_w);
                             ui.heading("Loop");
                             egui::Grid::new(format!("sample_loop_{}", *selected_sample)).show(ui, |ui| {
                                 ui.label("Type:");
@@ -313,6 +360,7 @@ pub fn draw_sample_editor(
                     let has_clip = clipboard.is_some();
                     let len = sample.data.len();
 
+                    ui.label(egui::RichText::new("Clipboard:").size(10.0).color(theme.fg_dim));
                     if ui.add_enabled(has_sel, egui::Button::new("Cut")).clicked() {
                         if let Some((s, e)) = *selection {
                             event = Some(SampleEditEvent::CutRegion(s.min(e), s.max(e)));
@@ -329,6 +377,7 @@ pub fn draw_sample_editor(
                         event = Some(SampleEditEvent::PasteRegion(pos));
                     }
                     ui.separator();
+                    ui.label(egui::RichText::new("Process:").size(10.0).color(theme.fg_dim));
                     if ui.add_enabled(has_sel, egui::Button::new("Crop")).clicked() {
                         if let Some((s, e)) = *selection {
                             event = Some(SampleEditEvent::CropRegion(s.min(e), s.max(e)));
@@ -353,6 +402,7 @@ pub fn draw_sample_editor(
                         }
                     }
                     ui.separator();
+                    ui.label(egui::RichText::new("Destructive:").size(10.0).color(theme.fg_dim));
                     if len > 0 && ui.button("Trim").clicked() {
                         event = Some(SampleEditEvent::TrimSilence);
                     }

@@ -177,6 +177,12 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         egui::Key::ArrowDown => {
                             if app.current_octave > 0 { app.current_octave -= 1; }
                         }
+                        egui::Key::ArrowLeft => {
+                            app.change_selected_sample(-1);
+                        }
+                        egui::Key::ArrowRight => {
+                            app.change_selected_sample(1);
+                        }
                         egui::Key::Space => {
                             app.cycle_spacing_mode();
                         }
@@ -322,7 +328,11 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     }
                     egui::Key::Home => {
                         app.core.selection = None;
-                        app.core.cursor.row = 0;
+                        if app.core.cursor.row == 0 && app.core.cursor.channel > 0 {
+                            app.core.cursor.channel = 0;
+                        } else {
+                            app.core.cursor.row = 0;
+                        }
                         app.ensure_cursor_visible();
                     }
                     egui::Key::End => {
@@ -437,6 +447,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     }
                     egui::Key::F6 => {
                         app.send_command(crate::audio::commands::AudioCommand::SetPlayMode(PlayMode::Pattern));
+                        app.send_command(crate::audio::commands::AudioCommand::Play);
                     }
                     egui::Key::F7 => {
                         app.send_command(crate::audio::commands::AudioCommand::SetPlayMode(PlayMode::Order));
@@ -459,17 +470,13 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         }
                     }
                     egui::Key::Escape => {
-                        app.core.selection = None;
+                        app.edit_mode = !app.edit_mode;
                     }
                     egui::Key::OpenBracket => {
-                        app.skip_to_prev_pattern();
+                        if app.current_octave > 0 { app.current_octave -= 1; }
                     }
                     egui::Key::CloseBracket => {
-                        app.skip_to_next_pattern();
-                    }
-                    egui::Key::Comma => {
-                        app.edit_mask_instrument = !app.edit_mask_instrument;
-                        app.edit_mask_volume = app.edit_mask_instrument;
+                        if app.current_octave < 9 { app.current_octave += 1; }
                     }
                     egui::Key::Num0 if modifiers.alt => { app.cursor_skip = 0; }
                     egui::Key::Num1 if modifiers.alt => { app.cursor_skip = 1; }
@@ -483,8 +490,24 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     egui::Key::Num9 if modifiers.alt => { app.cursor_skip = 9; }
                     egui::Key::Minus if !modifiers.alt => { app.skip_to_prev_pattern(); }
                     egui::Key::Equals if !modifiers.alt => { app.skip_to_next_pattern(); }
+                    egui::Key::Plus => { app.skip_to_next_pattern(); }
                     egui::Key::C if modifiers.alt && app.edit_mode => { app.copy_selection(); }
                     egui::Key::P if modifiers.alt && app.edit_mode => { app.paste_at_cursor(); }
+                    egui::Key::V if modifiers.alt && app.edit_mode => { app.paste_at_cursor(); }
+                    egui::Key::X if modifiers.alt && app.edit_mode => { app.cut_selection(); }
+                    egui::Key::B if modifiers.alt => { app.mark_block_begin(); }
+                    egui::Key::E if modifiers.alt => { app.mark_block_end(); }
+                    egui::Key::L if modifiers.alt => {
+                        let now = std::time::Instant::now();
+                        let within = app.alt_l_last.map_or(false, |t| now.duration_since(t) < std::time::Duration::from_millis(600));
+                        app.alt_l_count = if within { app.alt_l_count % 3 + 1 } else { 1 };
+                        app.alt_l_last = Some(now);
+                        match app.alt_l_count {
+                            2 => app.select_line(),
+                            3 => app.select_all(),
+                            _ => app.select_current_cell(),
+                        }
+                    }
                     egui::Key::Z if modifiers.alt && app.edit_mode => {
                         if app.core.selection.is_some() {
                             app.handle_context_menu_action(ContextMenuAction::Reverse);
@@ -525,57 +548,85 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
     });
 }
 
+fn is_value_char(sub: SubColumn, up: char) -> bool {
+    if sub.accepts_decimal() {
+        up.is_ascii_digit()
+    } else if sub == SubColumn::EffectType {
+        up.is_ascii_hexdigit() || matches!(up, 'P' | 'Z' | 'S' | 'R' | 'X')
+    } else if sub.accepts_hex() {
+        up.is_ascii_hexdigit()
+    } else {
+        false
+    }
+}
+
 fn handle_text_input(app: &mut HtrkApp, ch: char) {
-    if app.current_pattern().is_none() {
+    let up = ch.to_ascii_uppercase();
+    let sub = app.core.cursor.sub_column;
+    let on_note = sub.accepts_note();
+    let has_pattern = app.current_pattern().is_some();
+
+    // Tracker piano keyboard (Impulse/Scream Tracker style). The lower row
+    // (Z S X D C V G B H N J M) is the current octave and the upper row
+    // (Q 2 W 3 E R 5 T 6 Y 7 U) is one octave up. A note key plays the selected
+    // sample whenever it is pressed — regardless of cursor column or edit/view
+    // mode — so the keyboard works as a live "jam" instrument.
+    let note_key = NOTE_KEYS_LOWER
+        .iter()
+        .find_map(|(key, tone)| {
+            let kc = key.name();
+            (kc.len() == 1 && kc.chars().next() == Some(up))
+                .then(|| app.current_octave as u8 * 12 + tone)
+        })
+        .or_else(|| {
+            NOTE_KEYS_UPPER.iter().find_map(|(key, tone)| {
+                let kc = key.name();
+                (kc.len() == 1 && kc.chars().next() == Some(up))
+                    .then(|| (app.current_octave as u8 + 1) * 12 + tone)
+            })
+        });
+
+    // While editing a value column, keys that are legitimate value entries
+    // (digits on decimal columns; hex digits or effect letters on FX columns)
+    // are consumed as values instead of triggering a note preview.
+    let value_consumed = app.edit_mode && has_pattern && !on_note && is_value_char(sub, up);
+
+    if let Some(nk) = note_key {
+        if !value_consumed {
+            if !app.preview_browser_sample(nk) {
+                preview_note(app, nk);
+                if on_note && app.edit_mode && has_pattern {
+                    let note = Note::On(nk);
+                    let mut new_cell = app.get_cell_at_cursor();
+                    new_cell.note = note;
+                    new_cell.instrument = Some(app.core.selected_instrument as u8);
+                    app.set_cell_at_cursor(new_cell);
+                    app.core.last_entered_cell = Some(new_cell);
+                    app.advance_cursor_down(app.cursor_skip as usize);
+                }
+            }
+            return;
+        }
+    } else if on_note && ch == '.' && app.edit_mode && has_pattern {
+        let mut new_cell = app.get_cell_at_cursor();
+        new_cell.note = Note::Off;
+        app.set_cell_at_cursor(new_cell);
+        app.core.last_entered_cell = Some(new_cell);
+        app.advance_cursor_down(app.cursor_skip as usize);
         return;
     }
 
-    if app.core.cursor.sub_column.accepts_note() {
-        for (key, tone) in NOTE_KEYS_LOWER.iter() {
-            let key_char = key.name();
-            if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
-                let note_key = app.current_octave as u8 * 12 + tone;
-                preview_note(app, note_key);
-                if app.edit_mode {
-                    let note = Note::On(note_key);
-                    let mut new_cell = app.get_cell_at_cursor();
-                    new_cell.note = note;
-                    new_cell.instrument = Some(app.core.selected_instrument as u8);
-                    app.set_cell_at_cursor(new_cell);
-                    app.core.last_entered_cell = Some(new_cell);
-                    app.advance_cursor_down(app.cursor_skip as usize);
-                }
-                return;
-            }
+    if ch == ',' || ch == '.' {
+        let delta = if ch == ',' { -1 } else { 1 };
+        if matches!(sub, SubColumn::InstrumentTens | SubColumn::InstrumentOnes) {
+            app.change_selected_instrument(delta);
+        } else {
+            app.change_selected_sample(delta);
         }
-        for (key, tone) in NOTE_KEYS_UPPER.iter() {
-            let key_char = key.name();
-            if key_char.len() == 1 && key_char.chars().next() == Some(ch.to_ascii_uppercase()) {
-                let note_key = (app.current_octave as u8 + 1) * 12 + tone;
-                preview_note(app, note_key);
-                if app.edit_mode {
-                    let note = Note::On(note_key);
-                    let mut new_cell = app.get_cell_at_cursor();
-                    new_cell.note = note;
-                    new_cell.instrument = Some(app.core.selected_instrument as u8);
-                    app.set_cell_at_cursor(new_cell);
-                    app.core.last_entered_cell = Some(new_cell);
-                    app.advance_cursor_down(app.cursor_skip as usize);
-                }
-                return;
-            }
-        }
-        if ch == '.' && app.edit_mode {
-            let mut new_cell = app.get_cell_at_cursor();
-            new_cell.note = Note::Off;
-            app.set_cell_at_cursor(new_cell);
-            app.core.last_entered_cell = Some(new_cell);
-            app.advance_cursor_down(app.cursor_skip as usize);
-            return;
-        }
+        return;
     }
 
-    if !app.edit_mode {
+    if !has_pattern || !app.edit_mode {
         return;
     }
 
@@ -691,23 +742,6 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
                 app.advance_cursor_down(app.cursor_skip as usize);
             }
         }
-    }
-
-    if ch == '.' && !app.core.cursor.sub_column.accepts_note() {
-        let mut cell = app.get_cell_at_cursor();
-        match app.core.cursor.sub_column {
-            SubColumn::InstrumentTens | SubColumn::InstrumentOnes => {
-                cell.instrument = None;
-            }
-            SubColumn::VolumeTens | SubColumn::VolumeOnes => {
-                cell.volume = None;
-            }
-            SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => {
-                cell.effect = Effect::None;
-            }
-            SubColumn::Note => {}
-        }
-        app.set_cell_at_cursor(cell);
     }
 }
 

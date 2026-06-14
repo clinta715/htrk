@@ -796,13 +796,13 @@ fn draw_automation_cell(
     let normalized = point_value.clamp(0.0, 1.0);
     let dot_y = y + metrics.row_height * (1.0 - normalized);
 
-    painter.rect_filled(cell_rect, 0.0, egui::Color32::from_rgba_premultiplied(15, 25, 40, 180));
+    painter.rect_filled(cell_rect, 0.0, theme.automation_overlay_bg);
 
     if has_point {
-        painter.circle_filled(Pos2::new(fx_x + fx_w * 0.5, dot_y), 3.0, egui::Color32::from_rgb(120, 200, 255));
+        painter.circle_filled(Pos2::new(fx_x + fx_w * 0.5, dot_y), 3.0, theme.automation_point);
         let hex_val = (normalized * 255.0) as u8;
         let val_text = format!("{:02X}", hex_val);
-        let val_color = egui::Color32::from_rgb(160, 220, 255);
+        let val_color = theme.automation_value_text;
         painter.text(
             Pos2::new(fx_x, center_y),
             egui::Align2::LEFT_CENTER,
@@ -822,16 +822,16 @@ fn draw_automation_cell(
             egui::Align2::LEFT_CENTER,
             interp_char,
             egui::FontId::monospace(metrics.font_size * 0.7),
-            egui::Color32::from_rgb(100, 140, 180),
+            theme.fg_dim,
         );
     } else {
         let line_x = fx_x + fx_w * 0.5;
-        let line_color = egui::Color32::from_rgba_premultiplied(80, 120, 160, 100);
+        let line_color = theme.automation_guide_line;
         painter.line_segment(
             [Pos2::new(line_x, y), Pos2::new(line_x, y + metrics.row_height)],
             Stroke::new(0.5, line_color),
         );
-        painter.circle_filled(Pos2::new(line_x, dot_y), 1.5, egui::Color32::from_rgba_premultiplied(80, 140, 200, 120));
+        painter.circle_filled(Pos2::new(line_x, dot_y), 1.5, theme.automation_guide_line);
     }
 }
 

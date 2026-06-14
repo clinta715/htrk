@@ -229,6 +229,34 @@ impl AudioEngine {
                 self.sequencer.state.sample_counter += chunk as f64;
                 samples_done += chunk;
             }
+        } else {
+            // Sequencer is stopped, but still render any active voices so that
+            // preview/jam notes (and release tails) are audible.
+            let muted_channels: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.muted).collect();
+            let solo_channels: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.solo).collect();
+            let has_solo = solo_channels.iter().any(|&s| s);
+            let effective_mute: Vec<bool> = if has_solo {
+                muted_channels.iter().zip(solo_channels.iter())
+                    .map(|(muted, solo)| *muted || !*solo)
+                    .collect()
+            } else {
+                muted_channels
+            };
+            mixer::mix_voices_per_channel(
+                &mut self.sequencer.voice_pool.voices,
+                &mut self.mix_left[..frame_count],
+                &mut self.mix_right[..frame_count],
+                &mut self.ch_mix_left,
+                &mut self.ch_mix_right,
+                &mut self.pre_ch_mix_left,
+                &mut self.pre_ch_mix_right,
+                0,
+                frame_count,
+                self.master_volume,
+                self.interpolation,
+                &effective_mute,
+                self.output_sample_rate as f32,
+            );
         }
         #[cfg(feature = "audio_debug")]
         {
@@ -423,6 +451,9 @@ impl AudioEngine {
                 }
                 AudioCommand::TriggerPreviewNote { sample_index, note_key, volume, panning } => {
                     self.trigger_preview_note(sample_index, note_key, volume, panning);
+                }
+                AudioCommand::PreviewBuffer { data, sample_rate, note_key, volume, panning } => {
+                    self.trigger_preview_buffer(data, sample_rate, note_key, volume, panning);
                 }
                 AudioCommand::SetSendLevel { channel, send_index, level } => {
                     if channel < self.sequencer.state.channels.len() && send_index < self.send_buses.len() {
@@ -694,6 +725,36 @@ impl AudioEngine {
         );
     }
 
+    pub fn trigger_preview_buffer(&mut self, data: Arc<Vec<f32>>, sample_rate: u32, note_key: u8, volume: f32, panning: f32) {
+        if data.is_empty() {
+            return;
+        }
+        let note = Note::On(note_key);
+        let freq = match note.frequency() {
+            Some(f) => f,
+            None => return,
+        };
+        let playback_freq = compute_playback_frequency(freq, sample_rate, 0, 0);
+        let voice = &mut self.sequencer.voice_pool.voices[PREVIEW_VOICE_INDEX];
+        voice.trigger(
+            data,
+            sample_rate as f64,
+            crate::sequencer::sample::LoopType::None,
+            0,
+            0,
+            playback_freq,
+            self.output_sample_rate,
+            volume,
+            panning,
+            0,
+            None,
+            None,
+            note,
+            NewNoteAction::NoteCut,
+            0,
+        );
+    }
+
     fn apply_pending_send_params(&mut self) {
         for (send_index, param, value) in self.sequencer.pending_send_fx_params.drain(..) {
             if send_index < self.send_buses.len() {
@@ -815,6 +876,40 @@ mod tests {
     }
 
     #[test]
+    fn command_buffer_handles_backpressure_without_drop() {
+        let state = Arc::new(AtomicPlaybackState::default());
+        let (mut engine, mut sender) = create_engine_and_sender(state.clone(), 48000, 2);
+
+        // Fill buffer to capacity — leave 1 slot for our test command
+        let fill_count = COMMAND_BUFFER_SIZE - 1;
+        for i in 0..fill_count {
+            assert!(
+                sender.send(AudioCommand::SetMasterVolume(0.5)),
+                "fill iteration {i}: buffer should accept {fill_count} entries"
+            );
+        }
+
+        // The buffer is now full. Send with retry (simulating send_command pattern).
+        let module = Arc::new(crate::sequencer::Module::default());
+        let mut delivered = false;
+        for _ in 0..=100 {
+            if sender.send(AudioCommand::LoadModule(module.clone())) {
+                delivered = true;
+                break;
+            }
+            // Drain a bit so the retry can succeed
+            engine.process_callback(&mut [0.0f32; 512]);
+        }
+        assert!(delivered, "LoadModule should eventually deliver after draining");
+
+        // Process remaining commands to ensure LoadModule is consumed
+        for _ in 0..(fill_count / 256 + 2) {
+            engine.process_callback(&mut [0.0f32; 512]);
+        }
+        assert!(engine.module.is_some(), "LoadModule must be consumed by engine");
+    }
+
+    #[test]
     fn compute_playback_frequency_c5_at_c5speed() {
         let c5_freq = 440.0 * 2.0_f64.powf((60.0 - 69.0) / 12.0);
         let freq = compute_playback_frequency(c5_freq, 8363, 0, 0);
@@ -864,5 +959,40 @@ mod tests {
         engine.process_callback(&mut [0.0f32; 512]);
 
         assert!(state.playing.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn preview_note_audible_while_stopped() {
+        let state = Arc::new(AtomicPlaybackState::default());
+        let (mut engine, mut sender) = create_engine_and_sender(state, 48000, 2);
+
+        let mut module = crate::sequencer::Module::default();
+        let sample_data: Vec<f32> = (0..4800)
+            .map(|i| (2.0 * std::f64::consts::PI * 440.0 * i as f64 / 48000.0).sin() as f32)
+            .collect();
+        module.samples.push(crate::sequencer::Sample {
+            data: Arc::new(sample_data),
+            sample_rate: 48000,
+            ..Default::default()
+        });
+        let preview_idx = module.samples.len() - 1;
+
+        sender.send(AudioCommand::LoadModule(Arc::new(module)));
+        engine.process_callback(&mut [0.0f32; 512]); // consume LoadModule
+
+        // Stopped with no active voices -> silence.
+        let mut output = vec![0.0f32; 512];
+        engine.process_callback(&mut output);
+        assert!(output.iter().all(|&s| s == 0.0),
+            "should be silent when stopped with no active voices");
+
+        // Trigger a preview note while still stopped.
+        engine.trigger_preview_note(preview_idx, 60, 0.75, 0.5);
+
+        // The preview voice must render even though the sequencer is stopped.
+        let mut output = vec![0.0f32; 512];
+        engine.process_callback(&mut output);
+        assert!(output.iter().any(|&s| s != 0.0),
+            "preview note must be audible while the sequencer is stopped");
     }
 }

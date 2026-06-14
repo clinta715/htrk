@@ -28,10 +28,11 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             shortcut_row(ui, "Shift+Left/Right", "Extend selection by channel");
                             shortcut_row(ui, "Alt+Up/Down", "Transpose ±1 semitone");
                             shortcut_row(ui, "Tab / Shift+Tab", "Next / prev channel");
-                            shortcut_row(ui, "- / =", "Prev / next pattern");
-                            shortcut_row(ui, "[ / ]", "Prev / next pattern");
+                            shortcut_row(ui, "- / =  (Numpad -/+)", "Prev / next pattern");
+                            shortcut_row(ui, "[ / ]", "Decrement / increment octave");
                             shortcut_row(ui, "PgUp / PgDn", "Scroll 16 rows");
-                            shortcut_row(ui, "Home / End", "Jump to first / last row");
+                            shortcut_row(ui, "Home", "Top of column; again = leftmost");
+                            shortcut_row(ui, "End", "Bottom of column");
                             ui.add_space(8.0);
 
                             section_header(ui, "PATTERN EDITING");
@@ -57,7 +58,6 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             section_header(ui, "EDITING");
                             shortcut_row(ui, "Ctrl+Z / Y", "Undo / Redo");
                             shortcut_row(ui, "Ctrl+A", "Select all");
-                            shortcut_row(ui, "Escape", "Clear selection");
                             ui.add_space(8.0);
 
                             section_header(ui, "TRANSPORT");
@@ -70,7 +70,7 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             ui.add_space(8.0);
 
                             section_header(ui, "CHANNEL");
-                            shortcut_row(ui, "F2", "Toggle edit mode (EDT / VIEW)");
+                            shortcut_row(ui, "Esc / F2", "Toggle edit mode (EDT / VIEW)");
                             shortcut_row(ui, "Alt+M", "Toggle mute channel");
                             shortcut_row(ui, "Alt+S", "Toggle solo channel");
                             ui.add_space(8.0);
@@ -86,14 +86,15 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
 
                             section_header(ui, "IT-STYLE FEATURES");
                             shortcut_row(ui, "Alt+0..9", "Set cursor skip value");
-                            shortcut_row(ui, ", (comma)", "Toggle edit mask (Instr+Vol)");
+                            shortcut_row(ui, ", / .", "Prev / next sample (inst col: instrument)");
                             shortcut_row(ui, "Space (stopped)", "Repeat last cell");
                             shortcut_row(ui, "Alt+N", "Toggle multichannel edit");
                             shortcut_row(ui, "Ctrl+Shift+Up/Dn", "Increase / Decrease octave");
                             ui.add_space(4.0);
                             section_header(ui, "BLOCK OPERATIONS");
-                            shortcut_row(ui, "Alt+C", "Copy block to clipboard");
-                            shortcut_row(ui, "Alt+P", "Paste clipboard");
+                            shortcut_row(ui, "Alt+B / Alt+E", "Mark block begin / end");
+                            shortcut_row(ui, "Alt+L (x2 / x3)", "Select line / whole pattern");
+                            shortcut_row(ui, "Alt+C / X / V", "Copy / Cut / Paste block");
                             shortcut_row(ui, "Alt+Z", "Reverse block");
                             shortcut_row(ui, "Alt+F", "Fill instrument");
                             shortcut_row(ui, "Alt+I", "Interpolate volume");
@@ -101,7 +102,7 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             shortcut_row(ui, "Alt+R", "Randomize notes/volume");
                             ui.add_space(4.0);
                             section_header(ui, "PATTERN");
-                            shortcut_row(ui, "- / =", "Prev / next pattern");
+                            shortcut_row(ui, "- / =  (Numpad -/+)", "Prev / next pattern");
                         });
 
                         columns[1].vertical(|ui| {
@@ -110,12 +111,13 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             shortcut_row(ui, "Q 2 W 3...", "Upper octave (C–U)");
                             shortcut_row(ui, "Ctrl+Up/Down", "Decrease / Increase octave");
                             shortcut_row(ui, ". (period)", "Note Off on Note col");
-                            shortcut_row(ui, ". (other cols)", "Clear field value");
                             shortcut_row(ui, "0-9 on Instr/Vol", "Decimal entry");
                             shortcut_row(ui, "0-9 A-F on Fx", "Hex entry");
                             ui.add_space(4.0);
                             section_header(ui, "AUDIO PREVIEW");
-                            shortcut_row(ui, "Qwerty keys (Note col)", "Play selected sample at pitch");
+                            shortcut_row(ui, "Z S X... / Q 2 W...", "Jam: play sample / preview browser file");
+                            shortcut_row(ui, "Ctrl+Shift+Left/Right", "Prev / next sample");
+                            shortcut_row(ui, "▶ Preview (file browser)", "Preview selected WAV at middle C");
                             ui.add_space(8.0);
 
                             section_header(ui, "SETTINGS (F10)");

@@ -118,7 +118,7 @@ pub fn draw_order_list(
                             egui::pos2(response.rect.left(), bar_y),
                             egui::pos2(response.rect.left() + response.rect.width() * progress, response.rect.bottom()),
                         );
-                        ui.painter().rect_filled(bar_rect, 0.0, egui::Color32::WHITE);
+                        ui.painter().rect_filled(bar_rect, 0.0, theme.order_playing);
                     }
 
                     if is_selected {

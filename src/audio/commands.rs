@@ -44,6 +44,14 @@ pub enum AudioCommand {
         panning: f32,
     },
 
+    PreviewBuffer {
+        data: Arc<Vec<f32>>,
+        sample_rate: u32,
+        note_key: u8,
+        volume: f32,
+        panning: f32,
+    },
+
     SetSendLevel { channel: usize, send_index: usize, level: f32 },
     SetSendReturnLevel { send_index: usize, level: f32 },
     SetSendFxParam { send_index: usize, param: u32, value: f32 },

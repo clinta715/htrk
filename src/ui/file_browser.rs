@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::sync::Arc;
 use std::hash::Hash;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
@@ -191,6 +192,22 @@ fn format_date(time: std::time::SystemTime) -> String {
     format!("{:02}/{:02}/{:02}", month, day, (year % 100) as u32)
 }
 
+const AUDIO_EXTS: [&str; 9] = ["wav", "mp3", "ogg", "flac", "it", "xm", "s3m", "mod", "669"];
+
+pub fn is_audio_entry(entry: &FileEntry) -> bool {
+    !entry.is_dir && AUDIO_EXTS.contains(&entry.extension.as_str())
+}
+
+fn detail_cell(ui: &mut egui_module::Ui, text: &str, width: f32, color: egui_module::Color32) {
+    ui.add_sized(
+        [width, 14.0],
+        egui_module::Label::new(
+            egui_module::RichText::new(text).font(egui_module::FontId::monospace(9.0)).color(color),
+        )
+        .truncate(),
+    );
+}
+
 fn wav_duration(path: &Path) -> Option<f64> {
     let mut file = fs::File::open(path).ok()?;
     let mut buf = [0u8; 12];
@@ -273,6 +290,8 @@ pub struct FileBrowser {
     pub view_mode: ViewMode,
     pub sort_by: SortBy,
     pub sort_descending: bool,
+    pub preview_sample: Option<(PathBuf, Arc<Vec<f32>>, u32)>,
+    pub preview_requested: bool,
 }
 
 impl Default for FileBrowser {
@@ -297,6 +316,8 @@ impl Default for FileBrowser {
             view_mode: ViewMode::Details,
             sort_by: SortBy::Name,
             sort_descending: false,
+            preview_sample: None,
+            preview_requested: false,
         }
     }
 }
@@ -399,6 +420,7 @@ impl FileBrowser {
         self.selected_index = 0;
         self.page = 0;
         self.duration_cache.clear();
+        self.preview_sample = None;
 
         if !self.current_path.exists() {
             return Ok(());
@@ -532,6 +554,20 @@ impl FileBrowser {
         }
     }
 
+    pub fn get_preview_data(&mut self, path: &PathBuf) -> Option<(Arc<Vec<f32>>, u32)> {
+        if let Some((p, data, rate)) = &self.preview_sample {
+            if p == path {
+                return Some((Arc::clone(data), *rate));
+            }
+        }
+        let bytes = fs::read(path).ok()?;
+        let sample = crate::formats::wav::import_wav(&bytes).ok()?;
+        let data = sample.data;
+        let rate = sample.sample_rate;
+        self.preview_sample = Some((path.clone(), Arc::clone(&data), rate));
+        Some((data, rate))
+    }
+
     pub fn select_index(&mut self, index: usize) {
         let page_entries = self.current_page_entries();
         if index < page_entries.len() {
@@ -581,7 +617,7 @@ impl FileBrowser {
         self.favorites.retain(|p| p != path);
     }
 
-    pub fn render(&mut self, ui: &mut Ui, config: Option<&mut crate::app_config::AppConfig>) -> Option<PathBuf> {
+    pub fn render(&mut self, ui: &mut Ui, config: Option<&mut crate::app_config::AppConfig>, theme: crate::ui::TrackerTheme) -> Option<PathBuf> {
         if !self.show {
             return None;
         }
@@ -687,7 +723,7 @@ impl FileBrowser {
                         ui.label(
                             egui_module::RichText::new("Favorites:")
                                 .font(egui_module::FontId::proportional(10.0))
-                                .color(egui_module::Color32::from_rgb(120, 120, 130)),
+                                .color(theme.fg_dim),
                         );
                         for fav in self.favorites.clone().iter() {
                             let name = fav.file_name()
@@ -701,10 +737,10 @@ impl FileBrowser {
                             let is_current = *fav == self.current_path;
                             let btn = if is_current {
                                 egui_module::RichText::new(format!("★ {}", short))
-                                    .color(egui_module::Color32::from_rgb(220, 200, 80))
+                                    .color(theme.order_selected)
                             } else {
                                 egui_module::RichText::new(format!("☆ {}", short))
-                                    .color(egui_module::Color32::from_rgb(150, 150, 160))
+                                    .color(theme.fg_dim)
                             };
                             if ui.button(btn).clicked() {
                                 self.navigate_to(fav);
@@ -741,7 +777,7 @@ impl FileBrowser {
                         ui.label(
                             egui_module::RichText::new(count_text)
                                 .font(egui_module::FontId::monospace(9.0))
-                                .color(egui_module::Color32::from_rgb(100, 100, 110)),
+                                .color(theme.fg_dim),
                         );
                     });
                 });
@@ -764,9 +800,9 @@ impl FileBrowser {
                     .show(ui, |ui| {
                         match self.view_mode {
                             ViewMode::List => {
-                                egui_module::Grid::new("file_entries")
+                                egui_module::Grid::new("file_entries_list")
                                     .striped(true)
-                                    .spacing(egui_module::vec2(4.0, 2.0))
+                                    .spacing(egui_module::vec2(2.0, 2.0))
                                     .show(ui, |ui| {
                                         for (vis_idx, (_orig_idx, entry)) in page_entries.iter().enumerate() {
                                             let is_selected = self.selected_index == vis_idx;
@@ -777,33 +813,29 @@ impl FileBrowser {
                                             };
                                             let response = ui.selectable_label(is_selected, &name_text);
 
-                                            if !entry.is_dir {
-                                                ui.with_layout(egui_module::Layout::right_to_left(egui_module::Align::Center), |ui| {
-                                                    let audio_exts = ["wav", "mp3", "ogg", "flac", "it", "xm", "s3m", "mod", "669"];
-                                                    if audio_exts.contains(&entry.extension.as_str()) {
-                                                        if let Some(dur) = self.get_duration(&entry.path) {
-                                                            ui.label(
-                                                                egui_module::RichText::new(format_duration(dur))
-                                                                    .font(egui_module::FontId::monospace(9.0))
-                                                                    .color(egui_module::Color32::from_rgb(100, 140, 180)),
-                                                            );
-                                                        }
-                                                    }
-                                                    ui.label(
-                                                        egui_module::RichText::new(entry.format_size())
-                                                            .font(egui_module::FontId::monospace(9.0))
-                                                            .color(egui_module::Color32::from_rgb(120, 120, 130)),
-                                                    );
-                                                });
+                                            if entry.is_dir {
+                                                detail_cell(ui, "DIR", 36.0, theme.fg_dimmer);
+                                                ui.end_row();
                                             } else {
-                                                ui.label(
-                                                    egui_module::RichText::new("DIR")
-                                                        .font(egui_module::FontId::monospace(9.0))
-                                                        .color(egui_module::Color32::from_rgb(90, 90, 100)),
-                                                );
+                                                let audio_exts = ["wav", "mp3", "ogg", "flac", "it", "xm", "s3m", "mod", "669"];
+                                                if audio_exts.contains(&entry.extension.as_str()) {
+                                                    if let Some(dur) = self.get_duration(&entry.path) {
+                                                        detail_cell(ui, &format_duration(dur), 56.0, theme.fg_instrument);
+                                                    } else {
+                                                        detail_cell(ui, "", 56.0, theme.fg_dim);
+                                                    }
+                                                } else {
+                                                    detail_cell(ui, "", 56.0, theme.fg_dim);
+                                                }
+                                                detail_cell(ui, &entry.extension.to_uppercase(), 44.0, theme.fg_dim);
+                                                detail_cell(ui, &entry.format_size(), 64.0, theme.fg_dim);
+                                                if let Some(modified) = entry.modified {
+                                                    detail_cell(ui, &format_date(modified), 76.0, theme.fg_dim);
+                                                } else {
+                                                    detail_cell(ui, "", 76.0, theme.fg_dim);
+                                                }
+                                                ui.end_row();
                                             }
-
-                                            ui.end_row();
 
                                             if response.clicked() {
                                                 self.select_index(vis_idx);
@@ -820,25 +852,19 @@ impl FileBrowser {
                             }
                             ViewMode::Details => {
                                 egui_module::Grid::new("file_entries_header")
-                                    .spacing(egui_module::vec2(4.0, 2.0))
+                                    .spacing(egui_module::vec2(2.0, 2.0))
                                     .show(ui, |ui| {
                                         ui.label(egui_module::RichText::new("Name").strong());
-                                        ui.with_layout(egui_module::Layout::right_to_left(egui_module::Align::Center), |ui| {
-                                            ui.set_width(60.0);
-                                            ui.label(egui_module::RichText::new("Duration").font(egui_module::FontId::monospace(9.0)));
-                                            ui.set_width(50.0);
-                                            ui.label(egui_module::RichText::new("Type").font(egui_module::FontId::monospace(9.0)));
-                                            ui.set_width(70.0);
-                                            ui.label(egui_module::RichText::new("Size").font(egui_module::FontId::monospace(9.0)));
-                                            ui.set_width(80.0);
-                                            ui.label(egui_module::RichText::new("Modified").font(egui_module::FontId::monospace(9.0)));
-                                        });
+                                        detail_cell(ui, "Dur", 56.0, theme.fg_dim);
+                                        detail_cell(ui, "Type", 44.0, theme.fg_dim);
+                                        detail_cell(ui, "Size", 64.0, theme.fg_dim);
+                                        detail_cell(ui, "Modified", 76.0, theme.fg_dim);
                                         ui.end_row();
                                     });
                                 ui.separator();
                                 egui_module::Grid::new("file_entries_details")
                                     .striped(true)
-                                    .spacing(egui_module::vec2(4.0, 2.0))
+                                    .spacing(egui_module::vec2(2.0, 2.0))
                                     .show(ui, |ui| {
                                         for (vis_idx, (_orig_idx, entry)) in page_entries.iter().enumerate() {
                                             let is_selected = self.selected_index == vis_idx;
@@ -849,63 +875,30 @@ impl FileBrowser {
                                             };
                                             let response = ui.selectable_label(is_selected, &name_text);
 
-                                            ui.with_layout(egui_module::Layout::right_to_left(egui_module::Align::Center), |ui| {
+                                            if entry.is_dir {
+                                                detail_cell(ui, "", 56.0, theme.fg_dim);
+                                                detail_cell(ui, "DIR", 44.0, theme.fg_dimmer);
+                                                detail_cell(ui, "", 64.0, theme.fg_dim);
+                                                detail_cell(ui, "", 76.0, theme.fg_dim);
+                                            } else {
                                                 let audio_exts = ["wav", "mp3", "ogg", "flac", "it", "xm", "s3m", "mod", "669"];
-                                                if !entry.is_dir {
-                                                    if audio_exts.contains(&entry.extension.as_str()) {
-                                                        if let Some(dur) = self.get_duration(&entry.path) {
-                                                            ui.set_width(60.0);
-                                                            ui.label(
-                                                                egui_module::RichText::new(format_duration(dur))
-                                                                    .font(egui_module::FontId::monospace(9.0))
-                                                                    .color(egui_module::Color32::from_rgb(100, 140, 180)),
-                                                            );
-                                                        } else {
-                                                            ui.set_width(60.0);
-                                                            ui.label("");
-                                                        }
+                                                if audio_exts.contains(&entry.extension.as_str()) {
+                                                    if let Some(dur) = self.get_duration(&entry.path) {
+                                                        detail_cell(ui, &format_duration(dur), 56.0, theme.fg_instrument);
                                                     } else {
-                                                        ui.set_width(60.0);
-                                                        ui.label("");
-                                                    }
-                                                    ui.set_width(50.0);
-                                                    ui.label(
-                                                        egui_module::RichText::new(entry.extension.to_uppercase())
-                                                            .font(egui_module::FontId::monospace(9.0))
-                                                            .color(egui_module::Color32::from_rgb(100, 100, 110)),
-                                                    );
-                                                    ui.set_width(70.0);
-                                                    ui.label(
-                                                        egui_module::RichText::new(entry.format_size())
-                                                            .font(egui_module::FontId::monospace(9.0))
-                                                            .color(egui_module::Color32::from_rgb(120, 120, 130)),
-                                                    );
-                                                    ui.set_width(80.0);
-                                                    if let Some(modified) = entry.modified {
-                                                        ui.label(
-                                                            egui_module::RichText::new(format_date(modified))
-                                                                .font(egui_module::FontId::monospace(9.0))
-                                                                .color(egui_module::Color32::from_rgb(100, 100, 110)),
-                                                        );
-                                                    } else {
-                                                        ui.label("");
+                                                        detail_cell(ui, "", 56.0, theme.fg_dim);
                                                     }
                                                 } else {
-                                                    ui.set_width(60.0);
-                                                    ui.label("");
-                                                    ui.set_width(50.0);
-                                                    ui.label(
-                                                        egui_module::RichText::new("DIR")
-                                                            .font(egui_module::FontId::monospace(9.0))
-                                                            .color(egui_module::Color32::from_rgb(90, 90, 100)),
-                                                    );
-                                                    ui.set_width(70.0);
-                                                    ui.label("");
-                                                    ui.set_width(80.0);
-                                                    ui.label("");
+                                                    detail_cell(ui, "", 56.0, theme.fg_dim);
                                                 }
-                                            });
-
+                                                detail_cell(ui, &entry.extension.to_uppercase(), 44.0, theme.fg_dim);
+                                                detail_cell(ui, &entry.format_size(), 64.0, theme.fg_dim);
+                                                if let Some(modified) = entry.modified {
+                                                    detail_cell(ui, &format_date(modified), 76.0, theme.fg_dim);
+                                                } else {
+                                                    detail_cell(ui, "", 76.0, theme.fg_dim);
+                                                }
+                                            }
                                             ui.end_row();
 
                                             if response.clicked() {
@@ -933,6 +926,11 @@ impl FileBrowser {
                         if !entry.is_dir {
                             if ui.button("Open").clicked() {
                                 selected_path = Some(entry.path.clone());
+                            }
+                            if is_audio_entry(entry) {
+                                if ui.button("▶ Preview").clicked() {
+                                    self.preview_requested = true;
+                                }
                             }
                             ui.label(format!("Size: {}", entry.format_size()));
                             let audio_exts = ["wav", "mp3", "ogg", "flac", "it", "xm", "s3m", "mod", "669"];
@@ -966,7 +964,7 @@ impl FileBrowser {
                         ui.label(
                             egui_module::RichText::new(page_label)
                                 .font(egui_module::FontId::monospace(9.0))
-                                .color(egui_module::Color32::from_rgb(100, 100, 110)),
+                                .color(theme.fg_dim),
                         );
                     });
                 });

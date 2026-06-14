@@ -14,7 +14,7 @@ use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::{Effect, Note, DEFAULT_CHANNELS, MAX_CHANNELS};
 use crate::ui::file_browser::{BrowserMode, FileBrowser};
-use crate::ui::pattern_grid::{ColumnVisibility, Selection, SubColumn, VISIBLE_ROWS};
+use crate::ui::pattern_grid::{ColumnVisibility, CursorPosition, Selection, SubColumn, VISIBLE_ROWS};
 use crate::ui::theme::ThemePreset;
 use crate::ui::TrackerTheme;
 
@@ -80,10 +80,14 @@ pub struct HtrkApp {
     pub(crate) send_bus_params: [[f32; 5]; NUM_SEND_BUSES],
     pub(crate) send_pre_fader: [bool; NUM_SEND_BUSES],
     pub(crate) automation_dragging: Option<(usize, f32)>,
+    pub(crate) alt_l_count: u8,
+    pub(crate) alt_l_last: Option<std::time::Instant>,
     pub(crate) automation_editor_state: crate::ui::automation_editor::AutomationEditorState,
     pub(crate) prev_channel_notes: [u16; 64],
     pub(crate) playback_split: f32,
     pub(crate) playback_zoom: u8,
+    pub(crate) sample_split: f32,
+    pub(crate) instrument_split: f32,
     pub(crate) devmcp: Arc<DevMcp>,
 }
 
@@ -114,6 +118,8 @@ impl Default for HtrkApp {
             cursor_skip: 1,
             edit_mask_instrument: true,
             edit_mask_volume: true,
+            alt_l_count: 0,
+            alt_l_last: None,
             multichannel_enabled: false,
             multichannel_channels: vec![false; DEFAULT_CHANNELS],
             channel_names: (0..DEFAULT_CHANNELS).map(|i| format!("Ch{}", i + 1)).collect(),
@@ -156,6 +162,8 @@ impl Default for HtrkApp {
             prev_channel_notes: [0; 64],
             playback_split: 0.35,
             playback_zoom: default_zoom,
+            sample_split: 0.30,
+            instrument_split: 0.15,
             devmcp: Arc::new(
                 DevMcp::new()
                     .verbose_logging(true)
@@ -484,6 +492,25 @@ impl HtrkApp {
         self.core.num_channels_checked()
     }
 
+    pub(crate) fn change_selected_sample(&mut self, delta: i32) {
+        let len = self.core.module.as_ref().map_or(0, |m| m.samples.len());
+        if len <= 1 {
+            return;
+        }
+        let next = (self.core.selected_sample as i32 + delta).clamp(1, (len - 1) as i32);
+        self.core.selected_sample = next as usize;
+        self.sample_selection = None;
+    }
+
+    pub(crate) fn change_selected_instrument(&mut self, delta: i32) {
+        let len = self.core.module.as_ref().map_or(0, |m| m.instruments.len());
+        if len <= 1 {
+            return;
+        }
+        let next = (self.core.selected_instrument as i32 + delta).clamp(1, (len - 1) as i32);
+        self.core.selected_instrument = next as usize;
+    }
+
     pub(crate) fn get_cell_at_cursor(&self) -> Cell {
         self.core.get_cell_at_cursor()
     }
@@ -630,6 +657,39 @@ impl HtrkApp {
         self.core.select_all();
     }
 
+    pub(crate) fn mark_block_begin(&mut self) {
+        let cur = self.core.cursor;
+        self.core.selection_anchor = Some(cur);
+        self.core.selection = Some(Selection { start: cur, end: cur });
+    }
+
+    pub(crate) fn mark_block_end(&mut self) {
+        if let Some(anchor) = self.core.selection_anchor {
+            self.core.selection = Some(Selection { start: anchor, end: self.core.cursor });
+        }
+    }
+
+    pub(crate) fn select_current_cell(&mut self) {
+        let cur = self.core.cursor;
+        self.core.selection_anchor = Some(cur);
+        self.core.selection = Some(Selection { start: cur, end: cur });
+    }
+
+    pub(crate) fn select_line(&mut self) {
+        let row = self.core.cursor.row;
+        let last_ch = self.num_channels().saturating_sub(1);
+        self.core.selection_anchor = Some(self.core.cursor);
+        self.core.selection = Some(Selection {
+            start: CursorPosition { row, channel: 0, sub_column: SubColumn::Note },
+            end: CursorPosition { row, channel: last_ch, sub_column: SubColumn::EffectParamLow },
+        });
+    }
+
+    pub(crate) fn cut_selection(&mut self) {
+        self.copy_selection();
+        self.delete_selection();
+    }
+
     pub(crate) fn transpose_selection(&mut self, delta: i8) {
         self.core.transpose_selection(delta);
     }
@@ -714,6 +774,36 @@ impl HtrkApp {
         self.core.clear_channel(ch);
     }
 
+    pub(crate) fn preview_browser_sample(&mut self, note_key: u8) -> bool {
+        use crate::ui::file_browser::BrowserMode;
+        if !self.file_browser.show || self.file_browser.mode != BrowserMode::Samples {
+            return false;
+        }
+        let entry = match self.file_browser.selected_entry() {
+            Some(e) => e.clone(),
+            None => return false,
+        };
+        if entry.is_dir {
+            return false;
+        }
+        let audio_exts = ["wav", "mp3", "ogg", "flac", "it", "xm", "s3m", "mod", "669"];
+        if !audio_exts.contains(&entry.extension.as_str()) {
+            return false;
+        }
+        let (data, sample_rate) = match self.file_browser.get_preview_data(&entry.path) {
+            Some(d) => d,
+            None => return false,
+        };
+        self.send_command(crate::audio::commands::AudioCommand::PreviewBuffer {
+            data,
+            sample_rate,
+            note_key,
+            volume: 0.75,
+            panning: 0.5,
+        });
+        true
+    }
+
 
 }
 
@@ -723,6 +813,7 @@ impl eframe::App for HtrkApp {
         let devmcp = self.devmcp.clone();
         let _guard = FrameGuard::new(devmcp.as_ref(), &ctx);
         ctx.set_zoom_factor(self.config.zoom_factor);
+        ctx.set_visuals(self.theme.to_visuals());
 
         if self.stream.is_none() && !self.audio_init_failed {
             self.init_audio();
@@ -966,7 +1057,7 @@ impl eframe::App for HtrkApp {
                 let cpu = self.core.playback_state.cpu_usage_pct.load(std::sync::atomic::Ordering::Relaxed);
                 let total_rows = self.current_pattern().map_or(64, |p| p.num_rows);
                 let hint = format!("Ins: {} | Smp: {}", self.core.selected_instrument, self.core.selected_sample);
-                crate::ui::status_bar::draw_status_bar(
+                let sample_delta = crate::ui::status_bar::draw_status_bar(
                     ui,
                     self.core.module.as_ref().map(|m| m.as_ref()),
                     self.core.selected_order,
@@ -978,10 +1069,14 @@ impl eframe::App for HtrkApp {
                     self.cursor_skip,
                     self.core.selected_instrument,
                     self.core.selected_sample,
+                    &self.core.playback_state,
                     self.edit_mode,
                     &hint,
                     &self.theme,
                 );
+                if let Some(d) = sample_delta {
+                    self.change_selected_sample(d);
+                }
             });
 
         egui::Panel::left("order_list")
@@ -1288,6 +1383,7 @@ impl eframe::App for HtrkApp {
                             &mut self.sample_clipboard,
                             &mut self.amplify_factor,
                             &self.core.playback_state,
+                            &mut self.sample_split,
                         ) {
                             crate::actions::handle_sample_edit(self, event);
                         }
@@ -1302,6 +1398,7 @@ impl eframe::App for HtrkApp {
                             &mut self.core.selected_sample,
                             &self.theme,
                             &self.core.playback_state,
+                            &mut self.instrument_split,
                         ) {
                             match event {
                                 crate::ui::instrument_editor::InstrumentEditEvent::SaveInstrument => {
@@ -1537,7 +1634,7 @@ impl eframe::App for HtrkApp {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .resizable(true)
                 .show(&ctx, |ui| {
-                    if let Some(path) = self.file_browser.render(ui, Some(&mut self.config)) {
+                    if let Some(path) = self.file_browser.render(ui, Some(&mut self.config), self.theme.clone()) {
                         let path_str = path.to_string_lossy().to_string();
                         let ext = path.extension()
                             .and_then(|e| e.to_str())
@@ -1550,6 +1647,10 @@ impl eframe::App for HtrkApp {
                         }
                     }
                 });
+            if self.file_browser.preview_requested {
+                self.file_browser.preview_requested = false;
+                self.preview_browser_sample(60);
+            }
             if !file_browser_open {
                 self.file_browser.close();
             }
