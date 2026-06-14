@@ -46,8 +46,32 @@ const NOTE_KEYS_UPPER: [(egui::Key, u8); 12] = [
 
 pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
     let modifiers = ctx.input(|i| i.modifiers);
+    let has_focus = ctx.memory(|m| m.focused().is_some());
+    let any_dialog_open = app.file_browser.show
+        || app.settings_state.open
+        || app.wav_export_state.open
+        || app.sample_export_dialog.is_some()
+        || app.show_about
+        || app.show_shortcuts;
 
-    if ctx.memory(|m| m.focused().is_some()) {
+    // Text events: processed unconditionally so note preview works even during dialog input.
+    // When a widget has focus, only play audio; skip cell editing.
+    ctx.input(|i| {
+        for event in &i.events {
+            if let egui::Event::Text(text) = event {
+                for ch in text.chars() {
+                    if has_focus {
+                        note_key_preview_only(app, ch);
+                    } else {
+                        handle_text_input(app, ch);
+                    }
+                }
+            }
+        }
+    });
+
+    // Focus gate: if a widget has focus, skip all key events.
+    if has_focus {
         return;
     }
 
@@ -183,7 +207,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         egui::Key::ArrowRight => {
                             app.change_selected_sample(1);
                         }
-                        egui::Key::Space => {
+                        egui::Key::Space if !any_dialog_open => {
                             app.cycle_spacing_mode();
                         }
                         egui::Key::L => {
@@ -234,76 +258,86 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
 
     ctx.input(|i| {
         for event in &i.events {
-            match event {
-                egui::Event::Key { key, pressed: true, .. } => match key {
+            if let egui::Event::Key { key, pressed: true, .. } = event {
+                match key {
                     egui::Key::ArrowDown => {
-                        if modifiers.ctrl {
-                            if app.current_octave > 0 {
-                                app.current_octave -= 1;
+                        if !any_dialog_open {
+                            if modifiers.ctrl {
+                                if app.current_octave > 0 {
+                                    app.current_octave -= 1;
+                                }
+                            } else if modifiers.shift {
+                                app.extend_selection_down();
+                            } else if modifiers.alt && app.edit_mode {
+                                app.transpose_selection(-1);
+                            } else {
+                                app.core.selection = None;
+                                app.advance_cursor_down(1);
                             }
-                        } else if modifiers.shift {
-                            app.extend_selection_down();
-                        } else if modifiers.alt && app.edit_mode {
-                            app.transpose_selection(-1);
-                        } else {
-                            app.core.selection = None;
-                            app.advance_cursor_down(1);
                         }
                     }
                     egui::Key::ArrowUp => {
-                        if modifiers.ctrl {
-                            if app.current_octave < 9 {
-                                app.current_octave += 1;
+                        if !any_dialog_open {
+                            if modifiers.ctrl {
+                                if app.current_octave < 9 {
+                                    app.current_octave += 1;
+                                }
+                            } else if modifiers.shift {
+                                app.extend_selection_up();
+                            } else if modifiers.alt && app.edit_mode {
+                                app.transpose_selection(1);
+                            } else {
+                                app.core.selection = None;
+                                app.advance_cursor_up(1);
                             }
-                        } else if modifiers.shift {
-                            app.extend_selection_up();
-                        } else if modifiers.alt && app.edit_mode {
-                            app.transpose_selection(1);
-                        } else {
-                            app.core.selection = None;
-                            app.advance_cursor_up(1);
                         }
                     }
                     egui::Key::ArrowRight => {
-                        if modifiers.alt {
-                            app.core.selection = None;
-                            let num_ch = app.num_channels();
-                            if app.core.cursor.channel < num_ch - 1 {
-                                app.core.cursor.channel += 1;
-                                app.core.cursor.sub_column = SubColumn::Note;
-                                app.ensure_cursor_visible();
+                        if !any_dialog_open {
+                            if modifiers.alt {
+                                app.core.selection = None;
+                                let num_ch = app.num_channels();
+                                if app.core.cursor.channel < num_ch - 1 {
+                                    app.core.cursor.channel += 1;
+                                    app.core.cursor.sub_column = SubColumn::Note;
+                                    app.ensure_cursor_visible();
+                                }
+                            } else if modifiers.shift {
+                                app.extend_selection_right();
+                            } else {
+                                app.core.selection = None;
+                                app.move_cursor_right();
                             }
-                        } else if modifiers.shift {
-                            app.extend_selection_right();
-                        } else {
-                            app.core.selection = None;
-                            app.move_cursor_right();
                         }
                     }
                     egui::Key::ArrowLeft => {
-                        if modifiers.alt {
-                            app.core.selection = None;
-                            if app.core.cursor.channel > 0 {
-                                app.core.cursor.channel -= 1;
-                                app.core.cursor.sub_column = SubColumn::Note;
-                                app.ensure_cursor_visible();
+                        if !any_dialog_open {
+                            if modifiers.alt {
+                                app.core.selection = None;
+                                if app.core.cursor.channel > 0 {
+                                    app.core.cursor.channel -= 1;
+                                    app.core.cursor.sub_column = SubColumn::Note;
+                                    app.ensure_cursor_visible();
+                                }
+                            } else if modifiers.shift {
+                                app.extend_selection_left();
+                            } else {
+                                app.core.selection = None;
+                                app.move_cursor_left();
                             }
-                        } else if modifiers.shift {
-                            app.extend_selection_left();
-                        } else {
-                            app.core.selection = None;
-                            app.move_cursor_left();
                         }
                     }
                     egui::Key::Tab => {
-                        app.core.selection = None;
-                        if modifiers.shift {
-                            app.core.cursor.channel = app.core.cursor.channel.saturating_sub(1);
-                        } else {
-                            app.core.cursor.channel += 1;
-                            app.core.cursor.channel = app.core.cursor.channel.min(app.num_channels_checked() - 1);
+                        if !any_dialog_open {
+                            app.core.selection = None;
+                            if modifiers.shift {
+                                app.core.cursor.channel = app.core.cursor.channel.saturating_sub(1);
+                            } else {
+                                app.core.cursor.channel += 1;
+                                app.core.cursor.channel = app.core.cursor.channel.min(app.num_channels_checked() - 1);
+                            }
+                            app.ensure_cursor_visible();
                         }
-                        app.ensure_cursor_visible();
                     }
                     egui::Key::M if modifiers.alt => {
                         app.core.toggle_mute(app.core.cursor.channel);
@@ -319,76 +353,57 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         }
                     }
                     egui::Key::PageUp => {
-                        app.core.selection = None;
-                        app.advance_cursor_up(16);
+                        if !any_dialog_open {
+                            app.core.selection = None;
+                            app.advance_cursor_up(16);
+                        }
                     }
                     egui::Key::PageDown => {
-                        app.core.selection = None;
-                        app.advance_cursor_down(16);
+                        if !any_dialog_open {
+                            app.core.selection = None;
+                            app.advance_cursor_down(16);
+                        }
                     }
                     egui::Key::Home => {
-                        app.core.selection = None;
-                        if app.core.cursor.row == 0 && app.core.cursor.channel > 0 {
-                            app.core.cursor.channel = 0;
-                        } else {
-                            app.core.cursor.row = 0;
-                        }
-                        app.ensure_cursor_visible();
-                    }
-                    egui::Key::End => {
-                        app.core.selection = None;
-                        if let Some(pattern) = app.current_pattern() {
-                            app.core.cursor.row = pattern.num_rows - 1;
+                        if !any_dialog_open {
+                            app.core.selection = None;
+                            if app.core.cursor.row == 0 && app.core.cursor.channel > 0 {
+                                app.core.cursor.channel = 0;
+                            } else {
+                                app.core.cursor.row = 0;
+                            }
                             app.ensure_cursor_visible();
                         }
                     }
-                    egui::Key::Backspace if app.edit_mode => {
-                        app.clear_cell_at_cursor();
-                    }
-                    egui::Key::Delete if modifiers.shift && app.edit_mode => {
-                        app.delete_track();
-                    }
-                    egui::Key::Delete if app.edit_mode => {
-                        if modifiers.alt {
-                            let selected_order = app.core.selected_order;
-                            let row = app.core.cursor.row;
-                            let can_delete = app.current_pattern().map_or(false, |p| p.num_rows > 1);
-                            if can_delete {
-                                let deleted_data: Vec<Cell> = app.current_pattern()
-                                    .map(|p| p.data[row].to_vec())
-                                    .unwrap_or_default();
-                                let pat_idx = app.core.module.as_ref()
-                                    .and_then(|m| m.order_list.get(selected_order).copied())
-                                    .unwrap_or(0) as usize;
-                                app.ensure_module_ownership();
-                                if let Some(ref mut module) = app.core.module {
-                                        if let Some(arc_module) = Arc::get_mut(module) {
-                                            let cmd = Box::new(DeleteRowCommand {
-                                                pattern_index: pat_idx,
-                                                row,
-                                                _channel: None,
-                                                deleted_data,
-                                            });
-                                            let _ = app.core.undo_manager.execute(cmd, arc_module);
-                                        }
-                                    }
-                                    app.sync_module_to_audio();
-                                }
-                            } else {
-                            let auto_target = app.core.automation_targets.get(app.core.cursor.channel).copied().flatten();
-                            if auto_target.is_some()
-                                && matches!(app.core.cursor.sub_column,
-                                    SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow)
-                            {
-                                app.delete_automation_point(app.core.cursor.channel, app.core.cursor.row);
-                                app.advance_cursor_down(1);
-                            } else {
-                                app.clear_cell_at_cursor();
-                                app.advance_cursor_down(1);
+                    egui::Key::End => {
+                        if !any_dialog_open {
+                            app.core.selection = None;
+                            if let Some(pattern) = app.current_pattern() {
+                                app.core.cursor.row = pattern.num_rows - 1;
+                                app.ensure_cursor_visible();
                             }
                         }
                     }
-                    egui::Key::Insert if app.edit_mode => {
+                    egui::Key::Backspace if app.edit_mode => {
+                        if !any_dialog_open {
+                            app.clear_cell_at_cursor();
+                        }
+                    }
+                    egui::Key::Delete if modifiers.shift && app.edit_mode => {
+                        if !any_dialog_open {
+                            app.delete_track();
+                        }
+                    }
+                    egui::Key::Delete if app.edit_mode => {
+                        if !any_dialog_open {
+                            if modifiers.alt {
+                                delete_row(app);
+                            } else {
+                                delete_cell_or_automation(app);
+                            }
+                        }
+                    }
+                    egui::Key::Insert if app.edit_mode && !any_dialog_open => {
                         let selected_order = app.core.selected_order;
                         let row = app.core.cursor.row;
                         app.ensure_module_ownership();
@@ -406,12 +421,14 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         app.sync_module_to_audio();
                     }
                     egui::Key::Space => {
-                        if app.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
-                            app.send_command(crate::audio::commands::AudioCommand::Stop);
-                        } else if app.edit_mode {
-                            if let Some(last_cell) = app.core.last_entered_cell.clone() {
-                                app.set_cell_at_cursor(last_cell);
-                                app.advance_cursor_down(app.cursor_skip as usize);
+                        if !any_dialog_open {
+                            if app.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
+                                app.send_command(crate::audio::commands::AudioCommand::Stop);
+                            } else if app.edit_mode {
+                                if let Some(last_cell) = app.core.last_entered_cell.clone() {
+                                    app.set_cell_at_cursor(last_cell);
+                                    app.advance_cursor_down(app.cursor_skip as usize);
+                                }
                             }
                         }
                     }
@@ -534,18 +551,77 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         }
                     }
                     _ => {}
-                },
-                egui::Event::Text(text) => {
-                    if app.core.module.is_none() {
-                        return;
-                    }
-                    let ch = text.chars().next().unwrap_or('\0');
-                    handle_text_input(app, ch);
                 }
-                _ => {}
             }
         }
     });
+}
+
+/// Preview-only note playback (no cell editing). Called when a widget has focus
+/// so the user can still hear notes while typing into a TextEdit.
+fn note_key_preview_only(app: &mut HtrkApp, ch: char) {
+    let up = ch.to_ascii_uppercase();
+    let note_key = NOTE_KEYS_LOWER
+        .iter()
+        .find_map(|(key, tone)| {
+            let kc = key.name();
+            (kc.len() == 1 && kc.chars().next() == Some(up))
+                .then(|| app.current_octave as u8 * 12 + tone)
+        })
+        .or_else(|| {
+            NOTE_KEYS_UPPER.iter().find_map(|(key, tone)| {
+                let kc = key.name();
+                (kc.len() == 1 && kc.chars().next() == Some(up))
+                    .then(|| (app.current_octave as u8 + 1) * 12 + tone)
+            })
+        });
+    if let Some(nk) = note_key {
+        if !app.preview_browser_sample(nk) {
+            preview_note(app, nk);
+        }
+    }
+}
+
+fn delete_row(app: &mut HtrkApp) {
+    let selected_order = app.core.selected_order;
+    let row = app.core.cursor.row;
+    let can_delete = app.current_pattern().map_or(false, |p| p.num_rows > 1);
+    if !can_delete {
+        return;
+    }
+    let deleted_data: Vec<Cell> = app.current_pattern()
+        .map(|p| p.data[row].to_vec())
+        .unwrap_or_default();
+    let pat_idx = app.core.module.as_ref()
+        .and_then(|m| m.order_list.get(selected_order).copied())
+        .unwrap_or(0) as usize;
+    app.ensure_module_ownership();
+    if let Some(ref mut module) = app.core.module {
+        if let Some(arc_module) = Arc::get_mut(module) {
+            let cmd = Box::new(DeleteRowCommand {
+                pattern_index: pat_idx,
+                row,
+                _channel: None,
+                deleted_data,
+            });
+            let _ = app.core.undo_manager.execute(cmd, arc_module);
+        }
+    }
+    app.sync_module_to_audio();
+}
+
+fn delete_cell_or_automation(app: &mut HtrkApp) {
+    let auto_target = app.core.automation_targets.get(app.core.cursor.channel).copied().flatten();
+    if auto_target.is_some()
+        && matches!(app.core.cursor.sub_column,
+            SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow)
+    {
+        app.delete_automation_point(app.core.cursor.channel, app.core.cursor.row);
+        app.advance_cursor_down(1);
+    } else {
+        app.clear_cell_at_cursor();
+        app.advance_cursor_down(1);
+    }
 }
 
 fn is_value_char(sub: SubColumn, up: char) -> bool {
