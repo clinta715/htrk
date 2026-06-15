@@ -52,3 +52,26 @@ pub fn draw_vertical_splitter(ui: &mut egui::Ui, total_w: f32, split: &mut f32, 
         *split = (*split + dx / total_w).clamp(min, max);
     }
 }
+
+pub fn draw_horizontal_splitter(ui: &mut egui::Ui, total_h: f32, split: &mut f32, min: f32, max: f32, theme: &TrackerTheme) {
+    let w = ui.available_width();
+    let rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(w, V_SPLITTER_W));
+    let hit_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(w, 10.0));
+    let mut response = ui.interact(hit_rect, ui.id().with("h_splitter"), egui::Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 2.0, theme.splitter_bg);
+    painter.rect_stroke(rect, 2.0, egui::Stroke::new(0.5, theme.splitter_border), egui::StrokeKind::Outside);
+
+    let hover_or_drag = response.hovered() || response.dragged();
+    if hover_or_drag {
+        painter.rect_filled(rect, 2.0, theme.splitter_active);
+    }
+    response = response.on_hover_cursor(egui::CursorIcon::ResizeVertical);
+
+    ui.allocate_space(egui::vec2(w, V_SPLITTER_W));
+
+    if response.dragged_by(egui::PointerButton::Primary) {
+        let dy = response.drag_delta().y;
+        *split = (*split + dy / total_h).clamp(min, max);
+    }
+}
