@@ -88,6 +88,7 @@ pub struct HtrkApp {
     pub(crate) playback_zoom: u8,
     pub(crate) sample_split: f32,
     pub(crate) instrument_split: f32,
+    pub(crate) instrument_settings_split: f32,
     pub(crate) devmcp: Arc<DevMcp>,
 }
 
@@ -164,6 +165,7 @@ impl Default for HtrkApp {
             playback_zoom: default_zoom,
             sample_split: 0.30,
             instrument_split: 0.15,
+            instrument_settings_split: 0.40,
             devmcp: Arc::new(
                 DevMcp::new()
                     .verbose_logging(true)
@@ -1399,6 +1401,7 @@ impl eframe::App for HtrkApp {
                             &self.theme,
                             &self.core.playback_state,
                             &mut self.instrument_split,
+                            &mut self.instrument_settings_split,
                         ) {
                             match event {
                                 crate::ui::instrument_editor::InstrumentEditEvent::SaveInstrument => {
