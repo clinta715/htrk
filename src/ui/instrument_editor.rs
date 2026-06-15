@@ -158,7 +158,7 @@ pub fn draw_instrument_editor(
 
                 // ---- Vertical split between settings and envelope ----
                 let total_h = ui.available_height();
-                let split_y = (total_h * *instrument_settings_split).max(80.0).min(total_h - 100.0);
+                let split_y = (total_h * *instrument_settings_split).clamp(80.0, (total_h - 100.0).max(80.0));
 
                 // --- Top section: settings ---
                 let (top_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), split_y), egui::Sense::hover());
@@ -220,6 +220,7 @@ pub fn draw_instrument_editor(
         d.insert_temp(paint_sample_id, paint_sample_idx);
         d.insert_temp(browser_open_id, browser_open);
         d.insert_temp(generator_open_id, generator_open);
+        d.insert_temp(env_type_id, env_type);
     });
 
     event
@@ -451,7 +452,6 @@ fn draw_envelope_section(
     generator_open: &mut bool,
 ) -> Option<InstrumentEditEvent> {
     let mut event = None;
-    let env_type_id = ui.make_persistent_id("instrument_env_type");
 
     // Envelope tabs with status indicators
     ui.horizontal(|ui| {
@@ -473,19 +473,15 @@ fn draw_envelope_section(
 
         if ui.selectable_label(*env_type == EnvelopeType::Volume, egui::RichText::new(format!("{} Vol  {}", vol_ind, vol_pts)).color(env_colors[0].0)).clicked() {
             *env_type = EnvelopeType::Volume;
-            ui.data_mut(|d| d.insert_temp(env_type_id, *env_type));
         }
         if ui.selectable_label(*env_type == EnvelopeType::Panning, egui::RichText::new(format!("{} Pan  {}", pan_ind, pan_pts)).color(env_colors[1].0)).clicked() {
             *env_type = EnvelopeType::Panning;
-            ui.data_mut(|d| d.insert_temp(env_type_id, *env_type));
         }
         if ui.selectable_label(*env_type == EnvelopeType::Pitch, egui::RichText::new(format!("{} Pitch {}", pit_ind, pit_pts)).color(env_colors[2].0)).clicked() {
             *env_type = EnvelopeType::Pitch;
-            ui.data_mut(|d| d.insert_temp(env_type_id, *env_type));
         }
         if ui.selectable_label(*env_type == EnvelopeType::Filter, egui::RichText::new(format!("{} Flt  {}", flt_ind, flt_pts)).color(env_colors[3].0)).clicked() {
             *env_type = EnvelopeType::Filter;
-            ui.data_mut(|d| d.insert_temp(env_type_id, *env_type));
         }
     });
 
