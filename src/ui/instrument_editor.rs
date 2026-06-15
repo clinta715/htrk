@@ -4,6 +4,7 @@ use crate::edit::EnvelopeType;
 use crate::sequencer::instrument::{EnvelopeFlags, EnvelopePoint, Instrument};
 use crate::sequencer::Module;
 use crate::ui::TrackerTheme;
+use eguidev::DevUiExt;
 
 pub enum InstrumentEditEvent {
     NameChanged(String),
@@ -144,14 +145,14 @@ pub fn draw_instrument_editor(
                 ui.horizontal(|ui| {
                     ui.heading(format!("Instrument {:02}:", *selected_instrument));
                     let mut name = inst.name.clone();
-                    if ui.text_edit_singleline(&mut name).changed() {
+                    if ui.dev_text_edit("inst.header.name", &mut name).changed() {
                         event = Some(InstrumentEditEvent::NameChanged(name));
                     }
-                    ui.separator();
-                    if ui.button("Save...").clicked() {
+                    ui.dev_separator("inst.header.sep");
+                    if ui.dev_button("inst.header.save", "Save...").clicked() {
                         event = Some(InstrumentEditEvent::SaveInstrument);
                     }
-                    if ui.button("Load...").clicked() {
+                    if ui.dev_button("inst.header.load", "Load...").clicked() {
                         event = Some(InstrumentEditEvent::LoadInstrument);
                     }
                 });
@@ -242,41 +243,41 @@ fn draw_settings_grid(
         let left_event = {
             let mut ev = None;
             draw_group(&mut columns[0], "General", theme, |ui| {
-                let mut gvol = inst.global_volume;
-                if ui.add(egui::Slider::new(&mut gvol, 0..=128)).changed() {
-                    ev = Some(InstrumentEditEvent::GlobalVolumeChanged(gvol));
+                let mut gvol = inst.global_volume as f32;
+                if ui.dev_slider("inst.general.vol", &mut gvol, 0.0..=128.0).changed() {
+                    ev = Some(InstrumentEditEvent::GlobalVolumeChanged(gvol as u8));
                 }
-                let mut fade = inst.fade_out;
-                if ui.add(egui::DragValue::new(&mut fade).range(0..=4095).speed(1)).changed() {
-                    ev = Some(InstrumentEditEvent::FadeoutChanged(fade));
+                let mut fade = inst.fade_out as i32;
+                if ui.dev_drag_value_i32_range("inst.general.fade", &mut fade, 0..=4095).changed() {
+                    ev = Some(InstrumentEditEvent::FadeoutChanged(fade as u16));
                 }
             });
             draw_group(&mut columns[0], "Pitch-Pan", theme, |ui| {
-                let mut sep = inst.pitch_pan_separation;
-                if ui.add(egui::Slider::new(&mut sep, -32..=32)).changed() {
-                    ev = Some(InstrumentEditEvent::PitchPanSeparationChanged(sep));
+                let mut sep = inst.pitch_pan_separation as f32;
+                if ui.dev_slider("inst.pitchpan.sep", &mut sep, -32.0..=32.0).changed() {
+                    ev = Some(InstrumentEditEvent::PitchPanSeparationChanged(sep as i8));
                 }
-                let mut center = inst.pitch_pan_center;
-                if ui.add(egui::DragValue::new(&mut center).range(0..=119)).changed() {
-                    ev = Some(InstrumentEditEvent::PitchPanCenterChanged(center));
+                let mut center = inst.pitch_pan_center as i32;
+                if ui.dev_drag_value_i32_range("inst.pitchpan.center", &mut center, 0..=119).changed() {
+                    ev = Some(InstrumentEditEvent::PitchPanCenterChanged(center as u8));
                 }
             });
             draw_group(&mut columns[0], "Filter", theme, |ui| {
-                let mut cutoff = inst.filter_cutoff;
-                if ui.add(egui::DragValue::new(&mut cutoff).range(0..=0xFFFF).speed(10)).changed() {
-                    ev = Some(InstrumentEditEvent::FilterCutoffChanged(cutoff));
+                let mut cutoff = inst.filter_cutoff as i32;
+                if ui.dev_drag_value_i32_range("inst.filter.cutoff", &mut cutoff, 0..=65535).changed() {
+                    ev = Some(InstrumentEditEvent::FilterCutoffChanged(cutoff as u16));
                 }
-                let mut res = inst.filter_resonance;
-                if ui.add(egui::Slider::new(&mut res, 0..=255)).changed() {
-                    ev = Some(InstrumentEditEvent::FilterResonanceChanged(res));
+                let mut res = inst.filter_resonance as f32;
+                if ui.dev_slider("inst.filter.res", &mut res, 0.0..=255.0).changed() {
+                    ev = Some(InstrumentEditEvent::FilterResonanceChanged(res as u8));
                 }
                 let ft = inst.filter_type;
                 let mut ft_u8 = ft.to_u8();
                 ui.horizontal(|ui| {
-                    if ui.selectable_label(ft_u8 == 0, "LP").clicked() { ft_u8 = 0; }
-                    if ui.selectable_label(ft_u8 == 1, "HP").clicked() { ft_u8 = 1; }
-                    if ui.selectable_label(ft_u8 == 2, "BP").clicked() { ft_u8 = 2; }
-                    if ui.selectable_label(ft_u8 == 3, "Notch").clicked() { ft_u8 = 3; }
+                    ui.dev_selectable_value("inst.filter.type.lp", &mut ft_u8, 0u8, "LP");
+                    ui.dev_selectable_value("inst.filter.type.hp", &mut ft_u8, 1u8, "HP");
+                    ui.dev_selectable_value("inst.filter.type.bp", &mut ft_u8, 2u8, "BP");
+                    ui.dev_selectable_value("inst.filter.type.notch", &mut ft_u8, 3u8, "Notch");
                 });
                 let new_ft = crate::sequencer::effect::FilterType::from_u8(ft_u8);
                 if new_ft != ft {
@@ -289,91 +290,75 @@ fn draw_settings_grid(
         let right_event = {
             let mut ev = None;
             draw_group(&mut columns[1], "NNA", theme, |ui| {
-                use crate::sequencer::instrument::NewNoteAction;
+                use crate::sequencer::instrument::{NewNoteAction, DuplicateCheckType, DuplicateCheckAction};
+                let mut nna = inst.nna;
                 ui.horizontal(|ui| {
-                    if ui.selectable_label(inst.nna == NewNoteAction::NoteCut, "Cut").clicked() {
-                        ev = Some(InstrumentEditEvent::NnaChanged(NewNoteAction::NoteCut));
-                    }
-                    if ui.selectable_label(inst.nna == NewNoteAction::Continue, "Cont").clicked() {
-                        ev = Some(InstrumentEditEvent::NnaChanged(NewNoteAction::Continue));
-                    }
-                    if ui.selectable_label(inst.nna == NewNoteAction::NoteOff, "Off").clicked() {
-                        ev = Some(InstrumentEditEvent::NnaChanged(NewNoteAction::NoteOff));
-                    }
-                    if ui.selectable_label(inst.nna == NewNoteAction::NoteFade, "Fade").clicked() {
-                        ev = Some(InstrumentEditEvent::NnaChanged(NewNoteAction::NoteFade));
-                    }
+                    ui.dev_selectable_value("inst.nna.cut", &mut nna, NewNoteAction::NoteCut, "Cut");
+                    ui.dev_selectable_value("inst.nna.cont", &mut nna, NewNoteAction::Continue, "Cont");
+                    ui.dev_selectable_value("inst.nna.off", &mut nna, NewNoteAction::NoteOff, "Off");
+                    ui.dev_selectable_value("inst.nna.fade", &mut nna, NewNoteAction::NoteFade, "Fade");
                 });
+                if nna != inst.nna {
+                    ev = Some(InstrumentEditEvent::NnaChanged(nna));
+                }
+                let mut dct = inst.duplicate_check_type;
                 ui.horizontal(|ui| {
-                    ui.label("DCT:");
-                    use crate::sequencer::instrument::DuplicateCheckType;
-                    if ui.selectable_label(inst.duplicate_check_type == DuplicateCheckType::Disabled, "Off").clicked() {
-                        ev = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(DuplicateCheckType::Disabled));
-                    }
-                    if ui.selectable_label(inst.duplicate_check_type == DuplicateCheckType::Note, "Note").clicked() {
-                        ev = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(DuplicateCheckType::Note));
-                    }
-                    if ui.selectable_label(inst.duplicate_check_type == DuplicateCheckType::Sample, "Samp").clicked() {
-                        ev = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(DuplicateCheckType::Sample));
-                    }
-                    if ui.selectable_label(inst.duplicate_check_type == DuplicateCheckType::Instrument, "Inst").clicked() {
-                        ev = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(DuplicateCheckType::Instrument));
-                    }
+                    ui.dev_label("inst.nna.dct_label", "DCT:");
+                    ui.dev_selectable_value("inst.nna.dct.off", &mut dct, DuplicateCheckType::Disabled, "Off");
+                    ui.dev_selectable_value("inst.nna.dct.note", &mut dct, DuplicateCheckType::Note, "Note");
+                    ui.dev_selectable_value("inst.nna.dct.samp", &mut dct, DuplicateCheckType::Sample, "Samp");
+                    ui.dev_selectable_value("inst.nna.dct.inst", &mut dct, DuplicateCheckType::Instrument, "Inst");
                 });
+                if dct != inst.duplicate_check_type {
+                    ev = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(dct));
+                }
+                let mut dna = inst.duplicate_check_action;
                 ui.horizontal(|ui| {
-                    ui.label("DNA:");
-                    use crate::sequencer::instrument::DuplicateCheckAction;
-                    if ui.selectable_label(inst.duplicate_check_action == DuplicateCheckAction::NoteCut, "Cut").clicked() {
-                        ev = Some(InstrumentEditEvent::DuplicateCheckActionChanged(DuplicateCheckAction::NoteCut));
-                    }
-                    if ui.selectable_label(inst.duplicate_check_action == DuplicateCheckAction::NoteOff, "Off").clicked() {
-                        ev = Some(InstrumentEditEvent::DuplicateCheckActionChanged(DuplicateCheckAction::NoteOff));
-                    }
-                    if ui.selectable_label(inst.duplicate_check_action == DuplicateCheckAction::NoteFade, "Fade").clicked() {
-                        ev = Some(InstrumentEditEvent::DuplicateCheckActionChanged(DuplicateCheckAction::NoteFade));
-                    }
+                    ui.dev_label("inst.nna.dna_label", "DNA:");
+                    ui.dev_selectable_value("inst.nna.dna.cut", &mut dna, DuplicateCheckAction::NoteCut, "Cut");
+                    ui.dev_selectable_value("inst.nna.dna.off", &mut dna, DuplicateCheckAction::NoteOff, "Off");
+                    ui.dev_selectable_value("inst.nna.dna.fade", &mut dna, DuplicateCheckAction::NoteFade, "Fade");
                 });
+                if dna != inst.duplicate_check_action {
+                    ev = Some(InstrumentEditEvent::DuplicateCheckActionChanged(dna));
+                }
             });
             draw_group(&mut columns[1], "Random", theme, |ui| {
-                let mut rvol = inst.random_volume;
-                if ui.add(egui::Slider::new(&mut rvol, 0..=100)).changed() {
-                    ev = Some(InstrumentEditEvent::RandomVolumeChanged(rvol));
+                let mut rvol = inst.random_volume as f32;
+                if ui.dev_slider("inst.random.vol", &mut rvol, 0.0..=100.0).changed() {
+                    ev = Some(InstrumentEditEvent::RandomVolumeChanged(rvol as u8));
                 }
-                let mut rpan = inst.random_panning;
-                if ui.add(egui::Slider::new(&mut rpan, 0..=100)).changed() {
-                    ev = Some(InstrumentEditEvent::RandomPanningChanged(rpan));
+                let mut rpan = inst.random_panning as f32;
+                if ui.dev_slider("inst.random.pan", &mut rpan, 0.0..=100.0).changed() {
+                    ev = Some(InstrumentEditEvent::RandomPanningChanged(rpan as u8));
                 }
-                let mut frc = inst.filter_random_cutoff;
-                if ui.add(egui::Slider::new(&mut frc, 0..=255)).changed() {
-                    ev = Some(InstrumentEditEvent::FilterRandomCutoffChanged(frc));
+                let mut frc = inst.filter_random_cutoff as f32;
+                if ui.dev_slider("inst.random.flt", &mut frc, 0.0..=255.0).changed() {
+                    ev = Some(InstrumentEditEvent::FilterRandomCutoffChanged(frc as u8));
                 }
             });
             draw_group(&mut columns[1], "Vibrato", theme, |ui| {
+                let mut vib_type = inst.vib_type;
                 ui.horizontal(|ui| {
-                    if ui.selectable_label(inst.vib_type == 0, "Sine").clicked() {
-                        ev = Some(InstrumentEditEvent::VibTypeChanged(0));
-                    }
-                    if ui.selectable_label(inst.vib_type == 1, "Ramp").clicked() {
-                        ev = Some(InstrumentEditEvent::VibTypeChanged(1));
-                    }
-                    if ui.selectable_label(inst.vib_type == 2, "Sq").clicked() {
-                        ev = Some(InstrumentEditEvent::VibTypeChanged(2));
-                    }
-                    if ui.selectable_label(inst.vib_type == 3, "Rand").clicked() {
-                        ev = Some(InstrumentEditEvent::VibTypeChanged(3));
-                    }
+                    ui.dev_selectable_value("inst.vib.type.sine", &mut vib_type, 0u8, "Sine");
+                    ui.dev_selectable_value("inst.vib.type.ramp", &mut vib_type, 1u8, "Ramp");
+                    ui.dev_selectable_value("inst.vib.type.sq", &mut vib_type, 2u8, "Sq");
+                    ui.dev_selectable_value("inst.vib.type.rand", &mut vib_type, 3u8, "Rand");
                 });
-                let mut sweep = inst.vib_sweep;
-                if ui.add(egui::DragValue::new(&mut sweep).range(0..=255).speed(1)).changed() {
-                    ev = Some(InstrumentEditEvent::VibSweepChanged(sweep));
+                if vib_type != inst.vib_type {
+                    ev = Some(InstrumentEditEvent::VibTypeChanged(vib_type));
                 }
-                let mut depth = inst.vib_depth;
-                if ui.add(egui::DragValue::new(&mut depth).range(0..=255).speed(1)).changed() {
-                    ev = Some(InstrumentEditEvent::VibDepthChanged(depth));
+                let mut sweep = inst.vib_sweep as i32;
+                if ui.dev_drag_value_i32_range("inst.vib.sweep", &mut sweep, 0..=255).changed() {
+                    ev = Some(InstrumentEditEvent::VibSweepChanged(sweep as u8));
                 }
-                let mut rate = inst.vib_rate;
-                if ui.add(egui::DragValue::new(&mut rate).range(0..=255).speed(1)).changed() {
-                    ev = Some(InstrumentEditEvent::VibRateChanged(rate));
+                let mut depth = inst.vib_depth as i32;
+                if ui.dev_drag_value_i32_range("inst.vib.depth", &mut depth, 0..=255).changed() {
+                    ev = Some(InstrumentEditEvent::VibDepthChanged(depth as u8));
+                }
+                let mut rate = inst.vib_rate as i32;
+                if ui.dev_drag_value_i32_range("inst.vib.rate", &mut rate, 0..=255).changed() {
+                    ev = Some(InstrumentEditEvent::VibRateChanged(rate as u8));
                 }
             });
             ev
@@ -392,12 +377,12 @@ fn draw_settings_grid(
     ui.horizontal(|ui| {
         ui.group(|ui| {
             ui.horizontal(|ui| {
-                ui.label("Paint Sample:");
-                if ui.button("Browse...").clicked() {
+                ui.dev_label("inst.map.paint_label", "Paint Sample:");
+                if ui.dev_button("inst.map.browse", "Browse...").clicked() {
                     *browser_open = true;
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Fill All").clicked() {
+                    if ui.dev_button("inst.map.fill_all", "Fill All").clicked() {
                         event = Some(InstrumentEditEvent::SampleMapFillAll(*paint_sample_idx));
                     }
                 });
@@ -471,17 +456,13 @@ fn draw_envelope_section(
         let pit_ind = if pit_active { "●" } else { "○" };
         let flt_ind = if flt_active { "●" } else { "○" };
 
-        if ui.selectable_label(*env_type == EnvelopeType::Volume, egui::RichText::new(format!("{} Vol  {}", vol_ind, vol_pts)).color(env_colors[0].0)).clicked() {
-            *env_type = EnvelopeType::Volume;
+        if ui.dev_selectable_value("inst.env.tab.vol", env_type, EnvelopeType::Volume, egui::RichText::new(format!("{} Vol  {}", vol_ind, vol_pts)).color(env_colors[0].0)).clicked() {
         }
-        if ui.selectable_label(*env_type == EnvelopeType::Panning, egui::RichText::new(format!("{} Pan  {}", pan_ind, pan_pts)).color(env_colors[1].0)).clicked() {
-            *env_type = EnvelopeType::Panning;
+        if ui.dev_selectable_value("inst.env.tab.pan", env_type, EnvelopeType::Panning, egui::RichText::new(format!("{} Pan  {}", pan_ind, pan_pts)).color(env_colors[1].0)).clicked() {
         }
-        if ui.selectable_label(*env_type == EnvelopeType::Pitch, egui::RichText::new(format!("{} Pitch {}", pit_ind, pit_pts)).color(env_colors[2].0)).clicked() {
-            *env_type = EnvelopeType::Pitch;
+        if ui.dev_selectable_value("inst.env.tab.pit", env_type, EnvelopeType::Pitch, egui::RichText::new(format!("{} Pitch {}", pit_ind, pit_pts)).color(env_colors[2].0)).clicked() {
         }
-        if ui.selectable_label(*env_type == EnvelopeType::Filter, egui::RichText::new(format!("{} Flt  {}", flt_ind, flt_pts)).color(env_colors[3].0)).clicked() {
-            *env_type = EnvelopeType::Filter;
+        if ui.dev_selectable_value("inst.env.tab.flt", env_type, EnvelopeType::Filter, egui::RichText::new(format!("{} Flt  {}", flt_ind, flt_pts)).color(env_colors[3].0)).clicked() {
         }
     });
 
@@ -501,19 +482,19 @@ fn draw_envelope_section(
         ui.horizontal(|ui| {
             egui::Frame::group(ui.style()).inner_margin(frame_margin).show(ui, |ui| {
                 let mut enabled = env.flags.enabled;
-                if ui.checkbox(&mut enabled, "Enabled").changed() {
+                if ui.dev_checkbox("inst.env.enabled", &mut enabled, "Enabled").changed() {
                     let mut new_flags = env.flags;
                     new_flags.enabled = enabled;
                     event = Some(InstrumentEditEvent::EnvelopeFlagsChanged(*env_type, new_flags));
                 }
                 let mut sustain_flag = env.flags.sustain;
-                if ui.checkbox(&mut sustain_flag, "Sustain").changed() {
+                if ui.dev_checkbox("inst.env.sustain", &mut sustain_flag, "Sustain").changed() {
                     let mut new_flags = env.flags;
                     new_flags.sustain = sustain_flag;
                     event = Some(InstrumentEditEvent::EnvelopeFlagsChanged(*env_type, new_flags));
                 }
                 let mut carry = env.flags.carry;
-                if ui.checkbox(&mut carry, "Carry").changed() {
+                if ui.dev_checkbox("inst.env.carry", &mut carry, "Carry").changed() {
                     let mut new_flags = env.flags;
                     new_flags.carry = carry;
                     event = Some(InstrumentEditEvent::EnvelopeFlagsChanged(*env_type, new_flags));
@@ -524,23 +505,22 @@ fn draw_envelope_section(
                     Some(idx) if idx < env.points.len() => format!("Sus: p{}", idx),
                     _ => "Sus: --".to_string(),
                 };
-                ui.label(egui::RichText::new(sustain_str).color(theme.fg_dim));
-                if ui.button("Set").clicked() {
+                ui.dev_label("inst.env.sus_display", egui::RichText::new(sustain_str).color(theme.fg_dim));
+                if ui.dev_button("inst.env.sus_set", "Set").clicked() {
                     if let Some(idx) = hv {
                         if idx < env.points.len() {
                             event = Some(InstrumentEditEvent::EnvelopeSustainChanged(*env_type, Some(idx)));
                         }
                     }
                 }
-                if ui.button("Clr").clicked() {
+                if ui.dev_button("inst.env.sus_clr", "Clr").clicked() {
                     event = Some(InstrumentEditEvent::EnvelopeSustainChanged(*env_type, None));
                 }
             });
             egui::Frame::group(ui.style()).inner_margin(frame_margin).show(ui, |ui| {
-                let loop_label = if env.flags.loop_ { "Loop On" } else { "Loop Off" };
-                if ui.selectable_label(env.flags.loop_, loop_label).clicked() {
-                    let new_enabled = !env.flags.loop_;
-                    if new_enabled {
+                let mut loop_on = env.flags.loop_;
+                if ui.dev_checkbox("inst.env.loop", &mut loop_on, "Loop").changed() {
+                    if loop_on {
                         let ls = env.loop_start.or_else(|| {
                             if !env.points.is_empty() { Some(0) } else { None }
                         });
@@ -553,14 +533,14 @@ fn draw_envelope_section(
                     }
                 }
                 if env.flags.loop_ {
-                    if ui.button("LSt").clicked() {
+                    if ui.dev_button("inst.env.loop_start", "LSt").clicked() {
                         if let Some(idx) = hv {
                             if idx < env.points.len() {
                                 event = Some(InstrumentEditEvent::EnvelopeLoopChanged(*env_type, true, Some(idx), env.loop_end));
                             }
                         }
                     }
-                    if ui.button("LEn").clicked() {
+                    if ui.dev_button("inst.env.loop_end", "LEn").clicked() {
                         if let Some(idx) = hv {
                             if idx < env.points.len() {
                                 event = Some(InstrumentEditEvent::EnvelopeLoopChanged(*env_type, true, env.loop_start, Some(idx)));
@@ -570,12 +550,12 @@ fn draw_envelope_section(
                 }
             });
             egui::Frame::group(ui.style()).inner_margin(frame_margin).show(ui, |ui| {
-                if ui.button("+Point").clicked() {
+                if ui.dev_button("inst.env.add_point", "+Point").clicked() {
                     let last_tick = env.points.last().map(|p| p.tick).unwrap_or(0);
                     let new_tick = last_tick.saturating_add(16).min(255);
                     event = Some(InstrumentEditEvent::EnvelopePointAdded(*env_type, new_tick, 32));
                 }
-                if ui.button(egui::RichText::new("Generate").color(theme.fg_volume)).clicked() {
+                if ui.dev_button("inst.env.generate", egui::RichText::new("Generate").color(theme.fg_volume)).clicked() {
                     *generator_open = true;
                 }
             });
@@ -609,8 +589,8 @@ fn draw_envelope_section(
         }
     } else {
         ui.horizontal(|ui| {
-            ui.label(format!("{:?} Envelope — not created", env_type));
-            if ui.button("Create Envelope").clicked() {
+            ui.dev_label("inst.env.empty", format!("{:?} Envelope — not created", env_type));
+            if ui.dev_button("inst.env.create", "Create Envelope").clicked() {
                 event = Some(InstrumentEditEvent::EnvelopePointAdded(*env_type, 0, 64));
             }
         });
