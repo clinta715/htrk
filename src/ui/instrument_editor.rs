@@ -237,140 +237,38 @@ fn draw_settings_grid(
 ) -> Option<InstrumentEditEvent> {
     let mut event = None;
 
-    // Row 1: NNA/DC + Volumes + Vibrato
-    ui.add_space(4.0);
-    egui::ScrollArea::horizontal()
-        .id_salt("instrument_editor_bottom_row1")
-        .max_height(110.0)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.group(|ui| {
-                ui.heading("NNAs & Duplicate Check");
-            egui::Grid::new(format!("instrument_nna_{}", selected_instrument)).show(ui, |ui| {
-                ui.label("NNA:");
-                ui.horizontal(|ui| {
-                    use crate::sequencer::instrument::NewNoteAction;
-                    if ui.selectable_label(inst.nna == NewNoteAction::NoteCut, "Cut").clicked() {
-                        event = Some(InstrumentEditEvent::NnaChanged(NewNoteAction::NoteCut));
-                    }
-                    if ui.selectable_label(inst.nna == NewNoteAction::Continue, "Cont").clicked() {
-                        event = Some(InstrumentEditEvent::NnaChanged(NewNoteAction::Continue));
-                    }
-                    if ui.selectable_label(inst.nna == NewNoteAction::NoteOff, "Off").clicked() {
-                        event = Some(InstrumentEditEvent::NnaChanged(NewNoteAction::NoteOff));
-                    }
-                    if ui.selectable_label(inst.nna == NewNoteAction::NoteFade, "Fade").clicked() {
-                        event = Some(InstrumentEditEvent::NnaChanged(NewNoteAction::NoteFade));
-                    }
-                });
-                ui.end_row();
-
-                ui.label("DCC Type:");
-                ui.horizontal(|ui| {
-                    use crate::sequencer::instrument::DuplicateCheckType;
-                    if ui.selectable_label(inst.duplicate_check_type == DuplicateCheckType::Disabled, "Off").clicked() {
-                        event = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(DuplicateCheckType::Disabled));
-                    }
-                    if ui.selectable_label(inst.duplicate_check_type == DuplicateCheckType::Note, "Note").clicked() {
-                        event = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(DuplicateCheckType::Note));
-                    }
-                    if ui.selectable_label(inst.duplicate_check_type == DuplicateCheckType::Sample, "Samp").clicked() {
-                        event = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(DuplicateCheckType::Sample));
-                    }
-                    if ui.selectable_label(inst.duplicate_check_type == DuplicateCheckType::Instrument, "Inst").clicked() {
-                        event = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(DuplicateCheckType::Instrument));
-                    }
-                });
-                ui.end_row();
-
-                ui.label("DCC Action:");
-                ui.horizontal(|ui| {
-                    use crate::sequencer::instrument::DuplicateCheckAction;
-                    if ui.selectable_label(inst.duplicate_check_action == DuplicateCheckAction::NoteCut, "Cut").clicked() {
-                        event = Some(InstrumentEditEvent::DuplicateCheckActionChanged(DuplicateCheckAction::NoteCut));
-                    }
-                    if ui.selectable_label(inst.duplicate_check_action == DuplicateCheckAction::NoteOff, "Off").clicked() {
-                        event = Some(InstrumentEditEvent::DuplicateCheckActionChanged(DuplicateCheckAction::NoteOff));
-                    }
-                    if ui.selectable_label(inst.duplicate_check_action == DuplicateCheckAction::NoteFade, "Fade").clicked() {
-                        event = Some(InstrumentEditEvent::DuplicateCheckActionChanged(DuplicateCheckAction::NoteFade));
-                    }
-                });
-                ui.end_row();
-            });
-        });
-
-        ui.group(|ui| {
-            ui.set_min_width(280.0);
-            ui.heading("Volumes & Panning");
-            let label_w = 100.0;
-            let widget_w = 120.0;
-            egui::Grid::new(format!("instrument_vols_{}", selected_instrument)).show(ui, |ui| {
-                ui.add_sized([label_w, 0.0], egui::Label::new("Global Vol:"));
+    ui.columns(2, |columns| {
+        let left_event = {
+            let mut ev = None;
+            draw_group(&mut columns[0], "General", theme, |ui| {
                 let mut gvol = inst.global_volume;
-                if ui.add_sized([widget_w, 0.0], egui::Slider::new(&mut gvol, 0..=128)).changed() {
-                    event = Some(InstrumentEditEvent::GlobalVolumeChanged(gvol));
+                if ui.add(egui::Slider::new(&mut gvol, 0..=128)).changed() {
+                    ev = Some(InstrumentEditEvent::GlobalVolumeChanged(gvol));
                 }
-                ui.end_row();
-
-                ui.add_sized([label_w, 0.0], egui::Label::new("Fadeout:"));
                 let mut fade = inst.fade_out;
-                if ui.add_sized([widget_w, 0.0], egui::DragValue::new(&mut fade).range(0..=4095)).changed() {
-                    event = Some(InstrumentEditEvent::FadeoutChanged(fade));
+                if ui.add(egui::DragValue::new(&mut fade).range(0..=4095).speed(1)).changed() {
+                    ev = Some(InstrumentEditEvent::FadeoutChanged(fade));
                 }
-                ui.end_row();
-
-                ui.add_sized([label_w, 0.0], egui::Label::new("Pitch-Pan Sep:"));
+            });
+            draw_group(&mut columns[0], "Pitch-Pan", theme, |ui| {
                 let mut sep = inst.pitch_pan_separation;
-                if ui.add_sized([widget_w, 0.0], egui::Slider::new(&mut sep, -32..=32)).changed() {
-                    event = Some(InstrumentEditEvent::PitchPanSeparationChanged(sep));
+                if ui.add(egui::Slider::new(&mut sep, -32..=32)).changed() {
+                    ev = Some(InstrumentEditEvent::PitchPanSeparationChanged(sep));
                 }
-                ui.end_row();
-
-                ui.add_sized([label_w, 0.0], egui::Label::new("Pitch-Pan Center:"));
                 let mut center = inst.pitch_pan_center;
-                if ui.add_sized([widget_w, 0.0], egui::DragValue::new(&mut center).range(0..=119)).changed() {
-                    event = Some(InstrumentEditEvent::PitchPanCenterChanged(center));
+                if ui.add(egui::DragValue::new(&mut center).range(0..=119)).changed() {
+                    ev = Some(InstrumentEditEvent::PitchPanCenterChanged(center));
                 }
-                ui.end_row();
-
-                ui.add_sized([label_w, 0.0], egui::Label::new("Random Vol:"));
-                let mut rvol = inst.random_volume;
-                if ui.add_sized([widget_w, 0.0], egui::Slider::new(&mut rvol, 0..=100)).changed() {
-                    event = Some(InstrumentEditEvent::RandomVolumeChanged(rvol));
-                }
-                ui.end_row();
-
-                ui.add_sized([label_w, 0.0], egui::Label::new("Random Pan:"));
-                let mut rpan = inst.random_panning;
-                if ui.add_sized([widget_w, 0.0], egui::Slider::new(&mut rpan, 0..=100)).changed() {
-                    event = Some(InstrumentEditEvent::RandomPanningChanged(rpan));
-                }
-                ui.end_row();
-
-                ui.add_sized([label_w, 0.0], egui::Label::new("Filter Cutoff:"));
+            });
+            draw_group(&mut columns[0], "Filter", theme, |ui| {
                 let mut cutoff = inst.filter_cutoff;
-                if ui.add_sized([widget_w, 0.0], egui::DragValue::new(&mut cutoff).range(0..=0xFFFF)).changed() {
-                    event = Some(InstrumentEditEvent::FilterCutoffChanged(cutoff));
+                if ui.add(egui::DragValue::new(&mut cutoff).range(0..=0xFFFF).speed(10)).changed() {
+                    ev = Some(InstrumentEditEvent::FilterCutoffChanged(cutoff));
                 }
-                ui.end_row();
-
-                ui.add_sized([label_w, 0.0], egui::Label::new("Filter Res:"));
                 let mut res = inst.filter_resonance;
-                if ui.add_sized([widget_w, 0.0], egui::Slider::new(&mut res, 0..=255)).changed() {
-                    event = Some(InstrumentEditEvent::FilterResonanceChanged(res));
+                if ui.add(egui::Slider::new(&mut res, 0..=255)).changed() {
+                    ev = Some(InstrumentEditEvent::FilterResonanceChanged(res));
                 }
-                ui.end_row();
-
-                ui.add_sized([label_w, 0.0], egui::Label::new("Filter Rand Cut:"));
-                let mut frc = inst.filter_random_cutoff;
-                if ui.add_sized([widget_w, 0.0], egui::Slider::new(&mut frc, 0..=255)).changed() {
-                    event = Some(InstrumentEditEvent::FilterRandomCutoffChanged(frc));
-                }
-                ui.end_row();
-
-                ui.add_sized([label_w, 0.0], egui::Label::new("Filter Type:"));
                 let ft = inst.filter_type;
                 let mut ft_u8 = ft.to_u8();
                 ui.horizontal(|ui| {
@@ -381,70 +279,118 @@ fn draw_settings_grid(
                 });
                 let new_ft = crate::sequencer::effect::FilterType::from_u8(ft_u8);
                 if new_ft != ft {
-                    event = Some(InstrumentEditEvent::FilterTypeChanged(new_ft));
+                    ev = Some(InstrumentEditEvent::FilterTypeChanged(new_ft));
                 }
-                ui.end_row();
             });
-        });
+            ev
+        };
 
-        ui.group(|ui| {
-            ui.set_min_width(280.0);
-            ui.heading("Auto-Vibrato");
-            let label_w = 52.0;
-            let widget_w = 100.0;
-            egui::Grid::new(format!("instrument_vib_{}", selected_instrument)).show(ui, |ui| {
-                ui.add_sized([label_w, 0.0], egui::Label::new("Type:"));
+        let right_event = {
+            let mut ev = None;
+            draw_group(&mut columns[1], "NNA", theme, |ui| {
+                use crate::sequencer::instrument::NewNoteAction;
                 ui.horizontal(|ui| {
-                    if ui.selectable_label(inst.vib_type == 0, "Sine").clicked() {
-                        event = Some(InstrumentEditEvent::VibTypeChanged(0));
+                    if ui.selectable_label(inst.nna == NewNoteAction::NoteCut, "Cut").clicked() {
+                        ev = Some(InstrumentEditEvent::NnaChanged(NewNoteAction::NoteCut));
                     }
-                    if ui.selectable_label(inst.vib_type == 1, "Ramp").clicked() {
-                        event = Some(InstrumentEditEvent::VibTypeChanged(1));
+                    if ui.selectable_label(inst.nna == NewNoteAction::Continue, "Cont").clicked() {
+                        ev = Some(InstrumentEditEvent::NnaChanged(NewNoteAction::Continue));
                     }
-                    if ui.selectable_label(inst.vib_type == 2, "Square").clicked() {
-                        event = Some(InstrumentEditEvent::VibTypeChanged(2));
+                    if ui.selectable_label(inst.nna == NewNoteAction::NoteOff, "Off").clicked() {
+                        ev = Some(InstrumentEditEvent::NnaChanged(NewNoteAction::NoteOff));
                     }
-                    if ui.selectable_label(inst.vib_type == 3, "Random").clicked() {
-                        event = Some(InstrumentEditEvent::VibTypeChanged(3));
+                    if ui.selectable_label(inst.nna == NewNoteAction::NoteFade, "Fade").clicked() {
+                        ev = Some(InstrumentEditEvent::NnaChanged(NewNoteAction::NoteFade));
                     }
                 });
-                ui.end_row();
-
-                ui.add_sized([label_w, 0.0], egui::Label::new("Sweep:"));
-                let mut sweep = inst.vib_sweep;
-                if ui.add_sized([widget_w, 0.0], egui::DragValue::new(&mut sweep).range(0..=255).speed(1)).changed() {
-                    event = Some(InstrumentEditEvent::VibSweepChanged(sweep));
-                }
-                ui.end_row();
-
-                ui.add_sized([label_w, 0.0], egui::Label::new("Depth:"));
-                let mut depth = inst.vib_depth;
-                if ui.add_sized([widget_w, 0.0], egui::DragValue::new(&mut depth).range(0..=255).speed(1)).changed() {
-                    event = Some(InstrumentEditEvent::VibDepthChanged(depth));
-                }
-                ui.end_row();
-
-                ui.add_sized([label_w, 0.0], egui::Label::new("Rate:"));
-                let mut rate = inst.vib_rate;
-                if ui.add_sized([widget_w, 0.0], egui::DragValue::new(&mut rate).range(0..=255).speed(1)).changed() {
-                    event = Some(InstrumentEditEvent::VibRateChanged(rate));
-                }
-                ui.end_row();
-            });
-        });
-    });
-    });
-
-    // Row 2: Sample Map + Note Map
-    ui.add_space(4.0);
-    egui::ScrollArea::horizontal()
-        .id_salt("instrument_editor_bottom_row2")
-        .max_height(200.0)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.group(|ui| {
                 ui.horizontal(|ui| {
+                    ui.label("DCT:");
+                    use crate::sequencer::instrument::DuplicateCheckType;
+                    if ui.selectable_label(inst.duplicate_check_type == DuplicateCheckType::Disabled, "Off").clicked() {
+                        ev = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(DuplicateCheckType::Disabled));
+                    }
+                    if ui.selectable_label(inst.duplicate_check_type == DuplicateCheckType::Note, "Note").clicked() {
+                        ev = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(DuplicateCheckType::Note));
+                    }
+                    if ui.selectable_label(inst.duplicate_check_type == DuplicateCheckType::Sample, "Samp").clicked() {
+                        ev = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(DuplicateCheckType::Sample));
+                    }
+                    if ui.selectable_label(inst.duplicate_check_type == DuplicateCheckType::Instrument, "Inst").clicked() {
+                        ev = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(DuplicateCheckType::Instrument));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("DNA:");
+                    use crate::sequencer::instrument::DuplicateCheckAction;
+                    if ui.selectable_label(inst.duplicate_check_action == DuplicateCheckAction::NoteCut, "Cut").clicked() {
+                        ev = Some(InstrumentEditEvent::DuplicateCheckActionChanged(DuplicateCheckAction::NoteCut));
+                    }
+                    if ui.selectable_label(inst.duplicate_check_action == DuplicateCheckAction::NoteOff, "Off").clicked() {
+                        ev = Some(InstrumentEditEvent::DuplicateCheckActionChanged(DuplicateCheckAction::NoteOff));
+                    }
+                    if ui.selectable_label(inst.duplicate_check_action == DuplicateCheckAction::NoteFade, "Fade").clicked() {
+                        ev = Some(InstrumentEditEvent::DuplicateCheckActionChanged(DuplicateCheckAction::NoteFade));
+                    }
+                });
+            });
+            draw_group(&mut columns[1], "Random", theme, |ui| {
+                let mut rvol = inst.random_volume;
+                if ui.add(egui::Slider::new(&mut rvol, 0..=100)).changed() {
+                    ev = Some(InstrumentEditEvent::RandomVolumeChanged(rvol));
+                }
+                let mut rpan = inst.random_panning;
+                if ui.add(egui::Slider::new(&mut rpan, 0..=100)).changed() {
+                    ev = Some(InstrumentEditEvent::RandomPanningChanged(rpan));
+                }
+                let mut frc = inst.filter_random_cutoff;
+                if ui.add(egui::Slider::new(&mut frc, 0..=255)).changed() {
+                    ev = Some(InstrumentEditEvent::FilterRandomCutoffChanged(frc));
+                }
+            });
+            draw_group(&mut columns[1], "Vibrato", theme, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(inst.vib_type == 0, "Sine").clicked() {
+                        ev = Some(InstrumentEditEvent::VibTypeChanged(0));
+                    }
+                    if ui.selectable_label(inst.vib_type == 1, "Ramp").clicked() {
+                        ev = Some(InstrumentEditEvent::VibTypeChanged(1));
+                    }
+                    if ui.selectable_label(inst.vib_type == 2, "Sq").clicked() {
+                        ev = Some(InstrumentEditEvent::VibTypeChanged(2));
+                    }
+                    if ui.selectable_label(inst.vib_type == 3, "Rand").clicked() {
+                        ev = Some(InstrumentEditEvent::VibTypeChanged(3));
+                    }
+                });
+                let mut sweep = inst.vib_sweep;
+                if ui.add(egui::DragValue::new(&mut sweep).range(0..=255).speed(1)).changed() {
+                    ev = Some(InstrumentEditEvent::VibSweepChanged(sweep));
+                }
+                let mut depth = inst.vib_depth;
+                if ui.add(egui::DragValue::new(&mut depth).range(0..=255).speed(1)).changed() {
+                    ev = Some(InstrumentEditEvent::VibDepthChanged(depth));
+                }
+                let mut rate = inst.vib_rate;
+                if ui.add(egui::DragValue::new(&mut rate).range(0..=255).speed(1)).changed() {
+                    ev = Some(InstrumentEditEvent::VibRateChanged(rate));
+                }
+            });
+            ev
+        };
+
+        if left_event.is_some() {
+            event = left_event;
+        }
+        if right_event.is_some() {
+            event = right_event;
+        }
+    });
+
+    // Maps row
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
                 ui.label("Paint Sample:");
                 if ui.button("Browse...").clicked() {
                     *browser_open = true;
@@ -455,14 +401,9 @@ fn draw_settings_grid(
                     }
                 });
             });
-
             crate::ui::sample_palette::draw_inline_sample_palette(ui, module, paint_sample_idx, playback_state, theme);
-
             if let Some(map_event) = crate::ui::sample_map::draw_sample_map(
-                ui,
-                &inst.sample_map,
-                *paint_sample_idx,
-                module,
+                ui, &inst.sample_map, *paint_sample_idx, module,
             ) {
                 match map_event {
                     crate::ui::sample_map::SampleMapEvent::NoteClicked(note) |
@@ -479,7 +420,6 @@ fn draw_settings_grid(
                 }
             }
         });
-
         ui.group(|ui| {
             if let Some(nm_event) = crate::ui::note_map::draw_note_map(ui, &inst.note_map, *paint_sample_idx, theme) {
                 if inst.note_map[nm_event.note as usize] != nm_event.new_dest {
@@ -488,9 +428,17 @@ fn draw_settings_grid(
             }
         });
     });
-    });
 
     event
+}
+
+fn draw_group(ui: &mut egui::Ui, label: &str, theme: &TrackerTheme, content: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::group(ui.style())
+        .inner_margin(egui::Margin::symmetric(4, 2))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(label).color(theme.fg_dim));
+            content(ui);
+        });
 }
 
 fn draw_envelope_section(
