@@ -159,22 +159,27 @@ pub fn draw_instrument_editor(
 
                 // ---- Vertical split between settings and envelope ----
                 let total_h = ui.available_height();
-                let split_y = (total_h * *instrument_settings_split).clamp(80.0, (total_h - 100.0).max(80.0));
+                let split_y = (total_h * *instrument_settings_split).max(80.0);
 
-                // --- Top section: settings ---
+                // --- Top section: settings + maps (scrollable) ---
                 let (top_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), split_y), egui::Sense::hover());
                 {
                     let mut top_ui = ui.new_child(egui::UiBuilder::new().max_rect(top_rect).layout(*ui.layout()));
-                    if let Some(e) = draw_settings_grid(
-                        &mut top_ui, inst, theme, *selected_instrument, module,
-                        &mut paint_sample_idx, &mut browser_open, playback_state,
-                    ) {
-                        event = Some(e);
-                    }
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(&mut top_ui, |ui| {
+                            if let Some(e) = draw_settings_grid(ui, inst, theme) {
+                                event = Some(e);
+                            }
+                            if let Some(e) = draw_maps_row(ui, inst, theme, module, &mut paint_sample_idx, &mut browser_open, playback_state) {
+                                event = Some(e);
+                            }
+                        });
                 }
 
                 // --- Horizontal splitter ---
-                crate::ui::draw_horizontal_splitter(ui, total_h, instrument_settings_split, 0.15, 0.82, theme);
+                let splitter_max = ((total_h - 124.0) / total_h).max(0.15).min(0.85);
+                crate::ui::draw_horizontal_splitter(ui, total_h, instrument_settings_split, 0.15, splitter_max, theme);
 
                 // --- Bottom section: envelope editor ---
                 let bottom_rect = egui::Rect::from_min_size(
@@ -231,11 +236,6 @@ fn draw_settings_grid(
     ui: &mut egui::Ui,
     inst: &Instrument,
     theme: &TrackerTheme,
-    selected_instrument: usize,
-    module: &Module,
-    paint_sample_idx: &mut u8,
-    browser_open: &mut bool,
-    playback_state: &AtomicPlaybackState,
 ) -> Option<InstrumentEditEvent> {
     let mut event = None;
 
@@ -372,7 +372,20 @@ fn draw_settings_grid(
         }
     });
 
-    // Maps row
+    event
+}
+
+fn draw_maps_row(
+    ui: &mut egui::Ui,
+    inst: &Instrument,
+    theme: &TrackerTheme,
+    module: &Module,
+    paint_sample_idx: &mut u8,
+    browser_open: &mut bool,
+    playback_state: &AtomicPlaybackState,
+) -> Option<InstrumentEditEvent> {
+    let mut event = None;
+
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.group(|ui| {
@@ -439,7 +452,10 @@ fn draw_envelope_section(
     let mut event = None;
 
     // Envelope tabs with status indicators
-    ui.horizontal(|ui| {
+    egui::ScrollArea::horizontal()
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+        ui.horizontal(|ui| {
         let vol_active = inst.volume_envelope.as_ref().map_or(false, |e| e.flags.enabled);
         let pan_active = inst.panning_envelope.as_ref().map_or(false, |e| e.flags.enabled);
         let pit_active = inst.pitch_envelope.as_ref().map_or(false, |e| e.flags.enabled);
@@ -465,6 +481,7 @@ fn draw_envelope_section(
         if ui.dev_selectable_value("inst.env.tab.flt", env_type, EnvelopeType::Filter, egui::RichText::new(format!("{} Flt  {}", flt_ind, flt_pts)).color(env_colors[3].0)).clicked() {
         }
     });
+    });
 
     let envelope = match env_type {
         EnvelopeType::Volume => &inst.volume_envelope,
@@ -479,7 +496,10 @@ fn draw_envelope_section(
         // Envelope controls
         let hv = ui.data(|d| d.get_temp::<Option<usize>>(env_hovered_id).flatten());
         let frame_margin = egui::Margin::symmetric(5, 0);
-        ui.horizontal(|ui| {
+        egui::ScrollArea::horizontal()
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+            ui.horizontal(|ui| {
             egui::Frame::group(ui.style()).inner_margin(frame_margin).show(ui, |ui| {
                 let mut enabled = env.flags.enabled;
                 if ui.dev_checkbox("inst.env.enabled", &mut enabled, "Enabled").changed() {
@@ -559,6 +579,7 @@ fn draw_envelope_section(
                     *generator_open = true;
                 }
             });
+        });
         });
 
         // Envelope graph
