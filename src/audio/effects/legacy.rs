@@ -523,7 +523,7 @@ impl LegacyProcessor {
     }
 
     pub fn process_tick(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, tick: u8) {
-        let module = engine.module.as_ref().unwrap().clone();
+        let module_format = engine.module.as_ref().unwrap().format;
 
         for ch in 0..engine.state.channels.len() {
             let ae = engine.state.channels[ch].active_effects;
@@ -538,21 +538,21 @@ impl LegacyProcessor {
             if ae.portamento_up {
                 let spd = engine.state.channels[ch].last_portamento_up_speed;
                 if spd > 0 {
-                    let actual_spd = if module.format == crate::sequencer::module::ModuleFormat::S3M { spd as u16 * 4 } else { spd as u16 };
+                    let actual_spd = if module_format == crate::sequencer::module::ModuleFormat::S3M { spd as u16 * 4 } else { spd as u16 };
                     engine.apply_portamento_up(ch, actual_spd);
                 }
             }
             if ae.portamento_down {
                 let spd = engine.state.channels[ch].last_portamento_down_speed;
                 if spd > 0 {
-                    let actual_spd = if module.format == crate::sequencer::module::ModuleFormat::S3M { spd as u16 * 4 } else { spd as u16 };
+                    let actual_spd = if module_format == crate::sequencer::module::ModuleFormat::S3M { spd as u16 * 4 } else { spd as u16 };
                     engine.apply_portamento_down(ch, actual_spd);
                 }
             }
             if ae.tone_portamento {
                 let tp_speed = engine.state.channels[ch].last_tone_portamento_speed;
                 if tp_speed > 0 && engine.state.channels[ch].portamento_target_period.is_some() {
-                    let actual_spd = if module.format == crate::sequencer::module::ModuleFormat::S3M { tp_speed as u16 * 4 } else { tp_speed as u16 };
+                    let actual_spd = if module_format == crate::sequencer::module::ModuleFormat::S3M { tp_speed as u16 * 4 } else { tp_speed as u16 };
                     engine.apply_tone_portamento(ch, actual_spd);
                 }
             }
@@ -672,28 +672,37 @@ impl LegacyProcessor {
         }
         let sample = sample.unwrap();
 
-        let module = engine.module.as_ref().unwrap().clone();
-
-        let nna = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].nna
-        } else {
-            NewNoteAction::NoteCut
-        };
-        let dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].duplicate_check_type
-        } else {
-            DuplicateCheckType::Disabled
-        };
-        let dca = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].duplicate_check_action
-        } else {
-            DuplicateCheckAction::NoteCut
-        };
-        let fade_out_rate = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].fade_out
-        } else {
-            0
-        };
+        let nna;
+        let dct;
+        let dca;
+        let fade_out_rate;
+        let linear_slides;
+        let instruments_len;
+        {
+            let module = &**engine.module.as_ref().unwrap();
+            nna = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+                module.instruments[instrument_idx].nna
+            } else {
+                NewNoteAction::NoteCut
+            };
+            dct = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+                module.instruments[instrument_idx].duplicate_check_type
+            } else {
+                DuplicateCheckType::Disabled
+            };
+            dca = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+                module.instruments[instrument_idx].duplicate_check_action
+            } else {
+                DuplicateCheckAction::NoteCut
+            };
+            fade_out_rate = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+                module.instruments[instrument_idx].fade_out
+            } else {
+                0
+            };
+            linear_slides = module.flags.linear_slides;
+            instruments_len = module.instruments.len();
+        }
         engine.handle_nna(channel, nna, dct, dca, instrument_idx, sample_idx);
 
         let freq = match Note::On(remapped_key).frequency() {
@@ -713,7 +722,7 @@ impl LegacyProcessor {
             sample.fine_tune.saturating_add(fine_tune_offset),
         );
 
-        if !module.flags.linear_slides {
+        if !linear_slides {
             let period = (8363.0 * 428.0 / playback_freq) as u16;
             engine.state.channels[channel].real_period = period;
             engine.state.channels[channel].out_period = period;
@@ -722,8 +731,8 @@ impl LegacyProcessor {
         let mut vol = engine.compute_channel_volume(channel);
         let mut pan = engine.compute_channel_panning(channel);
 
-        if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            let inst = &module.instruments[instrument_idx];
+        if instrument_idx > 0 && instrument_idx < instruments_len {
+            let inst = &engine.module.as_ref().unwrap().instruments[instrument_idx];
             if inst.random_volume > 0 {
                 let r = fastrand();
                 vol *= 1.0 - (inst.random_volume as f32 / 100.0) * r;
@@ -784,8 +793,8 @@ impl LegacyProcessor {
             }
         }
 
-        if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            let inst = &module.instruments[instrument_idx];
+        if instrument_idx > 0 && instrument_idx < instruments_len {
+            let inst = &engine.module.as_ref().unwrap().instruments[instrument_idx];
             let carry_vol = inst.volume_envelope.as_ref().map_or(false, |e| e.flags.carry);
             let carry_pan = inst.panning_envelope.as_ref().map_or(false, |e| e.flags.carry);
             let carry_pitch = inst.pitch_envelope.as_ref().map_or(false, |e| e.flags.carry);
@@ -929,9 +938,9 @@ impl LegacyProcessor {
     }
 
     pub fn setup_portamento(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, note_key: u8, remapped_key: u8, sample: Option<&Sample>, sample_idx: usize) {
-        let module = engine.module.as_ref().unwrap().clone();
+        let module = &**engine.module.as_ref().unwrap();
         let (target_period, target_freq) = engine.compute_portamento_target(
-            channel, note_key, remapped_key, sample, sample_idx, &module,
+            channel, note_key, remapped_key, sample, sample_idx, module,
         );
         let ch = &mut engine.state.channels[channel];
         ch.portamento_target_period = Some(target_period);

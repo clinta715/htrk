@@ -94,11 +94,11 @@ impl XmProcessor {
                     ch.porta_speed_period = (*speed as u16) << 2;
                 }
                 if let Note::On(key) = ch.last_note {
-                    let module = engine.module.as_ref().unwrap().clone();
+                    let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
                     let period = get_note_period(
                         key.saturating_add(ch.rel_ton as u8),
                         ch.fine_tune_offset,
-                        module.flags.linear_slides,
+                        linear_slides,
                     );
                     ch.want_period = period;
                     if period == ch.real_period {
@@ -123,8 +123,8 @@ impl XmProcessor {
                         ch.real_period = ch.real_period.saturating_sub(spd).max(1);
                         ch.out_period = ch.real_period;
                         let out = ch.out_period;
-                        let module = engine.module.as_ref().unwrap().clone();
-                        let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                        let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
+                        let freq = period_to_frequency(out, linear_slides, 8363);
                         let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
                         for voice in &mut engine.voice_pool.voices {
                             if voice.active && voice.channel == Some(channel) {
@@ -147,8 +147,8 @@ impl XmProcessor {
                         ch.real_period = ch.real_period.saturating_add(spd).min(31999);
                         ch.out_period = ch.real_period;
                         let out = ch.out_period;
-                        let module = engine.module.as_ref().unwrap().clone();
-                        let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                        let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
+                        let freq = period_to_frequency(out, linear_slides, 8363);
                         let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
                         for voice in &mut engine.voice_pool.voices {
                             if voice.active && voice.channel == Some(channel) {
@@ -166,8 +166,8 @@ impl XmProcessor {
                     ch.real_period = ch.real_period.saturating_sub(spd).max(1);
                     ch.out_period = ch.real_period;
                     let out = ch.out_period;
-                    let module = engine.module.as_ref().unwrap().clone();
-                    let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                    let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
+                    let freq = period_to_frequency(out, linear_slides, 8363);
                     let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
                     for voice in &mut engine.voice_pool.voices {
                         if voice.active && voice.channel == Some(channel) {
@@ -184,8 +184,8 @@ impl XmProcessor {
                     ch.real_period = ch.real_period.saturating_add(spd).min(31999);
                     ch.out_period = ch.real_period;
                     let out = ch.out_period;
-                    let module = engine.module.as_ref().unwrap().clone();
-                    let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                    let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
+                    let freq = period_to_frequency(out, linear_slides, 8363);
                     let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
                     for voice in &mut engine.voice_pool.voices {
                         if voice.active && voice.channel == Some(channel) {
@@ -203,8 +203,8 @@ impl XmProcessor {
                         ch.real_period = ch.real_period.saturating_sub(spd).max(1);
                         ch.out_period = ch.real_period;
                         let out = ch.out_period;
-                        let module = engine.module.as_ref().unwrap().clone();
-                        let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                        let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
+                        let freq = period_to_frequency(out, linear_slides, 8363);
                         let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
                         for voice in &mut engine.voice_pool.voices {
                             if voice.active && voice.channel == Some(channel) {
@@ -223,8 +223,8 @@ impl XmProcessor {
                         ch.real_period = ch.real_period.saturating_add(spd).min(31999);
                         ch.out_period = ch.real_period;
                         let out = ch.out_period;
-                        let module = engine.module.as_ref().unwrap().clone();
-                        let freq = period_to_frequency(out, module.flags.linear_slides, 8363);
+                        let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
+                        let freq = period_to_frequency(out, linear_slides, 8363);
                         let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
                         for voice in &mut engine.voice_pool.voices {
                             if voice.active && voice.channel == Some(channel) {
@@ -322,7 +322,7 @@ impl XmProcessor {
             }
 
             Effect::SetEnvelopePosition { tick } => {
-                let module = engine.module.as_ref().unwrap().clone();
+                let module = &*engine.module.as_ref().unwrap();
                 let inst_idx = ch.last_instrument as usize;
                 if inst_idx > 0 && inst_idx < module.instruments.len() {
                     let inst = &module.instruments[inst_idx];
@@ -542,8 +542,7 @@ impl XmProcessor {
                         ch.real_period = ch.real_period.saturating_sub(spd_period).max(1);
                         ch.out_period = ch.real_period;
                     }
-                    let module = engine.module.as_ref().unwrap().clone();
-                    let freq = crate::sequencer::period::period_to_frequency(engine.state.channels[ch].out_period, module.flags.linear_slides, 8363);
+                    let freq = crate::sequencer::period::period_to_frequency(engine.state.channels[ch].out_period, linear, 8363);
                     let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
                     for voice in &mut engine.voice_pool.voices {
                         if voice.active && voice.channel == Some(ch) {
@@ -562,8 +561,7 @@ impl XmProcessor {
                         ch.real_period = ch.real_period.saturating_add(spd_period).min(31999);
                         ch.out_period = ch.real_period;
                     }
-                    let module = engine.module.as_ref().unwrap().clone();
-                    let freq = crate::sequencer::period::period_to_frequency(engine.state.channels[ch].out_period, module.flags.linear_slides, 8363);
+                    let freq = crate::sequencer::period::period_to_frequency(engine.state.channels[ch].out_period, linear, 8363);
                     let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
                     for voice in &mut engine.voice_pool.voices {
                         if voice.active && voice.channel == Some(ch) {
@@ -680,8 +678,8 @@ impl XmProcessor {
             if note_with_rel >= 120 {
                 return;
             }
-            let module = engine.module.as_ref().unwrap().clone();
-            let period = get_note_period(note_with_rel, fine_tune, module.flags.linear_slides);
+            let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
+            let period = get_note_period(note_with_rel, fine_tune, linear_slides);
             ch_state.real_period = period;
             ch_state.out_period = period;
 
@@ -689,22 +687,28 @@ impl XmProcessor {
             ch_state.old_vol = sample.default_volume.min(64);
             ch_state.old_pan = sample.default_panning;
 
-            (period, module.flags.linear_slides)
+            (period, linear_slides)
         };
 
-        let module = engine.module.as_ref().unwrap().clone();
         let playback_freq = period_to_frequency(period, linear, 8363);
 
-        let nna = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].nna
-        } else {
-            NewNoteAction::NoteCut
-        };
-        let fade_out = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            module.instruments[instrument_idx].fade_out
-        } else {
-            0
-        };
+        let nna;
+        let fade_out;
+        let instruments_len;
+        {
+            let module = &*engine.module.as_ref().unwrap();
+            nna = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+                module.instruments[instrument_idx].nna
+            } else {
+                NewNoteAction::NoteCut
+            };
+            fade_out = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+                module.instruments[instrument_idx].fade_out
+            } else {
+                0
+            };
+            instruments_len = module.instruments.len();
+        }
 
         let sample_offset = engine.calculate_sample_offset(channel, cell, sample);
         engine.handle_nna(channel, NewNoteAction::NoteCut,
@@ -742,9 +746,8 @@ impl XmProcessor {
             }
         }
 
-        if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            let inst = &module.instruments[instrument_idx];
-            let voice = &mut engine.voice_pool.voices[voice_idx];
+        if instrument_idx > 0 && instrument_idx < instruments_len {
+            let inst = &engine.module.as_ref().unwrap().instruments[instrument_idx];
 
             voice.fade_out_rate = fade_out;
             voice.fade_out_amp = 32768i32;
@@ -836,13 +839,13 @@ impl XmProcessor {
             let ch = &mut engine.state.channels[channel];
             ch.rel_ton = s.relative_note;
         }
-        let module = engine.module.as_ref().unwrap().clone();
+        let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
         let ch = &mut engine.state.channels[channel];
         let ft = ch.fine_tune_offset;
         let want_period = crate::sequencer::period::get_note_period(
             remapped_key.saturating_add(ch.rel_ton as u8),
             ft,
-            module.flags.linear_slides,
+            linear_slides,
         );
         ch.want_period = want_period;
         if want_period == ch.real_period {

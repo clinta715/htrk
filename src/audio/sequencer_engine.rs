@@ -521,8 +521,8 @@ impl SequencerEngine {
             ch.out_period = ch.real_period;
         }
 
-        let module = self.module.as_ref().unwrap().clone();
-        self.update_voices_from_period(channel, module.flags.linear_slides);
+        let linear_slides = self.module.as_ref().unwrap().flags.linear_slides;
+        self.update_voices_from_period(channel, linear_slides);
     }
 
     // ─── XM vibrato ──────────────────────────────────────────────
@@ -563,8 +563,8 @@ impl SequencerEngine {
 
         ch.vib_pos = vib_pos.wrapping_add(vib_speed);
 
-        let module = self.module.as_ref().unwrap().clone();
-        self.update_voices_from_period(channel, module.flags.linear_slides);
+        let linear_slides = self.module.as_ref().unwrap().flags.linear_slides;
+        self.update_voices_from_period(channel, linear_slides);
     }
 
     // ─── XM tremolo ──────────────────────────────────────────────
