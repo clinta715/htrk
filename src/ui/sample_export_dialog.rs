@@ -1,5 +1,6 @@
 use eframe::egui;
 use std::path::PathBuf;
+use eguidev::DevUiExt;
 
 pub struct SampleExportDialog {
     pub sample_index: usize,
@@ -59,12 +60,12 @@ impl SampleExportDialog {
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_else(|| String::new());
                     let mut path_display = path_str.clone();
-                    if ui.text_edit_singleline(&mut path_display).changed() {
+                    if ui.dev_text_edit("sample.export.path", &mut path_display).changed() {
                         if !path_display.is_empty() {
                             self.file_path = Some(PathBuf::from(path_display));
                         }
                     }
-                    if ui.button("Browse...").clicked() {
+                    if ui.dev_button("sample.export.browse", "Browse...").clicked() {
                         let mut dialog = rfd::FileDialog::new()
                             .set_title("Save Sample")
                             .set_file_name(path_str.split(['/', '\\']).last().unwrap_or("sample.wav"));
@@ -98,22 +99,25 @@ impl SampleExportDialog {
                             32 => "32-bit float",
                             _ => unreachable!(),
                         };
-                        if ui.selectable_label(self.bit_depth == *depth, label).clicked() {
-                            self.bit_depth = *depth;
-                        }
+                        ui.dev_selectable_value(
+                            format!("sample.export.format.{}", depth),
+                            &mut self.bit_depth,
+                            *depth,
+                            label,
+                        );
                     }
                 });
                 ui.add_space(15.0);
 
                 ui.horizontal(|ui| {
-                    if ui.button("Export").clicked() {
+                    if ui.dev_button("sample.export.confirm", "Export").clicked() {
                         if let Some(ref path) = self.file_path {
                             result = Some((path.clone(), self.bit_depth));
                         } else {
                             self.error_message = Some("Please select a file path.".to_string());
                         }
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.dev_button("sample.export.cancel", "Cancel").clicked() {
                         result = None;
                     }
                 });

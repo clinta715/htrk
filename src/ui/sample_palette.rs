@@ -2,8 +2,9 @@ use eframe::egui;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::Module;
 use crate::ui::TrackerTheme;
+use eguidev::DevUiExt;
 
-const INLINE_PALETTE_HEIGHT: f32 = 80.0;
+const INLINE_PALETTE_HEIGHT: f32 = 120.0;
 
 pub fn draw_inline_sample_palette(
     ui: &mut egui::Ui,
@@ -32,7 +33,7 @@ pub fn draw_inline_sample_palette(
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let mut any_clicked = false;
-                for i in 0..module.samples.len().min(100) {
+                for i in 0..module.samples.len().min(1000) {
                     let sample = &module.samples[i];
                     let is_selected = *paint_sample == i as u8;
                     let has_data = !sample.data.is_empty();
@@ -106,6 +107,18 @@ pub fn draw_inline_sample_palette(
                                 egui::Color32::from_rgb(100, 220, 100),
                             );
                         }
+
+                        eguidev::track_response_full(
+                            format!("inst.palette.row.{}", i),
+                            &resp,
+                            eguidev::WidgetMeta {
+                                role: eguidev::WidgetRole::Label,
+                                label: Some(label_text.clone()),
+                                value: Some(eguidev::WidgetValue::Text(label_text.clone())),
+                                visible: ui.is_visible() && ui.is_rect_visible(resp.rect),
+                                ..Default::default()
+                            },
+                        );
 
                         resp
                     });
@@ -202,6 +215,7 @@ pub fn draw_sample_browser_popup(
     theme: &TrackerTheme,
 ) -> Option<u8> {
     let mut result = None;
+    let mut should_close = false;
 
     let window_name = "sample_browser";
 
@@ -212,12 +226,27 @@ pub fn draw_sample_browser_popup(
         .default_size(egui::vec2(360.0, 400.0))
         .min_size(egui::vec2(200.0, 200.0))
         .show(ctx, |ui| {
+            let filter_id = ui.make_persistent_id("sample_browser_filter");
+            let mut filter = ui.data(|d| d.get_temp::<String>(filter_id).unwrap_or_default());
+
+            ui.horizontal(|ui| {
+                ui.label("Search:");
+                ui.dev_text_edit("inst.browser.search", &mut filter);
+            });
+
+            let filter_lower = filter.to_lowercase();
+
             ui.vertical(|ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        for i in 0..module.samples.len().min(100) {
+                        for i in 0..module.samples.len().min(1000) {
                             let sample = &module.samples[i];
+                            if !filter_lower.is_empty()
+                                && !sample.name.to_lowercase().contains(&filter_lower)
+                            {
+                                continue;
+                            }
                             let has_data = !sample.data.is_empty();
                             let is_selected = paint_sample == i as u8;
 
@@ -229,11 +258,11 @@ pub fn draw_sample_browser_popup(
                                 egui::Color32::TRANSPARENT
                             };
 
-                    let frame = egui::Frame::NONE
-                        .fill(bg)
-                        .corner_radius(4.0)
-                        .inner_margin(egui::Margin::same(6))
-                        .outer_margin(egui::Margin::symmetric(0, 2));
+                            let frame = egui::Frame::NONE
+                                .fill(bg)
+                                .corner_radius(4.0)
+                                .inner_margin(egui::Margin::same(6))
+                                .outer_margin(egui::Margin::symmetric(0, 2));
 
                             frame.show(ui, |ui| {
                                 let resp = ui.allocate_response(
@@ -295,7 +324,18 @@ pub fn draw_sample_browser_popup(
                         }
                     });
             });
+
+            ui.separator();
+            if ui.dev_button("inst.browser.close", "Close").clicked() {
+                should_close = true;
+            }
+
+            ui.data_mut(|d| d.insert_temp(filter_id, filter));
         });
+
+    if should_close {
+        *open = false;
+    }
 
     result
 }

@@ -21,16 +21,44 @@ pub trait EditCommand {
     fn description(&self) -> &str;
 }
 
-pub struct SetCellCommand {
-    pub order: usize,
-    pub row: usize,
-    pub channel: usize,
-    pub old_cell: Cell,
-    pub new_cell: Cell,
+macro_rules! edit_cmd {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident {
+            $($field:ident: $type:ty),* $(,)?
+        }
+        desc = $desc:expr;
+        execute($s:ident, $m:ident) $exec:block
+        undo($us:ident, $um:ident) $undo:block
+    ) => {
+        $(#[$meta])*
+        $vis struct $name {
+            $(pub $field: $type),*
+        }
+        impl EditCommand for $name {
+            fn execute(&$s, $m: &mut crate::sequencer::Module) -> Result<(), EditError> {
+                $exec
+            }
+            fn undo(&$us, $um: &mut crate::sequencer::Module) -> Result<(), EditError> {
+                $undo
+            }
+            fn description(&self) -> &str {
+                $desc
+            }
+        }
+    };
 }
 
-impl EditCommand for SetCellCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+edit_cmd! {
+    pub struct SetCellCommand {
+        order: usize,
+        row: usize,
+        channel: usize,
+        old_cell: Cell,
+        new_cell: Cell,
+    }
+    desc = "Set Cell";
+    execute(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         let pattern = module.patterns.get(pat_idx).ok_or(EditError::NoSelection)?;
         if self.row >= pattern.num_rows || self.channel >= crate::sequencer::pattern::MAX_CHANNELS {
@@ -39,8 +67,7 @@ impl EditCommand for SetCellCommand {
         module.patterns[pat_idx].data[self.row][self.channel] = self.new_cell;
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         let pattern = module.patterns.get(pat_idx).ok_or(EditError::NoSelection)?;
         if self.row >= pattern.num_rows || self.channel >= crate::sequencer::pattern::MAX_CHANNELS {
@@ -49,20 +76,16 @@ impl EditCommand for SetCellCommand {
         module.patterns[pat_idx].data[self.row][self.channel] = self.old_cell;
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Set Cell"
+edit_cmd! {
+    pub struct InsertRowCommand {
+        pattern_index: usize,
+        row: usize,
+        _channel: Option<usize>,
     }
-}
-
-pub struct InsertRowCommand {
-    pub pattern_index: usize,
-    pub row: usize,
-    pub _channel: Option<usize>,
-}
-
-impl EditCommand for InsertRowCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Insert Row";
+    execute(self, module) {
         if self.pattern_index >= module.patterns.len() {
             return Err(EditError::NoSelection);
         }
@@ -74,8 +97,7 @@ impl EditCommand for InsertRowCommand {
         pattern.num_rows += 1;
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.pattern_index >= module.patterns.len() {
             return Err(EditError::NoSelection);
         }
@@ -86,21 +108,17 @@ impl EditCommand for InsertRowCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Insert Row"
+edit_cmd! {
+    pub struct DeleteRowCommand {
+        pattern_index: usize,
+        row: usize,
+        _channel: Option<usize>,
+        deleted_data: Vec<Cell>,
     }
-}
-
-pub struct DeleteRowCommand {
-    pub pattern_index: usize,
-    pub row: usize,
-    pub _channel: Option<usize>,
-    pub deleted_data: Vec<Cell>,
-}
-
-impl EditCommand for DeleteRowCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Delete Row";
+    execute(self, module) {
         if self.pattern_index >= module.patterns.len() {
             return Err(EditError::NoSelection);
         }
@@ -111,8 +129,7 @@ impl EditCommand for DeleteRowCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.pattern_index >= module.patterns.len() {
             return Err(EditError::NoSelection);
         }
@@ -129,92 +146,73 @@ impl EditCommand for DeleteRowCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Delete Row"
+edit_cmd! {
+    #[allow(dead_code)]
+    pub struct SetOrderEntryCommand {
+        order_index: usize,
+        old_pattern: u8,
+        new_pattern: u8,
     }
-}
-
-#[allow(dead_code)]
-pub struct SetOrderEntryCommand {
-    pub order_index: usize,
-    pub old_pattern: u8,
-    pub new_pattern: u8,
-}
-
-impl EditCommand for SetOrderEntryCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Set Order Entry";
+    execute(self, module) {
         if self.order_index >= module.order_list.len() {
             return Err(EditError::NoSelection);
         }
         module.order_list[self.order_index] = self.new_pattern;
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.order_index >= module.order_list.len() {
             return Err(EditError::NoSelection);
         }
         module.order_list[self.order_index] = self.old_pattern;
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Set Order Entry"
+edit_cmd! {
+    #[allow(dead_code)]
+    pub struct InsertOrderCommand {
+        order_index: usize,
+        pattern: u8,
     }
-}
-
-#[allow(dead_code)]
-pub struct InsertOrderCommand {
-    pub order_index: usize,
-    pub pattern: u8,
-}
-
-impl EditCommand for InsertOrderCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Insert Order";
+    execute(self, module) {
         if module.order_list.len() >= crate::sequencer::module::MAX_ORDER_LENGTH {
             return Err(EditError::PatternFull);
         }
         module.order_list.insert(self.order_index, self.pattern);
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.order_index < module.order_list.len() {
             module.order_list.remove(self.order_index);
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Insert Order"
+edit_cmd! {
+    #[allow(dead_code)]
+    pub struct DeleteOrderCommand {
+        order_index: usize,
+        deleted_pattern: u8,
     }
-}
-
-#[allow(dead_code)]
-pub struct DeleteOrderCommand {
-    pub order_index: usize,
-    pub deleted_pattern: u8,
-}
-
-impl EditCommand for DeleteOrderCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Delete Order";
+    execute(self, module) {
         if self.order_index >= module.order_list.len() {
             return Err(EditError::NoSelection);
         }
         module.order_list.remove(self.order_index);
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if module.order_list.len() < crate::sequencer::module::MAX_ORDER_LENGTH {
             module.order_list.insert(self.order_index, self.deleted_pattern);
         }
         Ok(())
-    }
-
-    fn description(&self) -> &str {
-        "Delete Order"
     }
 }
 
@@ -230,14 +228,14 @@ pub enum SampleProperty {
     FineTune(i8),
 }
 
-pub struct SetSamplePropertyCommand {
-    pub sample_index: usize,
-    pub property: SampleProperty,
-    pub old_property: SampleProperty,
-}
-
-impl EditCommand for SetSamplePropertyCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+edit_cmd! {
+    pub struct SetSamplePropertyCommand {
+        sample_index: usize,
+        property: SampleProperty,
+        old_property: SampleProperty,
+    }
+    desc = "Set Sample Property";
+    execute(self, module) {
         if self.sample_index >= module.samples.len() {
             return Err(EditError::NoSelection);
         }
@@ -255,8 +253,7 @@ impl EditCommand for SetSamplePropertyCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.sample_index >= module.samples.len() {
             return Err(EditError::NoSelection);
         }
@@ -274,21 +271,17 @@ impl EditCommand for SetSamplePropertyCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Set Sample Property"
+edit_cmd! {
+    pub struct MapNoteToSampleCommand {
+        instrument_index: usize,
+        note: u8,
+        old_sample: u8,
+        new_sample: u8,
     }
-}
-
-pub struct MapNoteToSampleCommand {
-    pub instrument_index: usize,
-    pub note: u8,
-    pub old_sample: u8,
-    pub new_sample: u8,
-}
-
-impl EditCommand for MapNoteToSampleCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Map Note to Sample";
+    execute(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -298,8 +291,7 @@ impl EditCommand for MapNoteToSampleCommand {
         module.instruments[self.instrument_index].sample_map[self.note as usize] = self.new_sample;
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -309,21 +301,17 @@ impl EditCommand for MapNoteToSampleCommand {
         module.instruments[self.instrument_index].sample_map[self.note as usize] = self.old_sample;
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Map Note to Sample"
+edit_cmd! {
+    pub struct MapNoteToNoteCommand {
+        instrument_index: usize,
+        note: u8,
+        old_dest: u8,
+        new_dest: u8,
     }
-}
-
-pub struct MapNoteToNoteCommand {
-    pub instrument_index: usize,
-    pub note: u8,
-    pub old_dest: u8,
-    pub new_dest: u8,
-}
-
-impl EditCommand for MapNoteToNoteCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Map Note to Note";
+    execute(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -333,8 +321,7 @@ impl EditCommand for MapNoteToNoteCommand {
         module.instruments[self.instrument_index].note_map[self.note as usize] = self.new_dest;
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -344,20 +331,16 @@ impl EditCommand for MapNoteToNoteCommand {
         module.instruments[self.instrument_index].note_map[self.note as usize] = self.old_dest;
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Map Note to Note"
+edit_cmd! {
+    pub struct SetSampleMapCommand {
+        instrument_index: usize,
+        new_sample_index: u8,
+        old_map: [u8; 120],
     }
-}
-
-pub struct SetSampleMapCommand {
-    pub instrument_index: usize,
-    pub new_sample_index: u8,
-    pub old_map: [u8; 120],
-}
-
-impl EditCommand for SetSampleMapCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Set Sample Map";
+    execute(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -367,18 +350,13 @@ impl EditCommand for SetSampleMapCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
         let inst = &mut module.instruments[self.instrument_index];
         inst.sample_map = self.old_map;
         Ok(())
-    }
-
-    fn description(&self) -> &str {
-        "Set Sample Map"
     }
 }
 
@@ -403,14 +381,14 @@ pub enum InstrumentProperty {
     VibRate(u8),
 }
 
-pub struct SetInstrumentPropertyCommand {
-    pub instrument_index: usize,
-    pub property: InstrumentProperty,
-    pub old_property: InstrumentProperty,
-}
-
-impl EditCommand for SetInstrumentPropertyCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+edit_cmd! {
+    pub struct SetInstrumentPropertyCommand {
+        instrument_index: usize,
+        property: InstrumentProperty,
+        old_property: InstrumentProperty,
+    }
+    desc = "Set Instrument Property";
+    execute(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -437,8 +415,7 @@ impl EditCommand for SetInstrumentPropertyCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -465,10 +442,6 @@ impl EditCommand for SetInstrumentPropertyCommand {
         }
         Ok(())
     }
-
-    fn description(&self) -> &str {
-        "Set Instrument Property"
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -479,42 +452,37 @@ pub enum EnvelopeType {
     Filter,
 }
 
-pub struct SetSampleDataCommand {
-    pub sample_index: usize,
-    pub old_data: Arc<Vec<f32>>,
-    pub new_data: Arc<Vec<f32>>,
-}
-
-impl EditCommand for SetSampleDataCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+edit_cmd! {
+    pub struct SetSampleDataCommand {
+        sample_index: usize,
+        old_data: Arc<Vec<f32>>,
+        new_data: Arc<Vec<f32>>,
+    }
+    desc = "Set Sample Data";
+    execute(self, module) {
         if self.sample_index >= module.samples.len() {
             return Err(EditError::NoSelection);
         }
         module.samples[self.sample_index].data = self.new_data.clone();
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.sample_index >= module.samples.len() {
             return Err(EditError::NoSelection);
         }
         module.samples[self.sample_index].data = self.old_data.clone();
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Set Sample Data"
+edit_cmd! {
+    pub struct AddEnvelopePointCommand {
+        instrument_index: usize,
+        envelope_type: EnvelopeType,
+        point: EnvelopePoint,
     }
-}
-
-pub struct AddEnvelopePointCommand {
-    pub instrument_index: usize,
-    pub envelope_type: EnvelopeType,
-    pub point: EnvelopePoint,
-}
-
-impl EditCommand for AddEnvelopePointCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Add Envelope Point";
+    execute(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -541,8 +509,7 @@ impl EditCommand for AddEnvelopePointCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -559,21 +526,17 @@ impl EditCommand for AddEnvelopePointCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Add Envelope Point"
+edit_cmd! {
+    pub struct RemoveEnvelopePointCommand {
+        instrument_index: usize,
+        envelope_type: EnvelopeType,
+        point_index: usize,
+        old_point: EnvelopePoint,
     }
-}
-
-pub struct RemoveEnvelopePointCommand {
-    pub instrument_index: usize,
-    pub envelope_type: EnvelopeType,
-    pub point_index: usize,
-    pub old_point: EnvelopePoint,
-}
-
-impl EditCommand for RemoveEnvelopePointCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Remove Envelope Point";
+    execute(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -590,8 +553,7 @@ impl EditCommand for RemoveEnvelopePointCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -606,22 +568,18 @@ impl EditCommand for RemoveEnvelopePointCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Remove Envelope Point"
+edit_cmd! {
+    pub struct SetEnvelopePointCommand {
+        instrument_index: usize,
+        envelope_type: EnvelopeType,
+        point_index: usize,
+        old_point: crate::sequencer::instrument::EnvelopePoint,
+        new_point: crate::sequencer::instrument::EnvelopePoint,
     }
-}
-
-pub struct SetEnvelopePointCommand {
-    pub instrument_index: usize,
-    pub envelope_type: EnvelopeType,
-    pub point_index: usize,
-    pub old_point: crate::sequencer::instrument::EnvelopePoint,
-    pub new_point: crate::sequencer::instrument::EnvelopePoint,
-}
-
-impl EditCommand for SetEnvelopePointCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Set Envelope Point";
+    execute(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -638,8 +596,7 @@ impl EditCommand for SetEnvelopePointCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -656,21 +613,17 @@ impl EditCommand for SetEnvelopePointCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Set Envelope Point"
+edit_cmd! {
+    pub struct SetEnvelopeSustainCommand {
+        instrument_index: usize,
+        envelope_type: EnvelopeType,
+        old_sustain: Option<usize>,
+        new_sustain: Option<usize>,
     }
-}
-
-pub struct SetEnvelopeSustainCommand {
-    pub instrument_index: usize,
-    pub envelope_type: EnvelopeType,
-    pub old_sustain: Option<usize>,
-    pub new_sustain: Option<usize>,
-}
-
-impl EditCommand for SetEnvelopeSustainCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Set Envelope Sustain";
+    execute(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -685,8 +638,7 @@ impl EditCommand for SetEnvelopeSustainCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -701,25 +653,21 @@ impl EditCommand for SetEnvelopeSustainCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Set Envelope Sustain"
+edit_cmd! {
+    pub struct SetEnvelopeLoopCommand {
+        instrument_index: usize,
+        envelope_type: EnvelopeType,
+        old_loop_enabled: bool,
+        new_loop_enabled: bool,
+        old_loop_start: Option<usize>,
+        new_loop_start: Option<usize>,
+        old_loop_end: Option<usize>,
+        new_loop_end: Option<usize>,
     }
-}
-
-pub struct SetEnvelopeLoopCommand {
-    pub instrument_index: usize,
-    pub envelope_type: EnvelopeType,
-    pub old_loop_enabled: bool,
-    pub new_loop_enabled: bool,
-    pub old_loop_start: Option<usize>,
-    pub new_loop_start: Option<usize>,
-    pub old_loop_end: Option<usize>,
-    pub new_loop_end: Option<usize>,
-}
-
-impl EditCommand for SetEnvelopeLoopCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Set Envelope Loop";
+    execute(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -736,8 +684,7 @@ impl EditCommand for SetEnvelopeLoopCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -754,21 +701,70 @@ impl EditCommand for SetEnvelopeLoopCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Set Envelope Loop"
+edit_cmd! {
+    pub struct SetEnvelopePointsCommand {
+        instrument_index: usize,
+        envelope_type: EnvelopeType,
+        new_points: Vec<EnvelopePoint>,
+        old_points: Vec<EnvelopePoint>,
+        old_envelope: Option<crate::sequencer::instrument::Envelope>,
+    }
+    desc = "Set Envelope Points";
+    execute(self, module) {
+        if self.instrument_index >= module.instruments.len() {
+            return Err(EditError::NoSelection);
+        }
+        let envelope = match self.envelope_type {
+            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
+            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
+            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
+        };
+        if envelope.is_none() {
+            *envelope = Some(crate::sequencer::instrument::Envelope {
+                points: self.new_points.clone(),
+                sustain_point: None,
+                loop_start: None,
+                loop_end: None,
+                flags: crate::sequencer::instrument::EnvelopeFlags {
+                    enabled: true, sustain: false, loop_: false, carry: false,
+                },
+            });
+        } else if let Some(env) = envelope {
+            env.points = self.new_points.clone();
+        }
+        Ok(())
+    }
+    undo(self, module) {
+        if self.instrument_index >= module.instruments.len() {
+            return Err(EditError::NoSelection);
+        }
+        let envelope = match self.envelope_type {
+            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
+            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
+            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
+            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
+        };
+        if let Some(old_env) = &self.old_envelope {
+            *envelope = Some(old_env.clone());
+        } else if let Some(env) = envelope {
+            env.points = self.old_points.clone();
+        }
+        Ok(())
     }
 }
 
-pub struct SetEnvelopeFlagsCommand {
-    pub instrument_index: usize,
-    pub envelope_type: EnvelopeType,
-    pub old_flags: EnvelopeFlags,
-    pub new_flags: EnvelopeFlags,
-}
-
-impl EditCommand for SetEnvelopeFlagsCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+edit_cmd! {
+    pub struct SetEnvelopeFlagsCommand {
+        instrument_index: usize,
+        envelope_type: EnvelopeType,
+        old_flags: EnvelopeFlags,
+        new_flags: EnvelopeFlags,
+    }
+    desc = "Set Envelope Flags";
+    execute(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -783,8 +779,7 @@ impl EditCommand for SetEnvelopeFlagsCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
@@ -799,20 +794,16 @@ impl EditCommand for SetEnvelopeFlagsCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Set Envelope Flags"
+edit_cmd! {
+    pub struct TransposeCommand {
+        order: usize,
+        delta: i8,
+        old_notes: Vec<(usize, usize, Note)>,
     }
-}
-
-pub struct TransposeCommand {
-    pub order: usize,
-    pub delta: i8,
-    pub old_notes: Vec<(usize, usize, Note)>,
-}
-
-impl EditCommand for TransposeCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Transpose";
+    execute(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         if pat_idx >= module.patterns.len() {
             return Err(EditError::NoSelection);
@@ -825,8 +816,7 @@ impl EditCommand for TransposeCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         if pat_idx >= module.patterns.len() {
             return Err(EditError::NoSelection);
@@ -836,20 +826,16 @@ impl EditCommand for TransposeCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Transpose"
+edit_cmd! {
+    pub struct FillInstrumentCommand {
+        order: usize,
+        old_cells: Vec<(usize, usize, Cell)>,
+        instrument: u8,
     }
-}
-
-pub struct FillInstrumentCommand {
-    pub order: usize,
-    pub old_cells: Vec<(usize, usize, Cell)>,
-    pub instrument: u8,
-}
-
-impl EditCommand for FillInstrumentCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Fill Instrument";
+    execute(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         if pat_idx >= module.patterns.len() {
             return Err(EditError::NoSelection);
@@ -862,8 +848,7 @@ impl EditCommand for FillInstrumentCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         if pat_idx >= module.patterns.len() {
             return Err(EditError::NoSelection);
@@ -873,20 +858,16 @@ impl EditCommand for FillInstrumentCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Fill Instrument"
+edit_cmd! {
+    pub struct InterpolateCommand {
+        order: usize,
+        old_cells: Vec<(usize, usize, Cell)>,
+        new_cells: Vec<(usize, usize, Cell)>,
     }
-}
-
-pub struct InterpolateCommand {
-    pub order: usize,
-    pub old_cells: Vec<(usize, usize, Cell)>,
-    pub new_cells: Vec<(usize, usize, Cell)>,
-}
-
-impl EditCommand for InterpolateCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Interpolate";
+    execute(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         if pat_idx >= module.patterns.len() {
             return Err(EditError::NoSelection);
@@ -896,8 +877,7 @@ impl EditCommand for InterpolateCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         if pat_idx >= module.patterns.len() {
             return Err(EditError::NoSelection);
@@ -907,20 +887,16 @@ impl EditCommand for InterpolateCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Interpolate"
+edit_cmd! {
+    pub struct BulkSetCellsCommand {
+        order: usize,
+        old_cells: Vec<(usize, usize, Cell)>,
+        new_cells: Vec<(usize, usize, Cell)>,
     }
-}
-
-pub struct BulkSetCellsCommand {
-    pub order: usize,
-    pub old_cells: Vec<(usize, usize, Cell)>,
-    pub new_cells: Vec<(usize, usize, Cell)>,
-}
-
-impl EditCommand for BulkSetCellsCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Bulk Set Cells";
+    execute(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         if pat_idx >= module.patterns.len() {
             return Err(EditError::NoSelection);
@@ -933,8 +909,7 @@ impl EditCommand for BulkSetCellsCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         if pat_idx >= module.patterns.len() {
             return Err(EditError::NoSelection);
@@ -947,22 +922,18 @@ impl EditCommand for BulkSetCellsCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Bulk Set Cells"
+edit_cmd! {
+    pub struct ReverseCommand {
+        order: usize,
+        channel: usize,
+        start_row: usize,
+        end_row: usize,
+        old_cells: Vec<Cell>,
     }
-}
-
-pub struct ReverseCommand {
-    pub order: usize,
-    pub channel: usize,
-    pub start_row: usize,
-    pub end_row: usize,
-    pub old_cells: Vec<Cell>,
-}
-
-impl EditCommand for ReverseCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Reverse";
+    execute(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         if pat_idx >= module.patterns.len() {
             return Err(EditError::NoSelection);
@@ -976,8 +947,7 @@ impl EditCommand for ReverseCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         if pat_idx >= module.patterns.len() {
             return Err(EditError::NoSelection);
@@ -987,20 +957,16 @@ impl EditCommand for ReverseCommand {
         }
         Ok(())
     }
+}
 
-    fn description(&self) -> &str {
-        "Reverse"
+edit_cmd! {
+    pub struct RandomizeCommand {
+        order: usize,
+        old_cells: Vec<(usize, usize, Cell)>,
+        new_cells: Vec<(usize, usize, Cell)>,
     }
-}
-
-pub struct RandomizeCommand {
-    pub order: usize,
-    pub old_cells: Vec<(usize, usize, Cell)>,
-    pub new_cells: Vec<(usize, usize, Cell)>,
-}
-
-impl EditCommand for RandomizeCommand {
-    fn execute(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    desc = "Randomize";
+    execute(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         if pat_idx >= module.patterns.len() {
             return Err(EditError::NoSelection);
@@ -1010,8 +976,7 @@ impl EditCommand for RandomizeCommand {
         }
         Ok(())
     }
-
-    fn undo(&self, module: &mut crate::sequencer::Module) -> Result<(), EditError> {
+    undo(self, module) {
         let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
         if pat_idx >= module.patterns.len() {
             return Err(EditError::NoSelection);
@@ -1020,9 +985,5 @@ impl EditCommand for RandomizeCommand {
             module.patterns[pat_idx].data[*row][*ch] = *cell;
         }
         Ok(())
-    }
-
-    fn description(&self) -> &str {
-        "Randomize"
     }
 }

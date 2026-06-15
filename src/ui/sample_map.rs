@@ -1,5 +1,6 @@
 use eframe::egui;
 use crate::sequencer::Module;
+use eguidev::DevUiExt;
 
 pub enum SampleMapEvent {
     NoteClicked(u8),
@@ -17,7 +18,7 @@ pub fn draw_sample_map(
 
     ui.vertical(|ui| {
         ui.heading("Sample Map");
-        ui.label(format!("Mapping to sample: {:02X}", selected_sample));
+        ui.dev_label("sample_map.mapping", format!("Mapping to sample: {:02X}", selected_sample));
 
         let available_width = ui.available_width();
         let cell_size = (available_width / 12.0).floor().min(30.0);
@@ -67,6 +68,19 @@ pub fn draw_sample_map(
                 painter.rect_filled(cell_rect.shrink(1.0), 1.0, bg_color);
 
                 let text = format!("{}{}", notes[note_in_octave as usize], octave);
+                eguidev::track_response_full(
+                    format!("inst.samplemap.cell.{}", note_idx),
+                    &response,
+                    eguidev::WidgetMeta {
+                        role: eguidev::WidgetRole::Button,
+                        label: Some(text.clone()),
+                        value: Some(eguidev::WidgetValue::Int(sample_idx as i64)),
+                        visible: ui.is_visible() && ui.is_rect_visible(cell_rect),
+                        rect: Some(cell_rect),
+                        interact_rect: Some(cell_rect),
+                        ..Default::default()
+                    },
+                );
                 painter.text(
                     cell_rect.center() - egui::vec2(0.0, cell_size * 0.2),
                     egui::Align2::CENTER_CENTER,

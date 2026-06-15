@@ -6,7 +6,7 @@ use crate::edit::{
     AddEnvelopePointCommand, EnvelopeType, InstrumentProperty,
     MapNoteToSampleCommand, MapNoteToNoteCommand, RemoveEnvelopePointCommand,
     SetEnvelopeFlagsCommand, SetEnvelopeLoopCommand, SetEnvelopePointCommand,
-    SetEnvelopeSustainCommand, SetInstrumentPropertyCommand,
+    SetEnvelopePointsCommand, SetEnvelopeSustainCommand, SetInstrumentPropertyCommand,
 };
 use crate::sequencer::instrument::EnvelopePoint;
 use crate::ui::instrument_editor::InstrumentEditEvent;
@@ -173,6 +173,21 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
                 envelope_type: env_type,
                 old_flags: env.as_ref().map(|e| e.flags).unwrap_or_default(),
                 new_flags,
+            })
+        }
+        InstrumentEditEvent::GenerateEnvelope(env_type, points) => {
+            let envelope = match env_type {
+                EnvelopeType::Volume => &inst.volume_envelope,
+                EnvelopeType::Panning => &inst.panning_envelope,
+                EnvelopeType::Pitch => &inst.pitch_envelope,
+                EnvelopeType::Filter => &inst.filter_envelope,
+            };
+            Box::new(SetEnvelopePointsCommand {
+                instrument_index: inst_idx,
+                envelope_type: env_type,
+                new_points: points,
+                old_points: envelope.as_ref().map(|e| e.points.clone()).unwrap_or_default(),
+                old_envelope: envelope.as_ref().cloned(),
             })
         }
         InstrumentEditEvent::SampleMapChanged(note, new_idx) => Box::new(MapNoteToSampleCommand {

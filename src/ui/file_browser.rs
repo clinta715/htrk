@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui as egui_module;
 use egui_module::Ui;
+use eguidev::DevUiExt;
 
 const ENTRIES_PER_PAGE: usize = 50;
 
@@ -22,7 +23,7 @@ impl BrowserMode {
     pub fn extensions(&self) -> Vec<&'static str> {
         match self {
             BrowserMode::Modules => vec!["htk", "it", "xm", "s3m", "mod", "669", "ult", "mmd1", "mmd3", "stm"],
-            BrowserMode::Samples => vec!["wav", "raw"],
+            BrowserMode::Samples => vec!["wav"],
             BrowserMode::Instruments => vec!["hti"],
             BrowserMode::Projects => vec!["htk"],
         }
@@ -644,7 +645,16 @@ impl FileBrowser {
                     for mode in modes {
                         let label = mode.tab_label();
                         let is_active = self.mode == mode;
-                        if ui.selectable_label(is_active, label).clicked() {
+                        let mode_tag = format!("browser.mode.{}", label.to_lowercase());
+                        let response = eguidev::id_with_meta(
+                            ui,
+                            mode_tag,
+                            eguidev::WidgetRole::Button,
+                            Some(label.to_string()),
+                            Some(eguidev::WidgetValue::Bool(is_active)),
+                            |ui| ui.selectable_label(is_active, label),
+                        );
+                        if response.clicked() {
                             if self.mode != mode {
                                 self.mode = mode;
                                 if let Some(last) = self.last_dirs.get(&mode) {
@@ -782,10 +792,20 @@ impl FileBrowser {
                     });
                 });
 
-                let search_response = ui.add(
-                    egui_module::TextEdit::singleline(&mut self.search_query)
-                        .hint_text("Filter files...")
-                        .desired_width(f32::INFINITY),
+                let search_value = self.search_query.clone();
+                let search_response = eguidev::id_with_meta(
+                    ui,
+                    "browser.search",
+                    eguidev::WidgetRole::TextEdit,
+                    None,
+                    Some(eguidev::WidgetValue::Text(search_value)),
+                    |ui| {
+                        ui.add(
+                            egui_module::TextEdit::singleline(&mut self.search_query)
+                                .hint_text("Filter files...")
+                                .desired_width(f32::INFINITY),
+                        )
+                    },
                 );
                 if search_response.changed() {
                     self.page = 0;
@@ -811,7 +831,19 @@ impl FileBrowser {
                                             } else {
                                                 entry.name.clone()
                                             };
-                                            let response = ui.selectable_label(is_selected, &name_text);
+                                            let response = eguidev::id_with_meta(
+                                                ui,
+                                                format!("browser.file.{vis_idx}"),
+                                                eguidev::WidgetRole::Button,
+                                                Some(entry.name.clone()),
+                                                Some(eguidev::WidgetValue::Bool(is_selected)),
+                                                |ui| {
+                                                    ui.add(
+                                                        egui_module::Button::selectable(is_selected, &name_text)
+                                                            .truncate(),
+                                                    )
+                                                },
+                                            );
 
                                             if entry.is_dir {
                                                 detail_cell(ui, "DIR", 36.0, theme.fg_dimmer);
@@ -873,7 +905,19 @@ impl FileBrowser {
                                             } else {
                                                 entry.name.clone()
                                             };
-                                            let response = ui.selectable_label(is_selected, &name_text);
+                                            let response = eguidev::id_with_meta(
+                                                ui,
+                                                format!("browser.file.{vis_idx}"),
+                                                eguidev::WidgetRole::Button,
+                                                Some(entry.name.clone()),
+                                                Some(eguidev::WidgetValue::Bool(is_selected)),
+                                                |ui| {
+                                                    ui.add(
+                                                        egui_module::Button::selectable(is_selected, &name_text)
+                                                            .truncate(),
+                                                    )
+                                                },
+                                            );
 
                                             if entry.is_dir {
                                                 detail_cell(ui, "", 56.0, theme.fg_dim);
@@ -928,7 +972,7 @@ impl FileBrowser {
                                 selected_path = Some(entry.path.clone());
                             }
                             if is_audio_entry(entry) {
-                                if ui.button("▶ Preview").clicked() {
+                                if ui.dev_button("browser.preview", "▶ Preview").clicked() {
                                     self.preview_requested = true;
                                 }
                             }
@@ -951,12 +995,12 @@ impl FileBrowser {
                     }
                     ui.with_layout(egui_module::Layout::right_to_left(egui_module::Align::Center), |ui| {
                         if self.has_next_page() {
-                            if ui.button("Next ▶").clicked() {
+                            if ui.dev_button("browser.nav.next", "Next ▶").clicked() {
                                 self.next_page();
                             }
                         }
                         if self.has_prev_page() {
-                            if ui.button("◀ Prev").clicked() {
+                            if ui.dev_button("browser.nav.prev", "◀ Prev").clicked() {
                                 self.prev_page();
                             }
                         }
