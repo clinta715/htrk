@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use eframe::egui;
 use eguidev::{DevMcp, DevUiExt, FixtureSpec, FrameGuard};
@@ -8,13 +8,12 @@ use crate::app_config::AppConfig;
 use crate::audio::commands::AudioCommand;
 use crate::audio::engine::create_engine_and_sender;
 use crate::audio::playback_state::AtomicPlaybackState;
-use crate::formats;
-use crate::sequencer::effect::NUM_SEND_BUSES;
-use crate::sequencer::effect::SendEffectType;
+
 use crate::sequencer::pattern::Cell;
-use crate::sequencer::{Effect, Note, DEFAULT_CHANNELS, MAX_CHANNELS};
+use crate::sequencer::{DEFAULT_CHANNELS, MAX_CHANNELS};
 use crate::ui::file_browser::{BrowserMode, FileBrowser};
-use crate::ui::pattern_grid::{ColumnVisibility, CursorPosition, Selection, SubColumn, VISIBLE_ROWS};
+use crate::ui::pattern_grid::{ColumnVisibility, CursorPosition, Selection, SubColumn};
+use crate::ui::panel_event::PanelEvent;
 use crate::ui::theme::ThemePreset;
 use crate::ui::TrackerTheme;
 
@@ -26,6 +25,21 @@ pub enum AppView {
     SendFx,
     Playback,
     Automation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowserPurpose {
+    General,
+    LoadInstrument,
+    SaveInstrument,
+    ExportInstrument(usize),
+    SaveProject,
+}
+
+impl Default for BrowserPurpose {
+    fn default() -> Self {
+        BrowserPurpose::General
+    }
 }
 
 pub struct HtrkApp {
@@ -40,23 +54,18 @@ pub struct HtrkApp {
     pub(crate) pending_reinit: bool,
 
     pub(crate) file_browser: FileBrowser,
+    pub(crate) browser_purpose: BrowserPurpose,
 
     pub(crate) current_view: AppView,
 
-    pub(crate) scroll_row: usize,
-    pub(crate) scroll_channel: usize,
+    pub(crate) pattern_view: crate::ui::pattern_view::PatternView,
 
     pub(crate) current_octave: u8,
     pub(crate) edit_mode: bool,
     pub(crate) follow_playback: bool,
     pub(crate) cursor_skip: u8,
-    pub(crate) edit_mask_instrument: bool,
-    pub(crate) edit_mask_volume: bool,
     pub(crate) multichannel_enabled: bool,
     pub(crate) multichannel_channels: Vec<bool>,
-
-    pub(crate) channel_names: Vec<String>,
-    pub(crate) channel_rename_state: crate::ui::channel_headers::ChannelRenameState,
 
     pub(crate) theme: TrackerTheme,
     pub(crate) theme_preset: crate::ui::theme::ThemePreset,
@@ -66,30 +75,17 @@ pub struct HtrkApp {
     pub(crate) wav_export_state: crate::ui::wav_export_window::WavExportState,
     pub(crate) sample_export_dialog: Option<crate::ui::sample_export_dialog::SampleExportDialog>,
     pub(crate) audio_init_failed: bool,
-    pub(crate) sample_selection: Option<(usize, usize)>,
-    pub(crate) sample_clipboard: Option<Arc<Vec<f32>>>,
-    pub(crate) amplify_factor: f32,
+    pub(crate) sample_editor: crate::ui::sample_editor_panel::SampleEditor,
     pub(crate) config: AppConfig,
     pub(crate) col_vis: ColumnVisibility,
-    pub(crate) last_visible_rows: usize,
-    pub(crate) last_visible_channels: usize,
-    pub(crate) playback_scroll_row: usize,
-    pub(crate) playback_scroll_channel: usize,
-    pub(crate) playback_last_visible_rows: usize,
-    pub(crate) send_bus_effect_types: [SendEffectType; NUM_SEND_BUSES],
-    pub(crate) send_bus_params: [[f32; 5]; NUM_SEND_BUSES],
-    pub(crate) send_pre_fader: [bool; NUM_SEND_BUSES],
-    pub(crate) automation_dragging: Option<(usize, f32)>,
+    pub(crate) playback_view: crate::ui::playback_view_panel::PlaybackView,
+    pub(crate) sendfx_panel: crate::ui::sendfx_panel::SendFxPanel,
     pub(crate) alt_l_count: u8,
     pub(crate) alt_l_last: Option<std::time::Instant>,
-    pub(crate) automation_editor_state: crate::ui::automation_editor::AutomationEditorState,
-    pub(crate) prev_channel_notes: [u16; 64],
-    pub(crate) playback_split: f32,
-    pub(crate) playback_zoom: u8,
-    pub(crate) sample_split: f32,
-    pub(crate) instrument_split: f32,
-    pub(crate) instrument_settings_split: f32,
+    pub(crate) automation_editor: crate::ui::automation_editor_panel::AutomationEditor,
+    pub(crate) instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor,
     pub(crate) devmcp: Arc<DevMcp>,
+    pub(crate) pending_view_switch: Arc<AtomicU8>,
 }
 
 impl Default for HtrkApp {
@@ -99,7 +95,7 @@ impl Default for HtrkApp {
         file_browser.restore_last_dirs(&config);
         file_browser.restore_favorites(&config.favorites);
         let playback_state = Arc::new(AtomicPlaybackState::default());
-        let default_zoom = config.editor_font_size as u8;
+        let pending_view_switch = Arc::new(AtomicU8::new(0));
         HtrkApp {
             core: crate::core::HtrkCore::new(playback_state.clone()),
             stream: None,
@@ -110,21 +106,17 @@ impl Default for HtrkApp {
             pending_device_switch: None,
             pending_reinit: false,
             file_browser,
+            browser_purpose: BrowserPurpose::General,
             current_view: AppView::Pattern,
-            scroll_row: 0,
-            scroll_channel: 0,
+            pattern_view: crate::ui::pattern_view::PatternView::default(),
             current_octave: 4,
             edit_mode: true,
             follow_playback: config.follow_playback_default,
             cursor_skip: 1,
-            edit_mask_instrument: true,
-            edit_mask_volume: true,
             alt_l_count: 0,
             alt_l_last: None,
             multichannel_enabled: false,
             multichannel_channels: vec![false; DEFAULT_CHANNELS],
-            channel_names: (0..DEFAULT_CHANNELS).map(|i| format!("Ch{}", i + 1)).collect(),
-            channel_rename_state: crate::ui::channel_headers::ChannelRenameState::default(),
             theme: TrackerTheme::from_preset(
                 ThemePreset::from_name(&config.theme_preset).unwrap_or(ThemePreset::DarkModern)
             ),
@@ -135,39 +127,20 @@ impl Default for HtrkApp {
             wav_export_state: crate::ui::wav_export_window::WavExportState::new(44100),
             sample_export_dialog: None,
             audio_init_failed: false,
-            sample_selection: None,
-            sample_clipboard: None,
-            amplify_factor: config.default_amplify_factor,
+            sample_editor: crate::ui::sample_editor_panel::SampleEditor {
+                amplify_factor: config.default_amplify_factor,
+                ..crate::ui::sample_editor_panel::SampleEditor::default()
+            },
             col_vis: config.get_col_vis(),
             config,
-            last_visible_rows: VISIBLE_ROWS,
-            last_visible_channels: 16,
-            playback_scroll_row: 0,
-            playback_scroll_channel: 0,
-            playback_last_visible_rows: VISIBLE_ROWS,
-            send_bus_effect_types: [
-                SendEffectType::Delay,
-                SendEffectType::Reverb,
-                SendEffectType::None,
-                SendEffectType::None,
-            ],
-            send_bus_params: [
-                [0.5, 1.0, 0.4, 0.3, 1.0],
-                [0.0, 0.7, 0.5, 0.6, 0.5],
-                [0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0],
-            ],
-            send_pre_fader: [false; NUM_SEND_BUSES],
-            automation_dragging: None,
-            automation_editor_state: crate::ui::automation_editor::AutomationEditorState::default(),
-            prev_channel_notes: [0; 64],
-            playback_split: 0.35,
-            playback_zoom: default_zoom,
-            sample_split: 0.30,
-            instrument_split: 0.15,
-            instrument_settings_split: 0.40,
-            devmcp: Arc::new(
-                DevMcp::new()
+            playback_view: crate::ui::playback_view_panel::PlaybackView::default(),
+            sendfx_panel: crate::ui::sendfx_panel::SendFxPanel::default(),
+            automation_editor: crate::ui::automation_editor_panel::AutomationEditor::default(),
+            instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor::default(),
+            pending_view_switch: pending_view_switch.clone(),
+            devmcp: {
+                let ps = pending_view_switch.clone();
+                let devmcp = DevMcp::new()
                     .verbose_logging(true)
                     .fixtures([
                         FixtureSpec::new("empty_project", "A brand new empty project (default after launch)")
@@ -185,15 +158,25 @@ impl Default for HtrkApp {
                         FixtureSpec::new("automation_view", "Switch to the automation editor view")
                             .anchor("view.automation"),
                     ])
-                    .on_fixture(|name| {
-                        match name {
-                            "empty_project" | "pattern_view" | "sample_view"
-                            | "instrument_view" | "sendfx_view" | "playback_view"
-                            | "automation_view" => Ok(()),
-                            _ => Err(format!("unknown fixture: {name}")),
-                        }
-                    }),
-            ),
+                    .on_fixture(move |name| {
+                        let view = match name {
+                            "empty_project" | "pattern_view" => 1u8,
+                            "sample_view" => 2,
+                            "instrument_view" => 3,
+                            "sendfx_view" => 4,
+                            "playback_view" => 5,
+                            "automation_view" => 6,
+                            _ => return Err(format!("unknown fixture: {name}")),
+                        };
+                        ps.store(view, Ordering::Relaxed);
+                        Ok(())
+                    });
+
+                #[cfg(feature = "devtools")]
+                let devmcp = eguidev_runtime::attach(devmcp);
+
+                Arc::new(devmcp)
+            },
         }
     }
 }
@@ -378,7 +361,7 @@ impl HtrkApp {
                 self.stream = Some(stream);
                 self.core.command_sender = sender;
                 if let Some(ref module) = self.core.module {
-                    self.send_command(AudioCommand::LoadModule(module.clone()));
+                    self.core.send_command(AudioCommand::LoadModule(module.clone()));
                 }
                 // Apply persisted audio settings to the new engine
                 self.apply_audio_settings_to_engine();
@@ -397,41 +380,30 @@ impl HtrkApp {
         self.init_audio();
     }
 
-    pub(crate) fn send_command(&mut self, cmd: AudioCommand) {
-        self.core.send_command(cmd);
-    }
-
-    pub(crate) fn ensure_module_ownership(&mut self) {
-        self.core.ensure_module_ownership();
-    }
-
-    pub(crate) fn sync_module_to_audio(&mut self) {
-        self.core.sync_to_audio();
-    }
 
     pub(crate) fn sync_channel_fields(&mut self) {
         self.core.sync_channel_fields();
         let count = self.core.num_channels();
         self.multichannel_channels.resize(count, false);
-        if self.channel_names.len() < count {
-            let old = self.channel_names.len();
-            self.channel_names.resize_with(count, || String::new());
+        if self.pattern_view.channel_names.len() < count {
+            let old = self.pattern_view.channel_names.len();
+            self.pattern_view.channel_names.resize_with(count, || String::new());
             for i in old..count {
-                self.channel_names[i] = format!("Ch{}", i + 1);
+                self.pattern_view.channel_names[i] = format!("Ch{}", i + 1);
             }
         }
     }
 
     pub(crate) fn sync_send_bus_state(&mut self) {
         if let Some(ref module) = self.core.module {
-            self.send_bus_effect_types = module.send_bus_config;
-            self.send_bus_params = [
+            self.sendfx_panel.effect_types = module.send_bus_config;
+            self.sendfx_panel.params = [
                 [module.send_return_levels[0], 0.0, 0.0, 0.0, 0.0],
                 [module.send_return_levels[1], 0.0, 0.0, 0.0, 0.0],
                 [module.send_return_levels[2], 0.0, 0.0, 0.0, 0.0],
                 [module.send_return_levels[3], 0.0, 0.0, 0.0, 0.0],
             ];
-            self.send_pre_fader = module.send_pre_fader;
+            self.sendfx_panel.pre_fader = module.send_pre_fader;
         }
     }
 
@@ -441,19 +413,19 @@ impl HtrkApp {
             "Cubic" => crate::audio::commands::InterpolationType::Cubic,
             _ => crate::audio::commands::InterpolationType::Linear,
         };
-        self.send_command(crate::audio::commands::AudioCommand::SetInterpolation(interp));
+        self.core.send_command(crate::audio::commands::AudioCommand::SetInterpolation(interp));
 
         let limiter = match self.config.limiter_mode.as_str() {
             "SoftKnee" => crate::audio::commands::LimiterMode::SoftKnee,
             "SoftKneeSmooth" => crate::audio::commands::LimiterMode::SoftKneeSmooth,
             _ => crate::audio::commands::LimiterMode::HardClip,
         };
-        self.send_command(crate::audio::commands::AudioCommand::SetLimiterMode(limiter));
+        self.core.send_command(crate::audio::commands::AudioCommand::SetLimiterMode(limiter));
     }
 
     fn apply_config_to_live_state(&mut self) {
         self.follow_playback = self.config.follow_playback_default;
-        self.amplify_factor = self.config.default_amplify_factor;
+        self.sample_editor.amplify_factor = self.config.default_amplify_factor;
         if let Some(preset) = ThemePreset::from_name(&self.config.theme_preset) {
             self.theme_preset = preset;
             self.theme = TrackerTheme::from_preset(preset);
@@ -471,28 +443,19 @@ impl HtrkApp {
 
     pub(crate) fn new_song(&mut self) {
         self.core.new_song();
-        self.scroll_row = 0;
-        self.scroll_channel = 0;
+        self.pattern_view.scroll_row = 0;
+        self.pattern_view.scroll_channel = 0;
         self.sync_channel_fields();
         self.sync_send_bus_state();
     }
 
-    pub(crate) fn current_pattern(&self) -> Option<&crate::sequencer::Pattern> {
-        self.core.current_pattern()
-    }
 
     #[allow(dead_code)]
     fn current_pattern_mut(&mut self) -> Option<&mut crate::sequencer::Pattern> {
         self.core.current_pattern_mut()
     }
 
-    pub(crate) fn num_channels(&self) -> usize {
-        self.core.num_channels()
-    }
 
-    pub(crate) fn num_channels_checked(&self) -> usize {
-        self.core.num_channels_checked()
-    }
 
     pub(crate) fn change_selected_sample(&mut self, delta: i32) {
         let len = self.core.module.as_ref().map_or(0, |m| m.samples.len());
@@ -501,7 +464,7 @@ impl HtrkApp {
         }
         let next = (self.core.selected_sample as i32 + delta).clamp(1, (len - 1) as i32);
         self.core.selected_sample = next as usize;
-        self.sample_selection = None;
+        self.sample_editor.selection = None;
     }
 
     pub(crate) fn change_selected_instrument(&mut self, delta: i32) {
@@ -513,16 +476,13 @@ impl HtrkApp {
         self.core.selected_instrument = next as usize;
     }
 
-    pub(crate) fn get_cell_at_cursor(&self) -> Cell {
-        self.core.get_cell_at_cursor()
-    }
 
     pub(crate) fn set_cell_at_cursor(&mut self, new_cell: Cell) {
         self.core.set_cell_at_cursor(new_cell, &self.multichannel_channels, self.multichannel_enabled);
     }
 
     pub(crate) fn advance_cursor_down(&mut self, step: usize) {
-        if let Some(pattern) = self.current_pattern() {
+        if let Some(pattern) = self.core.current_pattern() {
             let max_row = pattern.num_rows.max(1);
             self.core.cursor.row = (self.core.cursor.row + step).min(max_row - 1);
         }
@@ -535,27 +495,24 @@ impl HtrkApp {
     }
 
     pub(crate) fn ensure_cursor_visible(&mut self) {
-        if self.core.cursor.row < self.scroll_row {
-            self.scroll_row = self.core.cursor.row;
+        if self.core.cursor.row < self.pattern_view.scroll_row {
+            self.pattern_view.scroll_row = self.core.cursor.row;
         }
-        if self.core.cursor.row >= self.scroll_row + self.last_visible_rows {
-            self.scroll_row = self.core.cursor.row - self.last_visible_rows + 1;
+        if self.core.cursor.row >= self.pattern_view.scroll_row + self.pattern_view.last_visible_rows {
+            self.pattern_view.scroll_row = self.core.cursor.row - self.pattern_view.last_visible_rows + 1;
         }
 
-        if self.core.cursor.channel < self.scroll_channel {
-            self.scroll_channel = self.core.cursor.channel;
+        if self.core.cursor.channel < self.pattern_view.scroll_channel {
+            self.pattern_view.scroll_channel = self.core.cursor.channel;
         }
-        if self.core.cursor.channel >= self.scroll_channel + self.last_visible_channels {
-            self.scroll_channel = self.core.cursor.channel - self.last_visible_channels + 1;
+        if self.core.cursor.channel >= self.pattern_view.scroll_channel + self.pattern_view.last_visible_channels {
+            self.pattern_view.scroll_channel = self.core.cursor.channel - self.pattern_view.last_visible_channels + 1;
         }
     }
 
-    pub(crate) fn clear_cell_at_cursor(&mut self) {
-        self.core.clear_cell_at_cursor();
-    }
 
     pub(crate) fn move_cursor_right(&mut self) {
-        let num_ch = self.num_channels();
+        let num_ch = self.core.num_channels();
         if self.core.cursor.channel < num_ch - 1 {
             self.core.cursor.channel += 1;
             self.core.cursor.sub_column = SubColumn::Note;
@@ -655,9 +612,6 @@ impl HtrkApp {
         }
     }
 
-    pub(crate) fn select_all(&mut self) {
-        self.core.select_all();
-    }
 
     pub(crate) fn mark_block_begin(&mut self) {
         let cur = self.core.cursor;
@@ -679,7 +633,7 @@ impl HtrkApp {
 
     pub(crate) fn select_line(&mut self) {
         let row = self.core.cursor.row;
-        let last_ch = self.num_channels().saturating_sub(1);
+        let last_ch = self.core.num_channels().saturating_sub(1);
         self.core.selection_anchor = Some(self.core.cursor);
         self.core.selection = Some(Selection {
             start: CursorPosition { row, channel: 0, sub_column: SubColumn::Note },
@@ -688,13 +642,10 @@ impl HtrkApp {
     }
 
     pub(crate) fn cut_selection(&mut self) {
-        self.copy_selection();
-        self.delete_selection();
+        self.core.copy_selection();
+        self.core.delete_selection();
     }
 
-    pub(crate) fn transpose_selection(&mut self, delta: i8) {
-        self.core.transpose_selection(delta);
-    }
 
     pub(crate) fn handle_context_menu_action(&mut self, action: crate::ui::pattern_grid::ContextMenuAction) {
         if !self.edit_mode {
@@ -715,30 +666,13 @@ impl HtrkApp {
         self.core.delete_automation_point(channel, row);
     }
 
-    pub(crate) fn skip_to_prev_pattern(&mut self) {
-        self.core.skip_to_prev_pattern();
-        self.ensure_cursor_visible();
-    }
 
-    pub(crate) fn skip_to_next_pattern(&mut self) {
-        self.core.skip_to_next_pattern();
-        self.ensure_cursor_visible();
-    }
 
-    pub(crate) fn copy_selection(&mut self) {
-        self.core.copy_selection();
-    }
 
-    pub(crate) fn delete_selection(&mut self) {
-        self.core.delete_selection();
-    }
 
-    pub(crate) fn paste_at_cursor(&mut self) {
-        self.core.paste_at_cursor();
-    }
 
     pub(crate) fn open_file_dialog(&mut self) {
-        self.file_browser.open(BrowserMode::Modules, &mut self.config);
+        self.file_browser.open(BrowserMode::Modules, crate::ui::file_browser::DialogMode::Open, &mut self.config);
     }
 
 
@@ -746,7 +680,8 @@ impl HtrkApp {
 
 
     pub(crate) fn save_as_dialog(&mut self) {
-        self.file_browser.open(BrowserMode::Projects, &mut self.config);
+        self.browser_purpose = BrowserPurpose::SaveProject;
+        self.file_browser.open(BrowserMode::Projects, crate::ui::file_browser::DialogMode::Save, &mut self.config);
     }
 
     pub(crate) fn copy_track(&mut self) {
@@ -796,7 +731,7 @@ impl HtrkApp {
             Some(d) => d,
             None => return false,
         };
-        self.send_command(crate::audio::commands::AudioCommand::PreviewBuffer {
+        self.core.send_command(crate::audio::commands::AudioCommand::PreviewBuffer {
             data,
             sample_rate,
             note_key,
@@ -806,14 +741,7 @@ impl HtrkApp {
         true
     }
 
-
-}
-
-impl eframe::App for HtrkApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
-        let devmcp = self.devmcp.clone();
-        let _guard = FrameGuard::new(devmcp.as_ref(), &ctx);
+    fn draw_preamble(&mut self, ctx: &egui::Context) -> (Option<usize>, Option<usize>, Option<usize>, Option<u8>, u8) {
         ctx.set_zoom_factor(self.config.zoom_factor);
         ctx.set_visuals(self.theme.to_visuals());
 
@@ -821,7 +749,7 @@ impl eframe::App for HtrkApp {
             self.init_audio();
         }
 
-        crate::actions::handle_keyboard_input(self, &ctx);
+        crate::actions::handle_keyboard_input(self, ctx);
 
         if ctx.memory(|m| m.focused().is_none()) {
             ctx.input_mut(|i| {
@@ -835,12 +763,24 @@ impl eframe::App for HtrkApp {
             });
         }
 
-        // Clamp cursor and scroll to active channel count
-        let nch = self.num_channels();
+        let nch = self.core.num_channels();
         self.core.cursor.channel = self.core.cursor.channel.min(nch.saturating_sub(1));
-        self.scroll_channel = self.scroll_channel.min(nch.saturating_sub(1));
+        self.pattern_view.scroll_channel = self.pattern_view.scroll_channel.min(nch.saturating_sub(1));
 
         crate::actions::update_wav_export_progress(self);
+
+        let pending = self.pending_view_switch.swap(0, Ordering::Relaxed);
+        if pending > 0 {
+            self.current_view = match pending {
+                1 => AppView::Pattern,
+                2 => AppView::Sample,
+                3 => AppView::Instrument,
+                4 => AppView::SendFx,
+                5 => AppView::Playback,
+                6 => AppView::Automation,
+                _ => self.current_view,
+            };
+        }
 
         let (playback_row, playback_order, playback_pattern, playback_tick, playback_speed) = {
             let playing = self.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
@@ -854,20 +794,6 @@ impl eframe::App for HtrkApp {
             } else {
                 (None, None, None, None, 6)
             }
-        };
-
-        let note_on_flash = {
-            let mut flash = [false; 64];
-            let playing = self.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
-            if playing {
-                for ch in 0..64 {
-                    let current = self.core.playback_state.channel_note(ch);
-                    let prev = self.prev_channel_notes[ch];
-                    flash[ch] = current > 0 && current < 0xFD && (prev == 0 || prev >= 0xFD);
-                    self.prev_channel_notes[ch] = current;
-                }
-            }
-            flash
         };
 
         if let Some(order) = playback_order {
@@ -889,17 +815,182 @@ impl eframe::App for HtrkApp {
                         let order_idx = self.core.selected_order.min(module.order_list.len().saturating_sub(1));
                         let displayed_pat = module.order_list[order_idx] as usize;
                         if displayed_pat == active_pat {
-                            if row < self.scroll_row {
-                                self.scroll_row = row;
+                            if row < self.pattern_view.scroll_row {
+                                self.pattern_view.scroll_row = row;
                             }
-                            if row >= self.scroll_row + self.last_visible_rows {
-                                self.scroll_row = row - self.last_visible_rows + 1;
+                            if row >= self.pattern_view.scroll_row + self.pattern_view.last_visible_rows {
+                                self.pattern_view.scroll_row = row - self.pattern_view.last_visible_rows + 1;
                             }
                         }
                     }
                 }
             }
         }
+
+        (playback_row, playback_order, playback_pattern, playback_tick, playback_speed)
+    }
+
+    fn draw_dialogs(&mut self, ctx: &egui::Context) {
+        if self.show_shortcuts {
+            crate::ui::help_screen::draw_shortcuts_window(ctx, &mut self.show_shortcuts);
+        }
+
+        if self.settings_state.open {
+            let action = crate::ui::settings_window::draw_settings_window(
+                ctx,
+                &mut self.settings_state,
+                &self.output_device_names,
+                self.selected_device_name.as_deref(),
+            );
+            match action {
+                crate::ui::settings_window::SettingsAction::Save | crate::ui::settings_window::SettingsAction::Apply => {
+                    self.settings_state.apply_to_config(&mut self.config);
+                    self.config.save();
+                    self.apply_config_to_live_state();
+                    self.pending_reinit = true;
+                }
+                crate::ui::settings_window::SettingsAction::Cancel => {
+                    self.settings_state = crate::ui::settings_window::SettingsState::from_config(&self.config);
+                }
+                crate::ui::settings_window::SettingsAction::RefreshDevices => {
+                    self.refresh_output_devices();
+                }
+                crate::ui::settings_window::SettingsAction::SelectDevice(name) => {
+                    self.pending_device_switch = Some(name);
+                }
+                crate::ui::settings_window::SettingsAction::None => {}
+            }
+        }
+
+        if crate::ui::wav_export_window::draw_wav_export(ctx, &mut self.wav_export_state) {
+            crate::actions::export_wav_with_settings(self);
+        }
+
+        if self.show_about {
+            egui::Window::new("About htrk")
+                .open(&mut self.show_about)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .resizable(false)
+                .default_width(350.0)
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.heading(concat!("htrk v", env!("CARGO_PKG_VERSION")));
+                        ui.add_space(8.0);
+                        ui.label("A modern tracker / music sequencer");
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new("Built with Rust + egui + cpal")
+                                .size(11.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                        ui.add_space(12.0);
+                        ui.label("Supports .htk, .it, .xm, .s3m, .mod formats");
+                        ui.add_space(12.0);
+                        ui.label(
+                            egui::RichText::new("Development guided by Clint Anderson")
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(180, 180, 200)),
+                        );
+                        ui.label(
+                            egui::RichText::new("clinta@gmail.com")
+                                .size(10.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new("AI-assisted code from GLM, DeepSeek, and MiniMax")
+                                .size(10.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                        ui.add_space(8.0);
+                    });
+                });
+        }
+
+        if let Some(ref mut dialog) = self.sample_export_dialog {
+            if let Some((path, bit_depth)) = dialog.show(ctx) {
+                let sample_idx = dialog.sample_index;
+                if let Some(ref module) = self.core.module {
+                    if let Some(sample) = module.samples.get(sample_idx) {
+                        let wav_data = crate::formats::wav::export_wav(sample, bit_depth);
+                        if let Err(e) = std::fs::write(&path, wav_data) {
+                            eprintln!("Failed to write sample: {}", e);
+                        } else {
+                            if let Some(parent) = path.parent() {
+                                self.config.default_wav_path = Some(parent.to_string_lossy().into_owned());
+                            }
+                            self.config.set_sample_export_bit_depth(bit_depth);
+                        }
+                    }
+                }
+                self.sample_export_dialog = None;
+            }
+        }
+
+        if self.file_browser.show {
+            let mut file_browser_open = true;
+            egui::Window::new("File Browser")
+                .open(&mut file_browser_open)
+                .default_size([600.0, 400.0])
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .resizable(true)
+                .show(ctx, |ui| {
+                    if let Some(path) = self.file_browser.render(ui, Some(&mut self.config), self.theme.clone()) {
+                        let path_str = path.to_string_lossy().to_string();
+                        match self.browser_purpose {
+                            BrowserPurpose::General => {
+                                let ext = path.extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("")
+                                    .to_lowercase();
+                                if ext == "wav" {
+                                    crate::actions::import_wav(self, &path_str);
+                                } else {
+                                    crate::actions::load_file(self, &path_str);
+                                }
+                            }
+                            BrowserPurpose::LoadInstrument => {
+                                crate::actions::load_instrument_from_file(self, &path_str);
+                            }
+                            BrowserPurpose::SaveInstrument => {
+                                let inst_idx = self.core.selected_instrument;
+                                crate::actions::save_instrument_to_file(self, inst_idx, &path_str);
+                            }
+                            BrowserPurpose::ExportInstrument(idx) => {
+                                crate::actions::save_instrument_to_file(self, idx, &path_str);
+                            }
+                            BrowserPurpose::SaveProject => {
+                                self.core.save_file(&path_str);
+                            }
+                        }
+                        self.browser_purpose = BrowserPurpose::General;
+                    }
+                });
+            if self.file_browser.preview_requested {
+                self.file_browser.preview_requested = false;
+                self.preview_browser_sample(60);
+            }
+            if !file_browser_open {
+                self.file_browser.close();
+            }
+        }
+
+        crate::actions::check_auto_backup(self);
+
+        ctx.request_repaint();
+    }
+
+
+}
+
+impl eframe::App for HtrkApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let devmcp = self.devmcp.clone();
+        let _guard = FrameGuard::new(devmcp.as_ref(), &ctx);
+
+        let (playback_row, playback_order, playback_pattern, playback_tick, playback_speed) =
+            self.draw_preamble(&ctx);
 
         egui::Panel::top("menu_bar").show_inside(ui, |ui| {
             let menu_resp = crate::ui::menu_bar::draw_menu_bar(
@@ -922,10 +1013,12 @@ impl eframe::App for HtrkApp {
                 self.open_file_dialog();
             }
             if menu_resp.import_sample {
-                self.file_browser.open(BrowserMode::Samples, &mut self.config);
+                self.browser_purpose = BrowserPurpose::General;
+                self.file_browser.open(BrowserMode::Samples, crate::ui::file_browser::DialogMode::Open, &mut self.config);
             }
             if menu_resp.import_instrument {
-                self.file_browser.open(BrowserMode::Instruments, &mut self.config);
+                self.browser_purpose = BrowserPurpose::LoadInstrument;
+                self.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut self.config);
             }
             if menu_resp.save_file {
                 crate::actions::save_current_file(self);
@@ -937,35 +1030,35 @@ impl eframe::App for HtrkApp {
                 crate::actions::open_wav_export_dialog(self);
             }
             if menu_resp.undo {
-                self.ensure_module_ownership();
+                self.core.ensure_module_ownership();
                 if let Some(ref mut module) = self.core.module {
                     if let Some(arc_module) = Arc::get_mut(module) {
                         let _ = self.core.undo_manager.undo(arc_module);
                     }
                 }
-                self.sync_module_to_audio();
+                self.core.sync_module_to_audio();
             }
             if menu_resp.redo {
-                self.ensure_module_ownership();
+                self.core.ensure_module_ownership();
                 if let Some(ref mut module) = self.core.module {
                     if let Some(arc_module) = Arc::get_mut(module) {
                         let _ = self.core.undo_manager.redo(arc_module);
                     }
                 }
-                self.sync_module_to_audio();
+                self.core.sync_module_to_audio();
             }
             if menu_resp.cut {
-                self.copy_selection();
-                self.delete_selection();
+                self.core.copy_selection();
+                self.core.delete_selection();
             }
             if menu_resp.copy {
-                self.copy_selection();
+                self.core.copy_selection();
             }
             if menu_resp.paste {
-                self.paste_at_cursor();
+                self.core.paste_at_cursor();
             }
             if menu_resp.select_all {
-                self.select_all();
+                self.core.select_all();
             }
             if menu_resp.cut_track && self.edit_mode {
                 self.cut_track();
@@ -1032,14 +1125,16 @@ impl eframe::App for HtrkApp {
                 &self.theme,
             );
             if transport_resp.prev_pattern_clicked {
-                self.skip_to_prev_pattern();
+                self.core.skip_to_prev_pattern();
+                self.ensure_cursor_visible();
             }
             if transport_resp.next_pattern_clicked {
-                self.skip_to_next_pattern();
+                self.core.skip_to_next_pattern();
+                self.ensure_cursor_visible();
             }
         });
 
-        let num_ch = self.num_channels();
+        let num_ch = self.core.num_channels();
         let panel_w = ctx.content_rect().width() - 12.0;
         let scope_height = crate::ui::oscilloscope::compute_scope_height(panel_w, num_ch);
         egui::Panel::top("oscilloscope")
@@ -1057,7 +1152,7 @@ impl eframe::App for HtrkApp {
             .exact_size(22.0)
             .show_inside(ui, |ui| {
                 let cpu = self.core.playback_state.cpu_usage_pct.load(std::sync::atomic::Ordering::Relaxed);
-                let total_rows = self.current_pattern().map_or(64, |p| p.num_rows);
+                let total_rows = self.core.current_pattern().map_or(64, |p| p.num_rows);
                 let hint = format!("Ins: {} | Smp: {}", self.core.selected_instrument, self.core.selected_sample);
                 let sample_delta = crate::ui::status_bar::draw_status_bar(
                     ui,
@@ -1065,7 +1160,7 @@ impl eframe::App for HtrkApp {
                     self.core.selected_order,
                     self.core.cursor.row,
                     total_rows,
-                    self.num_channels(),
+                    self.core.num_channels(),
                     cpu,
                     self.current_octave,
                     self.cursor_skip,
@@ -1108,7 +1203,7 @@ impl eframe::App for HtrkApp {
                         self.ensure_cursor_visible();
                     }
                     let mut changed = false;
-                    self.ensure_module_ownership();
+                    self.core.ensure_module_ownership();
                     if let Some(ref mut m) = self.core.module {
                         if let Some(arc_module) = Arc::get_mut(m) {
                             if let Some((order_idx, new_pat)) = pattern_changed {
@@ -1166,7 +1261,7 @@ impl eframe::App for HtrkApp {
                         }
                     }
                     if changed {
-                        self.sync_module_to_audio();
+                        self.core.sync_module_to_audio();
                     }
                 } else {
                     ui.label("No module loaded");
@@ -1196,196 +1291,99 @@ impl eframe::App for HtrkApp {
 
             match self.current_view {
                 AppView::Pattern => {
-                    let num_channels = self.num_channels();
-
-                    let metrics = crate::ui::pattern_grid::GridMetrics::new(self.config.editor_font_size as f32, self.config.get_spacing_mode(), self.config.get_col_vis());
-                    let visible_channels = crate::ui::pattern_grid::GridMetrics::calculate_visible_channels(ui, metrics);
-                    let visible_channels = visible_channels.min(num_channels - self.scroll_channel).max(1);
-
-                    // Channel add/remove buttons
-                    ui.horizontal(|ui| {
-                        ui.set_min_height(0.0);
-                        if ui.dev_button("pattern.add_channel", "+").clicked() {
-                            self.ensure_module_ownership();
-                            if let Some(ref mut module) = self.core.module {
-                                if let Some(arc_module) = Arc::get_mut(module) {
-                                    if arc_module.channel_panning.len() < MAX_CHANNELS {
-                                        arc_module.channel_panning.push(crate::sequencer::module::PANNING_CENTER);
-                                        arc_module.channel_volume.push(crate::sequencer::module::VOLUME_MAX);
-                                        self.sync_module_to_audio();
-                                        self.sync_channel_fields();
-                                    }
-                                }
-                            }
-                        }
-                        let can_remove = self.core.module.as_ref()
-                            .map(|m| m.channel_panning.len() > 1).unwrap_or(false);
-                        if ui.dev_button("pattern.remove_channel", "−").clicked() && can_remove {
-                            self.ensure_module_ownership();
-                            if let Some(ref mut module) = self.core.module {
-                                if let Some(arc_module) = Arc::get_mut(module) {
-                                    arc_module.channel_panning.pop();
-                                    arc_module.channel_volume.pop();
-                                    self.sync_module_to_audio();
-                                    self.sync_channel_fields();
-                                    if self.core.cursor.channel >= self.num_channels() {
-                                        self.core.cursor.channel = self.num_channels().saturating_sub(1);
-                                    }
-                                    if self.scroll_channel >= self.num_channels() {
-                                        self.scroll_channel = self.num_channels().saturating_sub(1);
-                                    }
-                                }
-                            }
-                        }
-                    });
-
-                    let ch_resp = crate::ui::channel_headers::draw_channel_headers(
+                    let events = self.pattern_view.ui(
                         ui,
-                        num_channels,
-                        self.scroll_channel,
-                        visible_channels,
-                        &self.core.muted_channels,
-                        &self.core.solo_channels,
-                        &self.channel_names,
-                        &self.core.module.as_ref().map(|m| m.channel_panning.clone()).unwrap_or_default(),
-                        &self.core.send_levels,
-                        &mut self.channel_rename_state,
+                        &mut self.core,
+                        self.config.editor_font_size,
+                        self.config.get_spacing_mode(),
+                        self.config.get_col_vis(),
+                        self.config.row_highlight_minor,
+                        self.config.row_highlight_major,
+                        self.config.get_sample_length_bg(),
                         &self.theme,
-                        &self.core.playback_state,
-                        metrics,
-                        &self.core.automation_targets,
-                        &note_on_flash,
+                        playback_pattern,
+                        playback_row,
+                        playback_tick,
+                        playback_speed,
                     );
-
-                    if let Some(ch) = ch_resp.toggle_mute {
-                        self.core.toggle_mute(ch);
-                    }
-                    if let Some(ch) = ch_resp.toggle_solo {
-                        self.core.toggle_solo(ch);
-                    }
-                    if let Some((ch, si, level)) = ch_resp.send_changed {
-                        self.core.set_send_level(ch, si, level);
-                    }
-                    if let Some((ch, name)) = ch_resp.rename_channel {
-                        if ch < self.channel_names.len() {
-                            self.channel_names[ch] = name;
-                        }
-                    }
-                    if let Some((ch, target)) = ch_resp.automation_target_changed {
-                        if ch < self.core.automation_targets.len() {
-                            self.core.automation_targets[ch] = target;
-                            if let Some(ref t) = target {
-                                self.ensure_module_ownership();
+                    let mut cursor_changed = false;
+                    for event in events {
+                        match event {
+                            PanelEvent::AddChannel => {
+                                self.core.ensure_module_ownership();
+                                if let Some(ref mut module) = self.core.module {
+                                    if let Some(arc_module) = Arc::get_mut(module) {
+                                        if arc_module.channel_panning.len() < MAX_CHANNELS {
+                                            arc_module.channel_panning.push(crate::sequencer::module::PANNING_CENTER);
+                                            arc_module.channel_volume.push(crate::sequencer::module::VOLUME_MAX);
+                                            self.core.sync_module_to_audio();
+                                            self.sync_channel_fields();
+                                        }
+                                    }
+                                }
+                            }
+                            PanelEvent::RemoveChannel => {
+                                self.core.ensure_module_ownership();
+                                if let Some(ref mut module) = self.core.module {
+                                    if let Some(arc_module) = Arc::get_mut(module) {
+                                        arc_module.channel_panning.pop();
+                                        arc_module.channel_volume.pop();
+                                        self.core.sync_module_to_audio();
+                                        self.sync_channel_fields();
+                                        if self.core.cursor.channel >= self.core.num_channels() {
+                                            self.core.cursor.channel = self.core.num_channels().saturating_sub(1);
+                                        }
+                                        if self.pattern_view.scroll_channel >= self.core.num_channels() {
+                                            self.pattern_view.scroll_channel = self.core.num_channels().saturating_sub(1);
+                                        }
+                                    }
+                                }
+                            }
+                            PanelEvent::SetAutomationTarget { channel, target } => {
+                                self.core.ensure_module_ownership();
                                 if let Some(ref mut module) = self.core.module {
                                     if let Some(arc_module) = Arc::get_mut(module) {
                                         let exists = arc_module.automation_tracks.iter().any(
-                                            |tr| tr.channel == Some(ch) && tr.target == *t
+                                            |tr| tr.channel == Some(channel) && tr.target == target
                                         );
                                         if !exists {
                                             let id = arc_module.next_automation_id;
                                             arc_module.next_automation_id += 1;
                                             arc_module.automation_tracks.push(
-                                                crate::sequencer::AutomationTrack::new(id, *t, Some(ch))
+                                                crate::sequencer::AutomationTrack::new(id, target, Some(channel))
                                             );
                                         }
                                     }
                                 }
-                                self.sync_module_to_audio();
+                                self.core.sync_module_to_audio();
                             }
+                            PanelEvent::ContextMenuAction(action) => {
+                                self.handle_context_menu_action(action);
+                            }
+                            PanelEvent::AutomationInteraction(interaction) => {
+                                self.handle_automation_interaction(interaction);
+                            }
+                            PanelEvent::ToggleSampleLengthBg => {
+                                self.config.toggle_sample_length_bg();
+                            }
+                            PanelEvent::SyncToAudio => {
+                                cursor_changed = true;
+                            }
+                            _ => {}
                         }
                     }
-
-                    if let Some(module) = &self.core.module {
-                        if !module.order_list.is_empty() {
-                            let order_idx = self.core.selected_order.min(module.order_list.len().saturating_sub(1));
-                            let pat_idx = module.order_list[order_idx] as usize;
-                            let grid_playback_row = if playback_pattern == Some(pat_idx) { playback_row } else { None };
-                            if let Some(pattern) = module.patterns.get(pat_idx) {
-                                let auto_overlays: Vec<Option<crate::ui::pattern_grid::AutomationOverlayInfo>> = (0..num_channels).map(|ch| {
-                                    self.core.automation_targets.get(ch).and_then(|t| t.as_ref()).map(|target| {
-                                        let track = module.automation_tracks.iter()
-                                            .find(|tr| tr.channel == Some(ch) && tr.target == *target)
-                                            .map(|tr| std::sync::Arc::new(tr.clone()));
-                                        crate::ui::pattern_grid::AutomationOverlayInfo {
-                                            target: *target,
-                                            track,
-                                            current_order: self.core.selected_order as u16,
-                                            speed: module.initial_speed,
-                                        }
-                                    })
-                                }).collect();
-
-                                let grid_resp = crate::ui::pattern_grid::draw_pattern_grid(
-                                    ui,
-                                    pattern,
-                                    &self.core.cursor,
-                                    self.core.selection.as_ref(),
-                                    grid_playback_row,
-                                    if grid_playback_row.is_some() { playback_tick } else { None },
-                                    playback_speed,
-                                    self.scroll_row,
-                                    self.scroll_channel,
-                                    num_channels,
-                                    metrics,
-                                    &self.theme,
-                                    self.config.row_highlight_minor,
-                                    self.config.row_highlight_major,
-                                    self.config.get_sample_length_bg(),
-                                    self.config.get_col_vis(),
-                                    self.core.module.as_ref().map(|v| &**v),
-                                    &auto_overlays,
-                                );
-
-                                self.last_visible_rows = grid_resp.visible_rows;
-                                self.last_visible_channels = grid_resp.visible_channels;
-
-                                if let Some(pos) = grid_resp.clicked_position {
-                                    self.core.cursor = pos;
-                                    self.core.selection = None;
-                                    self.core.selection_anchor = None;
-                                    self.ensure_cursor_visible();
-                                }
-                                if let Some(pos) = grid_resp.drag_position {
-                                    if self.core.selection_anchor.is_none() {
-                                        self.core.selection_anchor = Some(self.core.cursor);
-                                    }
-                                    self.core.cursor = pos;
-                                    if let Some(anchor) = self.core.selection_anchor {
-                                        self.core.selection = Some(Selection {
-                                            start: anchor,
-                                            end: self.core.cursor,
-                                        });
-                                    }
-                                    self.ensure_cursor_visible();
-                                }
-                                if let Some(action) = grid_resp.context_menu_action {
-                                    self.handle_context_menu_action(action);
-                                }
-                                if let Some(interaction) = grid_resp.automation_interaction {
-                                    self.handle_automation_interaction(interaction);
-                                }
-                                if grid_resp.toggle_sample_length_bg {
-                                    self.config.toggle_sample_length_bg();
-                                }
-                                if let Some(tooltip) = grid_resp.effect_tooltip {
-                                    ui.label(egui::RichText::new(&tooltip).size(10.0).color(egui::Color32::GRAY));
-                                }
-                            }
-                        }
+                    if cursor_changed {
+                        self.ensure_cursor_visible();
                     }
                 }
                 AppView::Sample => {
                     if let Some(module) = &self.core.module {
-                        if let Some(event) = crate::ui::sample_editor::draw_sample_editor(
+                        if let Some(event) = self.sample_editor.ui(
                             ui,
                             module,
                             &mut self.core.selected_sample,
                             &self.theme,
-                            &mut self.sample_selection,
-                            &mut self.sample_clipboard,
-                            &mut self.amplify_factor,
                             &self.core.playback_state,
-                            &mut self.sample_split,
                         ) {
                             crate::actions::handle_sample_edit(self, event);
                         }
@@ -1393,28 +1391,41 @@ impl eframe::App for HtrkApp {
                 }
                 AppView::Instrument => {
                     if let Some(module) = &self.core.module {
-                        if let Some(event) = crate::ui::instrument_editor::draw_instrument_editor(
+                        if let Some(event) = self.instrument_editor.ui(
                             ui,
                             module,
                             &mut self.core.selected_instrument,
                             &mut self.core.selected_sample,
                             &self.theme,
                             &self.core.playback_state,
-                            &mut self.instrument_split,
-                            &mut self.instrument_settings_split,
                         ) {
                             match event {
                                 crate::ui::instrument_editor::InstrumentEditEvent::SaveInstrument => {
-                                    crate::actions::save_instrument_dialog(self);
+                                    self.browser_purpose = BrowserPurpose::SaveInstrument;
+                                    let inst_idx = self.core.selected_instrument;
+                                    if let Some(ref m) = self.core.module {
+                                        if let Some(inst) = m.instruments.get(inst_idx) {
+                                            self.file_browser.file_name = format!("{}.hti", inst.name.trim());
+                                        }
+                                    }
+                                    self.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Save, &mut self.config);
                                 }
                                 crate::ui::instrument_editor::InstrumentEditEvent::LoadInstrument => {
-                                    crate::actions::load_instrument_dialog(self);
+                                    self.browser_purpose = BrowserPurpose::LoadInstrument;
+                                    self.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut self.config);
                                 }
                                 crate::ui::instrument_editor::InstrumentEditEvent::ExportInstrument(idx) => {
-                                    crate::actions::export_instrument_dialog(self, idx);
+                                    self.browser_purpose = BrowserPurpose::ExportInstrument(idx);
+                                    if let Some(ref m) = self.core.module {
+                                        if let Some(inst) = m.instruments.get(idx) {
+                                            self.file_browser.file_name = format!("{}.hti", inst.name.trim());
+                                        }
+                                    }
+                                    self.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Save, &mut self.config);
                                 }
                                 crate::ui::instrument_editor::InstrumentEditEvent::ImportInstrument => {
-                                    crate::actions::load_instrument_dialog(self);
+                                    self.browser_purpose = BrowserPurpose::LoadInstrument;
+                                    self.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut self.config);
                                 }
                                 other => crate::actions::handle_instrument_edit(self, other),
                             }
@@ -1422,30 +1433,16 @@ impl eframe::App for HtrkApp {
                     }
                 }
                 AppView::SendFx => {
-                    crate::ui::sendfx_editor::draw_sendfx_view(
-                        ui,
-                        &mut self.core.command_sender,
-                        &mut self.send_bus_effect_types,
-                        &mut self.send_bus_params,
-                        &mut self.send_pre_fader,
-                    );
+                    self.sendfx_panel.ui(ui, &mut self.core.command_sender);
                 }
                 AppView::Playback => {
-                    let num_channels = self.num_channels();
-
-                    let metrics = crate::ui::pattern_grid::GridMetrics::new(
-                        self.playback_zoom as f32,
-                        self.config.get_spacing_mode(),
-                        self.config.get_col_vis(),
-                    );
-
+                    let num_channels = self.core.num_channels();
                     let current_pattern = playback_pattern
                         .and_then(|pat| self.core.module.as_ref()?.patterns.get(pat));
                     let current_module = self.core.module.as_ref().map(|m| &**m);
-
                     let grid_playback_row = playback_row;
 
-                    let visible_rows = crate::ui::playback_view::draw_playback_view(
+                    self.playback_view.ui(
                         ui,
                         &self.core.playback_state,
                         &mut self.core.command_sender,
@@ -1453,43 +1450,24 @@ impl eframe::App for HtrkApp {
                         num_channels,
                         current_pattern,
                         current_module,
-                        self.playback_scroll_row,
-                        self.playback_scroll_channel,
-                        metrics,
-                        self.config.get_col_vis(),
                         self.config.row_highlight_minor,
                         self.config.row_highlight_major,
                         self.config.get_sample_length_bg(),
+                        self.config.get_col_vis(),
                         grid_playback_row,
                         if grid_playback_row.is_some() { playback_tick } else { None },
                         playback_speed,
-                        &mut self.playback_split,
-                        &mut self.playback_zoom,
+                        self.config.get_spacing_mode(),
                     );
-
-                    self.playback_last_visible_rows = visible_rows;
-
-                    // Auto-scroll playback view to follow the playhead
-                    if let Some(row) = playback_row {
-                        if row < self.playback_scroll_row {
-                            self.playback_scroll_row = row;
-                        }
-                        if self.playback_last_visible_rows > 0
-                            && row >= self.playback_scroll_row + self.playback_last_visible_rows
-                        {
-                            self.playback_scroll_row = row - self.playback_last_visible_rows + 1;
-                        }
-                    }
                 }
                 AppView::Automation => {
-                    self.automation_editor_state.selected_order = self.core.selected_order as u16;
-                    self.ensure_module_ownership();
+                    self.automation_editor.state.selected_order = self.core.selected_order as u16;
+                    self.core.ensure_module_ownership();
                     if let Some(ref mut module) = self.core.module {
                         if let Some(arc_module) = Arc::get_mut(module) {
-                            let auto_resp = crate::ui::automation_editor::draw_automation_editor(
+                            let auto_resp = self.automation_editor.ui(
                                 ui,
                                 arc_module,
-                                &mut self.automation_editor_state,
                                 &self.theme,
                             );
                             if let Some((target, channel)) = auto_resp.track_added {
@@ -1498,12 +1476,12 @@ impl eframe::App for HtrkApp {
                                 arc_module.automation_tracks.push(
                                     crate::sequencer::AutomationTrack::new(id, target, channel)
                                 );
-                                self.automation_editor_state.selected_track_id = Some(id);
+                                self.automation_editor.state.selected_track_id = Some(id);
                             }
                             if let Some(tid) = auto_resp.track_removed {
                                 arc_module.automation_tracks.retain(|t| t.id != tid);
-                                if self.automation_editor_state.selected_track_id == Some(tid) {
-                                    self.automation_editor_state.selected_track_id = None;
+                                if self.automation_editor.state.selected_track_id == Some(tid) {
+                                    self.automation_editor.state.selected_track_id = None;
                                 }
                             }
                             if let Some(tid) = auto_resp.track_toggled {
@@ -1526,142 +1504,14 @@ impl eframe::App for HtrkApp {
                                     t.default_interp = mode;
                                 }
                             }
-                            self.sync_module_to_audio();
+                            self.core.sync_module_to_audio();
                         }
                     }
                 }
             }
         });
 
-        if self.show_shortcuts {
-            crate::ui::help_screen::draw_shortcuts_window(&ctx, &mut self.show_shortcuts);
-        }
-
-        if self.settings_state.open {
-            let action = crate::ui::settings_window::draw_settings_window(
-                &ctx,
-                &mut self.settings_state,
-                &self.output_device_names,
-                self.selected_device_name.as_deref(),
-            );
-            match action {
-                crate::ui::settings_window::SettingsAction::Save | crate::ui::settings_window::SettingsAction::Apply => {
-                    self.settings_state.apply_to_config(&mut self.config);
-                    self.config.save();
-                    self.apply_config_to_live_state();
-                    self.pending_reinit = true;
-                }
-                crate::ui::settings_window::SettingsAction::Cancel => {
-                    self.settings_state = crate::ui::settings_window::SettingsState::from_config(&self.config);
-                }
-                crate::ui::settings_window::SettingsAction::RefreshDevices => {
-                    self.refresh_output_devices();
-                }
-                crate::ui::settings_window::SettingsAction::SelectDevice(name) => {
-                    self.pending_device_switch = Some(name);
-                }
-                crate::ui::settings_window::SettingsAction::None => {}
-            }
-        }
-
-        if crate::ui::wav_export_window::draw_wav_export(&ctx, &mut self.wav_export_state) {
-            crate::actions::export_wav_with_settings(self);
-        }
-
-        if self.show_about {
-            egui::Window::new("About htrk")
-                .open(&mut self.show_about)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .resizable(false)
-                .default_width(350.0)
-                .show(&ctx, |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.heading(concat!("htrk v", env!("CARGO_PKG_VERSION")));
-                        ui.add_space(8.0);
-                        ui.label("A modern tracker / music sequencer");
-                        ui.add_space(4.0);
-                        ui.label(
-                            egui::RichText::new("Built with Rust + egui + cpal")
-                                .size(11.0)
-                                .color(egui::Color32::GRAY),
-                        );
-                        ui.add_space(12.0);
-                        ui.label("Supports .htk, .it, .xm, .s3m, .mod formats");
-                        ui.add_space(12.0);
-                        ui.label(
-                            egui::RichText::new("Development guided by Clint Anderson")
-                                .size(11.0)
-                                .color(egui::Color32::from_rgb(180, 180, 200)),
-                        );
-                        ui.label(
-                            egui::RichText::new("clinta@gmail.com")
-                                .size(10.0)
-                                .color(egui::Color32::GRAY),
-                        );
-                        ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new("AI-assisted code from GLM, DeepSeek, and MiniMax")
-                                .size(10.0)
-                                .color(egui::Color32::GRAY),
-                        );
-                        ui.add_space(8.0);
-                    });
-                });
-        }
-
-        if let Some(ref mut dialog) = self.sample_export_dialog {
-            if let Some((path, bit_depth)) = dialog.show(&ctx) {
-                let sample_idx = dialog.sample_index;
-                if let Some(ref module) = self.core.module {
-                    if let Some(sample) = module.samples.get(sample_idx) {
-                        let wav_data = crate::formats::wav::export_wav(sample, bit_depth);
-                        if let Err(e) = std::fs::write(&path, wav_data) {
-                            eprintln!("Failed to write sample: {}", e);
-                        } else {
-                            if let Some(parent) = path.parent() {
-                                self.config.default_wav_path = Some(parent.to_string_lossy().into_owned());
-                            }
-                            self.config.set_sample_export_bit_depth(bit_depth);
-                        }
-                    }
-                }
-                self.sample_export_dialog = None;
-            }
-        }
-
-        if self.file_browser.show {
-            let mut file_browser_open = true;
-            egui::Window::new("File Browser")
-                .open(&mut file_browser_open)
-                .default_size([600.0, 400.0])
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .resizable(true)
-                .show(&ctx, |ui| {
-                    if let Some(path) = self.file_browser.render(ui, Some(&mut self.config), self.theme.clone()) {
-                        let path_str = path.to_string_lossy().to_string();
-                        let ext = path.extension()
-                            .and_then(|e| e.to_str())
-                            .unwrap_or("")
-                            .to_lowercase();
-                        if ext == "wav" {
-                            crate::actions::import_wav(self, &path_str);
-                        } else {
-                            crate::actions::load_file(self, &path_str);
-                        }
-                    }
-                });
-            if self.file_browser.preview_requested {
-                self.file_browser.preview_requested = false;
-                self.preview_browser_sample(60);
-            }
-            if !file_browser_open {
-                self.file_browser.close();
-            }
-        }
-
-        crate::actions::check_auto_backup(self);
-
-        ctx.request_repaint();
+        self.draw_dialogs(&ctx);
     }
 
     fn on_exit(&mut self) {

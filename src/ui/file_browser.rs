@@ -19,6 +19,18 @@ pub enum BrowserMode {
     Projects,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DialogMode {
+    Open,
+    Save,
+}
+
+impl Default for DialogMode {
+    fn default() -> Self {
+        DialogMode::Open
+    }
+}
+
 impl BrowserMode {
     pub fn extensions(&self) -> Vec<&'static str> {
         match self {
@@ -276,6 +288,7 @@ fn wav_duration(path: &Path) -> Option<f64> {
 
 pub struct FileBrowser {
     pub mode: BrowserMode,
+    pub dialog_mode: DialogMode,
     pub show: bool,
     pub current_path: PathBuf,
     pub entries: Vec<FileEntry>,
@@ -286,6 +299,7 @@ pub struct FileBrowser {
     pub last_dirs: HashMap<BrowserMode, PathBuf>,
     pub project_root: PathBuf,
     pub search_query: String,
+    pub file_name: String,
     pub favorites: Vec<PathBuf>,
     duration_cache: HashMap<PathBuf, Option<f64>>,
     pub view_mode: ViewMode,
@@ -302,6 +316,7 @@ impl Default for FileBrowser {
 
         Self {
             mode: BrowserMode::Modules,
+            dialog_mode: DialogMode::Open,
             show: false,
             current_path: project_root.clone(),
             entries: Vec::new(),
@@ -312,6 +327,7 @@ impl Default for FileBrowser {
             last_dirs: HashMap::new(),
             project_root,
             search_query: String::new(),
+            file_name: String::new(),
             favorites: Vec::new(),
             duration_cache: HashMap::new(),
             view_mode: ViewMode::Details,
@@ -351,11 +367,15 @@ impl FileBrowser {
         browser
     }
 
-    pub fn open(&mut self, mode: BrowserMode, config: &mut crate::app_config::AppConfig) {
+    pub fn open(&mut self, mode: BrowserMode, dialog_mode: DialogMode, config: &mut crate::app_config::AppConfig) {
         self.mode = mode;
+        self.dialog_mode = dialog_mode;
         self.show = true;
         self.preview_enabled = false;
         self.search_query.clear();
+        if dialog_mode == DialogMode::Open {
+            self.file_name.clear();
+        }
 
         if let Some(last) = self.last_dirs.get(&mode) {
             if last.is_dir() && last.exists() {
@@ -871,6 +891,9 @@ impl FileBrowser {
 
                                             if response.clicked() {
                                                 self.select_index(vis_idx);
+                                                if self.dialog_mode == DialogMode::Save && !entry.is_dir {
+                                                    self.file_name = entry.name.clone();
+                                                }
                                             }
                                             if response.double_clicked() {
                                                 if entry.is_dir {
@@ -947,6 +970,9 @@ impl FileBrowser {
 
                                             if response.clicked() {
                                                 self.select_index(vis_idx);
+                                                if self.dialog_mode == DialogMode::Save && !entry.is_dir {
+                                                    self.file_name = entry.name.clone();
+                                                }
                                             }
                                             if response.double_clicked() {
                                                 if entry.is_dir {
@@ -963,6 +989,26 @@ impl FileBrowser {
 
                 ui.separator();
                 ui.horizontal(|ui| {
+                    if self.dialog_mode == DialogMode::Save {
+                        ui.label("File Name:");
+                        let resp = ui.add(egui_module::TextEdit::singleline(&mut self.file_name).desired_width(180.0));
+                        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui_module::Key::Enter)) {
+                            if !self.file_name.is_empty() {
+                                let mut path = self.current_path.clone();
+                                path.push(&self.file_name);
+                                selected_path = Some(path);
+                            }
+                        }
+                        if ui.button("Save").clicked() {
+                            if !self.file_name.is_empty() {
+                                let mut path = self.current_path.clone();
+                                path.push(&self.file_name);
+                                selected_path = Some(path);
+                            }
+                        }
+                        ui.separator();
+                    }
+
                     let sel_info = page_entries.iter()
                         .find(|(vis_idx, _)| *vis_idx == self.selected_index)
                         .map(|(_, e)| e.clone());

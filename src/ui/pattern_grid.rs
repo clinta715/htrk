@@ -1,7 +1,7 @@
 use eframe::egui::{self, Pos2, Rect, Stroke};
 
 use crate::app_config::SpacingMode;
-use crate::sequencer::automation::{AutomationPoint, AutomationTarget, AutomationTrack, InterpolationMode};
+use crate::sequencer::automation::{AutomationTarget, AutomationTrack, InterpolationMode};
 use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect, C669Effect, MmdEffect, UltEffect, StmEffect};
 use crate::sequencer::note::{Note, TONE_NAMES};
 use crate::sequencer::pattern::Cell;
@@ -15,6 +15,7 @@ pub struct AutomationOverlayInfo {
     pub speed: u8,
 }
 
+#[derive(Debug, Clone)]
 pub enum AutomationInteraction {
     PointCreated { channel: usize, order: u16, row: u16, value: f32 },
     PointMoved { channel: usize, order: u16, row: u16, value: f32 },
@@ -769,7 +770,7 @@ fn draw_automation_cell(
     x: f32,
     y: f32,
     row: usize,
-    ch: usize,
+    _ch: usize,
     metrics: GridMetrics,
     theme: &TrackerTheme,
     info: &AutomationOverlayInfo,

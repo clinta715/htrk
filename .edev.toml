@@ -1,5 +1,5 @@
 [app]
-command = ["cargo", "run", "--features", "devtools"]
+command = ["cargo", "run", "--bin", "htrk", "--features", "devtools"]
 
 [smoke]
 suite_dir = "smoketest"

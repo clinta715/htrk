@@ -36,7 +36,31 @@ To prevent regressions in the sequencer, audio engine, and effect processing pip
   ```
 - **Why**: The audio engine always holds a clone of `Arc<Module>`, so `Arc::get_mut()` returns `None` unless ownership is ensured first. After mutation, the audio engine must be updated with `sync_module_to_audio()` so it picks up the changes.
 
-## 6. Effect Architecture: Universal, Format-Specific, and Native
+## 6. SequencerClock
+
+Timing state (BPM, speed, current_tick, samples_per_tick, sample_counter, auto_tempo_factor) is encapsulated in `SequencerClock` at `src/audio/sequencer/clock.rs`, accessed as `state.clock.xxx`.
+
+- Use `state.clock.set_bpm()`, `state.clock.set_speed()`, `state.clock.reset()` instead of direct field writes — these handle internal recalculation.
+- The `process_tick()` method uses `clock.on_tick_processed()` which increments `current_tick` and returns `true` when the row should advance.
+- The advance loops in `engine.rs` and `renderer.rs` access `state.clock.samples_per_tick` and `state.clock.sample_counter` directly.
+
+## 7. Processor dispatch pattern
+
+NEVER use `std::mem::replace` directly to call effect processor methods. Instead use the `with_processor_mut` helper:
+
+```rust
+// OLD — do not use:
+let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
+processor.apply_effect(self, channel, effect, true);
+self.processor = processor;
+
+// NEW:
+self.with_processor_mut(|processor, engine| processor.apply_effect(engine, channel, effect, true));
+```
+
+The helper (`sequencer_engine.rs:470`) temporarily swaps the processor, calls the closure, and restores it — avoiding the borrow conflict between `self.processor` and `&mut self`.
+
+## 8. Effect Architecture: Universal, Format-Specific, and Native
 
 ### Layer 1 — Universal Effects
 The `Effect` enum (`src/sequencer/effect.rs`) defines the universal internal representation shared across all formats. These are format-agnostic commands (Arpeggio, VolumeSlide, TonePortamento, etc.) that every format loader decodes INTO and every format encoder decodes FROM.
@@ -60,7 +84,7 @@ When the sequencer processes a universal effect that needs format-specific behav
 - Changes to the XM path MUST NOT alter the non-XM path.
 - After modifying any format-conditional code, run the FULL test suite and verify both XM and MOD/S3M playback.
 
-## 7. File-Browser Columns and Preview
+## 10. File-Browser Columns and Preview
 
 ### Column Layout (List / Details View)
 - **Mandate**: Detail columns (duration, type, size, modified) must use fixed-width cells with truncation to prevent overlapping text.
@@ -74,7 +98,7 @@ When the sequencer processes a universal effect that needs format-specific behav
 - **Wiring**: `HtrkApp::preview_browser_sample(note_key)` checks `self.file_browser.show && mode == Samples`, loads the selected entry, decodes via `get_preview_data`, sends `PreviewBuffer`. Keyboard handler calls this before `preview_note` in `handle_text_input`; if it returns `true`, note recording is skipped. The Preview button in the browser footer sets `preview_requested` flag, handled after render.
 - **Verification**: No existing audio tests should break; `trigger_preview_buffer` shares the same voice-pool infrastructure as `trigger_preview_note`.
 
-## 8. Keyboard Focus Gate and Note-Preview Path
+## 11. Keyboard Focus Gate and Note-Preview Path
 
 ### The Problem
 When any egui widget has keyboard focus, the `handle_keyboard_input` function in `src/actions/keyboard.rs` must still allow `Event::Text` to reach note preview (for qwerty keyboard preview), while blocking cursor/editing keys (arrows, backspace, delete, insert, space, etc.) that would corrupt the widget's own editing state.

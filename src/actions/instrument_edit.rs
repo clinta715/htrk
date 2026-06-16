@@ -246,83 +246,6 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
     app.core.execute_edit_command(cmd);
 }
 
-pub(crate) fn save_instrument_dialog(app: &mut HtrkApp) {
-    let module = match &app.core.module {
-        Some(m) => m,
-        None => {
-            eprintln!("No module loaded");
-            return;
-        }
-    };
-    let inst_idx = app.core.selected_instrument;
-    let inst = match module.instruments.get(inst_idx) {
-        Some(i) => i,
-        None => {
-            eprintln!("No instrument selected");
-            return;
-        }
-    };
-    let inst_name = if inst.name.is_empty() {
-        format!("Instrument_{:02X}", inst_idx)
-    } else {
-        inst.name.clone()
-    };
-    let mut dialog = rfd::FileDialog::new()
-        .set_title("Save Instrument")
-        .set_file_name(format!("{}.hti", inst_name))
-        .add_filter("HTRK Instruments", &["hti"]);
-    if let Some(ref dir) = app.config.default_instrument_path {
-        let dir_path = std::path::PathBuf::from(dir);
-        if dir_path.is_dir() {
-            dialog = dialog.set_directory(&dir_path);
-        }
-    }
-    if let Some(path) = dialog.save_file() {
-        save_instrument_to_file(app, inst_idx, path.to_string_lossy().as_ref());
-        if let Some(parent) = path.parent() {
-            app.config.default_instrument_path = Some(parent.to_string_lossy().into_owned());
-        }
-    }
-}
-
-pub(crate) fn export_instrument_dialog(app: &mut HtrkApp, inst_idx: usize) {
-    let module = match &app.core.module {
-        Some(m) => m,
-        None => {
-            eprintln!("No module loaded");
-            return;
-        }
-    };
-    let inst = match module.instruments.get(inst_idx) {
-        Some(i) => i,
-        None => {
-            eprintln!("No instrument at index {}", inst_idx);
-            return;
-        }
-    };
-    let inst_name = if inst.name.is_empty() {
-        format!("Instrument_{:02X}", inst_idx)
-    } else {
-        inst.name.clone()
-    };
-    let mut dialog = rfd::FileDialog::new()
-        .set_title("Export Instrument")
-        .set_file_name(format!("{}.hti", inst_name))
-        .add_filter("HTRK Instruments", &["hti"]);
-    if let Some(ref dir) = app.config.default_instrument_path {
-        let dir_path = std::path::PathBuf::from(dir);
-        if dir_path.is_dir() {
-            dialog = dialog.set_directory(&dir_path);
-        }
-    }
-    if let Some(path) = dialog.save_file() {
-        save_instrument_to_file(app, inst_idx, path.to_string_lossy().as_ref());
-        if let Some(parent) = path.parent() {
-            app.config.default_instrument_path = Some(parent.to_string_lossy().into_owned());
-        }
-    }
-}
-
 pub(crate) fn save_instrument_to_file(app: &mut HtrkApp, inst_idx: usize, path: &str) {
     let module = match &app.core.module {
         Some(m) => m,
@@ -335,8 +258,8 @@ pub(crate) fn save_instrument_to_file(app: &mut HtrkApp, inst_idx: usize, path: 
     let sample_indices: Vec<u8> = inst.sample_map.iter().cloned().collect();
     let samples: Vec<_> = sample_indices.iter()
         .filter_map(|&idx| {
-            if idx > 0 && idx as usize - 1 < module.samples.len() {
-                Some(module.samples[idx as usize - 1].clone())
+            if idx > 0 && (idx as usize) < module.samples.len() {
+                Some(module.samples[idx as usize].clone())
             } else {
                 None
             }
@@ -351,25 +274,6 @@ pub(crate) fn save_instrument_to_file(app: &mut HtrkApp, inst_idx: usize, path: 
     };
     if let Err(e) = std::fs::write(path, &data) {
         eprintln!("Failed to write instrument file: {}", e);
-    }
-}
-
-pub(crate) fn load_instrument_dialog(app: &mut HtrkApp) {
-    let mut dialog = rfd::FileDialog::new()
-        .set_title("Load Instrument")
-        .add_filter("HTRK Instruments", &["hti"]);
-    if let Some(ref dir) = app.config.default_instrument_path {
-        let dir_path = std::path::PathBuf::from(dir);
-        if dir_path.is_dir() {
-            dialog = dialog.set_directory(&dir_path);
-        }
-    }
-    if let Some(path) = dialog.pick_file() {
-        let path_str = path.to_string_lossy().to_string();
-        load_instrument_from_file(app, &path_str);
-        if let Some(parent) = path.parent() {
-            app.config.default_instrument_path = Some(parent.to_string_lossy().into_owned());
-        }
     }
 }
 
@@ -392,7 +296,7 @@ pub(crate) fn load_instrument_from_file(app: &mut HtrkApp, path: &str) {
     if app.core.module.is_none() {
         app.new_song();
     }
-    app.ensure_module_ownership();
+    app.core.ensure_module_ownership();
     if let Some(ref mut module_arc) = app.core.module {
         if let Some(m) = Arc::get_mut(module_arc) {
             if inst_idx >= m.instruments.len() {
@@ -426,5 +330,5 @@ pub(crate) fn load_instrument_from_file(app: &mut HtrkApp, path: &str) {
             m.instruments[inst_idx].sample_map = remapped_map;
         }
     }
-    app.sync_module_to_audio();
+    app.core.sync_module_to_audio();
 }

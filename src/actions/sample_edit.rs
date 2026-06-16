@@ -91,7 +91,7 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) {
             let s = s.min(e);
             let e = s.max(e);
             let mut data = (*sample.data).clone();
-            app.sample_clipboard = Some(Arc::new(data[s..e].to_vec()));
+            app.sample_editor.clipboard = Some(Arc::new(data[s..e].to_vec()));
             data.drain(s..e);
             Box::new(SetSampleDataCommand {
                 sample_index: sample_idx,
@@ -102,11 +102,11 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) {
         SampleEditEvent::CopyRegion(s, e) => {
             let s = s.min(e);
             let e = s.max(e);
-            app.sample_clipboard = Some(Arc::new(sample.data[s..e].to_vec()));
+            app.sample_editor.clipboard = Some(Arc::new(sample.data[s..e].to_vec()));
             return;
         }
         SampleEditEvent::PasteRegion(pos) => {
-            let clip = match app.sample_clipboard.as_ref() {
+            let clip = match app.sample_editor.clipboard.as_ref() {
                 Some(c) => c.clone(),
                 None => return,
             };
@@ -188,7 +188,7 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) {
             return;
         }
         SampleEditEvent::ImportSample => {
-            app.file_browser.open(crate::ui::file_browser::BrowserMode::Samples, &mut app.config);
+            app.file_browser.open(crate::ui::file_browser::BrowserMode::Samples, crate::ui::file_browser::DialogMode::Open, &mut app.config);
             return;
         }
         SampleEditEvent::ExportSample(idx) => {

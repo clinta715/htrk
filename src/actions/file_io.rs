@@ -30,9 +30,9 @@ pub(crate) fn load_file(app: &mut HtrkApp, path: &str) {
 
             let name = module.name.clone();
             app.core.load_module(module, name, Some(path.to_string()));
-            app.scroll_row = 0;
-            app.scroll_channel = 0;
-            app.sync_channel_fields();
+            app.pattern_view.scroll_row = 0;
+            app.pattern_view.scroll_channel = 0;
+            app.core.sync_channel_fields();
             app.sync_send_bus_state();
         }
         Err(e) => {
@@ -64,7 +64,7 @@ pub(crate) fn import_wav(app: &mut HtrkApp, path: &str) {
             let sample_idx = app.core.selected_sample;
             app.core.import_wav_to_sample(sample_idx, sample);
 
-            app.ensure_module_ownership();
+            app.core.ensure_module_ownership();
             if let Some(ref mut module) = app.core.module {
                 if let Some(arc_module) = Arc::get_mut(module) {
                     let inst_idx = app.core.selected_instrument;
@@ -75,7 +75,7 @@ pub(crate) fn import_wav(app: &mut HtrkApp, path: &str) {
                     }
                 }
             }
-            app.sync_module_to_audio();
+            app.core.sync_module_to_audio();
         }
         Err(e) => {
             eprintln!("Failed to import WAV: {}", e);

@@ -83,40 +83,40 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                 if let egui::Event::Key { key, pressed: true, .. } = event {
                     match key {
                         egui::Key::Z if app.edit_mode => {
-                            app.ensure_module_ownership();
+                            app.core.ensure_module_ownership();
                             if let Some(ref mut module) = app.core.module {
                                 if let Some(arc_module) = Arc::get_mut(module) {
                                     let _ = app.core.undo_manager.undo(arc_module);
                                 }
                             }
-                            app.sync_module_to_audio();
+                            app.core.sync_module_to_audio();
                             handled = true;
                         }
                         egui::Key::Y if app.edit_mode => {
-                            app.ensure_module_ownership();
+                            app.core.ensure_module_ownership();
                             if let Some(ref mut module) = app.core.module {
                                 if let Some(arc_module) = Arc::get_mut(module) {
                                     let _ = app.core.undo_manager.redo(arc_module);
                                 }
                             }
-                            app.sync_module_to_audio();
+                            app.core.sync_module_to_audio();
                             handled = true;
                         }
                         egui::Key::C if is_pattern => {
-                            app.copy_selection();
+                            app.core.copy_selection();
                             handled = true;
                         }
                         egui::Key::X if app.edit_mode && is_pattern => {
-                            app.copy_selection();
-                            app.delete_selection();
+                            app.core.copy_selection();
+                            app.core.delete_selection();
                             handled = true;
                         }
                         egui::Key::V if app.edit_mode && is_pattern => {
-                            app.paste_at_cursor();
+                            app.core.paste_at_cursor();
                             handled = true;
                         }
                         egui::Key::A if is_pattern => {
-                            app.select_all();
+                            app.core.select_all();
                             handled = true;
                         }
                         egui::Key::N => {
@@ -125,14 +125,14 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         }
                         egui::Key::O => {
                             match app.current_view {
-                                AppView::Sample => app.file_browser.open(BrowserMode::Samples, &mut app.config),
-                                AppView::Instrument => app.file_browser.open(BrowserMode::Instruments, &mut app.config),
+                                AppView::Sample => app.file_browser.open(BrowserMode::Samples, crate::ui::file_browser::DialogMode::Open, &mut app.config),
+                                AppView::Instrument => app.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut app.config),
                                 _ => app.open_file_dialog(),
                             }
                             handled = true;
                         }
                         egui::Key::I => {
-                            app.file_browser.open(BrowserMode::Samples, &mut app.config);
+                            app.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut app.config);
                             handled = true;
                         }
                         egui::Key::S => {
@@ -195,7 +195,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                 if let egui::Event::Key { key, pressed: true, .. } = event {
                     match key {
                         egui::Key::S => app.save_as_dialog(),
-                        egui::Key::I => app.file_browser.open(BrowserMode::Instruments, &mut app.config),
+                        egui::Key::I => app.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut app.config),
                         egui::Key::ArrowUp => {
                             if app.current_octave < 9 { app.current_octave += 1; }
                         }
@@ -221,7 +221,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
         });
 
         if app.current_view == AppView::Automation {
-            if let Some(tid) = app.automation_editor_state.selected_track_id {
+            if let Some(tid) = app.automation_editor.state.selected_track_id {
                 let mode = ctx.input(|i| {
                     for event in &i.events {
                         if let egui::Event::Key { key, pressed: true, .. } = event {
@@ -237,12 +237,12 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     None
                 });
                 if let Some(mode) = mode {
-                    app.ensure_module_ownership();
+                    app.core.ensure_module_ownership();
                     if let Some(ref mut module) = app.core.module {
                         if let Some(arc_module) = Arc::get_mut(module) {
                             if let Some(t) = arc_module.automation_tracks.iter_mut().find(|t| t.id == tid) {
                                 t.default_interp = mode;
-                                app.sync_module_to_audio();
+                                app.core.sync_module_to_audio();
                             }
                         }
                     }
@@ -270,7 +270,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                                 } else if modifiers.shift {
                                     app.extend_selection_down();
                                 } else if modifiers.alt && app.edit_mode {
-                                    app.transpose_selection(-1);
+                                    app.core.transpose_selection(-1);
                                 } else {
                                     app.core.selection = None;
                                     app.advance_cursor_down(1);
@@ -286,7 +286,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                                 } else if modifiers.shift {
                                     app.extend_selection_up();
                                 } else if modifiers.alt && app.edit_mode {
-                                    app.transpose_selection(1);
+                                    app.core.transpose_selection(1);
                                 } else {
                                     app.core.selection = None;
                                     app.advance_cursor_up(1);
@@ -297,7 +297,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         if !any_dialog_open && is_pattern {
                             if modifiers.alt {
                                 app.core.selection = None;
-                                let num_ch = app.num_channels();
+                                let num_ch = app.core.num_channels();
                                 if app.core.cursor.channel < num_ch - 1 {
                                     app.core.cursor.channel += 1;
                                     app.core.cursor.sub_column = SubColumn::Note;
@@ -334,7 +334,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             app.core.cursor.channel = app.core.cursor.channel.saturating_sub(1);
                         } else {
                             app.core.cursor.channel += 1;
-                            app.core.cursor.channel = app.core.cursor.channel.min(app.num_channels_checked() - 1);
+                            app.core.cursor.channel = app.core.cursor.channel.min(app.core.num_channels_checked() - 1);
                         }
                         app.ensure_cursor_visible();
                     }
@@ -370,13 +370,13 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     }
                     egui::Key::End if is_pattern && !any_dialog_open => {
                         app.core.selection = None;
-                        if let Some(pattern) = app.current_pattern() {
+                        if let Some(pattern) = app.core.current_pattern() {
                             app.core.cursor.row = pattern.num_rows - 1;
                             app.ensure_cursor_visible();
                         }
                     }
                     egui::Key::Backspace if app.edit_mode && is_pattern && !any_dialog_open => {
-                        app.clear_cell_at_cursor();
+                        app.core.clear_cell_at_cursor();
                     }
                     egui::Key::Delete if modifiers.shift && app.edit_mode && is_pattern && !any_dialog_open => {
                         app.delete_track();
@@ -391,7 +391,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     egui::Key::Insert if app.edit_mode && is_pattern && !any_dialog_open => {
                         let selected_order = app.core.selected_order;
                         let row = app.core.cursor.row;
-                        app.ensure_module_ownership();
+                        app.core.ensure_module_ownership();
                         if let Some(ref mut module) = app.core.module {
                             let pat_idx = *module.order_list.get(selected_order).unwrap_or(&0) as usize;
                             if let Some(arc_module) = Arc::get_mut(module) {
@@ -403,12 +403,12 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                                 let _ = app.core.undo_manager.execute(cmd, arc_module);
                             }
                         }
-                        app.sync_module_to_audio();
+                        app.core.sync_module_to_audio();
                     }
                     egui::Key::Space => {
                         if !any_dialog_open {
                             if app.core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
-                                app.send_command(crate::audio::commands::AudioCommand::Stop);
+                                app.core.send_command(crate::audio::commands::AudioCommand::Stop);
                             } else if app.edit_mode && is_pattern {
                                 if let Some(last_cell) = app.core.last_entered_cell.clone() {
                                     app.set_cell_at_cursor(last_cell);
@@ -439,28 +439,28 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         app.copy_column();
                     }
                     egui::Key::F5 if modifiers.shift && is_pattern => {
-                        app.paste_at_cursor();
+                        app.core.paste_at_cursor();
                     }
                     egui::Key::F5 if modifiers.alt && is_pattern => {
-                        app.paste_at_cursor();
+                        app.core.paste_at_cursor();
                     }
                     egui::Key::F5 => {
-                        app.send_command(crate::audio::commands::AudioCommand::Play);
+                        app.core.send_command(crate::audio::commands::AudioCommand::Play);
                     }
                     egui::Key::F6 => {
-                        app.send_command(crate::audio::commands::AudioCommand::SetPlayMode(PlayMode::Pattern));
-                        app.send_command(crate::audio::commands::AudioCommand::Play);
+                        app.core.send_command(crate::audio::commands::AudioCommand::SetPlayMode(PlayMode::Pattern));
+                        app.core.send_command(crate::audio::commands::AudioCommand::Play);
                     }
                     egui::Key::F7 => {
-                        app.send_command(crate::audio::commands::AudioCommand::SetPlayMode(PlayMode::Order));
+                        app.core.send_command(crate::audio::commands::AudioCommand::SetPlayMode(PlayMode::Order));
                     }
                     egui::Key::F8 => {
-                        app.send_command(crate::audio::commands::AudioCommand::Stop);
+                        app.core.send_command(crate::audio::commands::AudioCommand::Stop);
                     }
                     egui::Key::F9 => {
                         let order = app.core.playback_state.current_order.load(std::sync::atomic::Ordering::Relaxed);
                         let row = app.core.playback_state.current_row.load(std::sync::atomic::Ordering::Relaxed);
-                        app.send_command(crate::audio::commands::AudioCommand::PlayFrom { order, row });
+                        app.core.send_command(crate::audio::commands::AudioCommand::PlayFrom { order, row });
                     }
                     egui::Key::F10 => {
                         let should_open = !app.settings_state.open;
@@ -490,12 +490,12 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     egui::Key::Num7 if modifiers.alt => { app.cursor_skip = 7; }
                     egui::Key::Num8 if modifiers.alt => { app.cursor_skip = 8; }
                     egui::Key::Num9 if modifiers.alt => { app.cursor_skip = 9; }
-                    egui::Key::Minus if is_pattern && !modifiers.alt => { app.skip_to_prev_pattern(); }
-                    egui::Key::Equals if is_pattern && !modifiers.alt => { app.skip_to_next_pattern(); }
-                    egui::Key::Plus if is_pattern => { app.skip_to_next_pattern(); }
-                    egui::Key::C if modifiers.alt && app.edit_mode && is_pattern => { app.copy_selection(); }
-                    egui::Key::P if modifiers.alt && app.edit_mode && is_pattern => { app.paste_at_cursor(); }
-                    egui::Key::V if modifiers.alt && app.edit_mode && is_pattern => { app.paste_at_cursor(); }
+                    egui::Key::Minus if is_pattern && !modifiers.alt => { app.core.skip_to_prev_pattern(); }
+                    egui::Key::Equals if is_pattern && !modifiers.alt => { app.core.skip_to_next_pattern(); }
+                    egui::Key::Plus if is_pattern => { app.core.skip_to_next_pattern(); }
+                    egui::Key::C if modifiers.alt && app.edit_mode && is_pattern => { app.core.copy_selection(); }
+                    egui::Key::P if modifiers.alt && app.edit_mode && is_pattern => { app.core.paste_at_cursor(); }
+                    egui::Key::V if modifiers.alt && app.edit_mode && is_pattern => { app.core.paste_at_cursor(); }
                     egui::Key::X if modifiers.alt && app.edit_mode && is_pattern => { app.cut_selection(); }
                     egui::Key::B if modifiers.alt && is_pattern => { app.mark_block_begin(); }
                     egui::Key::E if modifiers.alt && is_pattern => { app.mark_block_end(); }
@@ -506,7 +506,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         app.alt_l_last = Some(now);
                         match app.alt_l_count {
                             2 => app.select_line(),
-                            3 => app.select_all(),
+                            3 => app.core.select_all(),
                             _ => app.select_current_cell(),
                         }
                     }
@@ -570,17 +570,17 @@ fn note_key_preview_only(app: &mut HtrkApp, ch: char) {
 fn delete_row(app: &mut HtrkApp) {
     let selected_order = app.core.selected_order;
     let row = app.core.cursor.row;
-    let can_delete = app.current_pattern().map_or(false, |p| p.num_rows > 1);
+    let can_delete = app.core.current_pattern().map_or(false, |p| p.num_rows > 1);
     if !can_delete {
         return;
     }
-    let deleted_data: Vec<Cell> = app.current_pattern()
+    let deleted_data: Vec<Cell> = app.core.current_pattern()
         .map(|p| p.data[row].to_vec())
         .unwrap_or_default();
     let pat_idx = app.core.module.as_ref()
         .and_then(|m| m.order_list.get(selected_order).copied())
         .unwrap_or(0) as usize;
-    app.ensure_module_ownership();
+    app.core.ensure_module_ownership();
     if let Some(ref mut module) = app.core.module {
         if let Some(arc_module) = Arc::get_mut(module) {
             let cmd = Box::new(DeleteRowCommand {
@@ -592,7 +592,7 @@ fn delete_row(app: &mut HtrkApp) {
             let _ = app.core.undo_manager.execute(cmd, arc_module);
         }
     }
-    app.sync_module_to_audio();
+    app.core.sync_module_to_audio();
 }
 
 fn delete_cell_or_automation(app: &mut HtrkApp) {
@@ -604,7 +604,7 @@ fn delete_cell_or_automation(app: &mut HtrkApp) {
         app.delete_automation_point(app.core.cursor.channel, app.core.cursor.row);
         app.advance_cursor_down(1);
     } else {
-        app.clear_cell_at_cursor();
+        app.core.clear_cell_at_cursor();
         app.advance_cursor_down(1);
     }
 }
@@ -626,7 +626,7 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
     let up = ch.to_ascii_uppercase();
     let sub = app.core.cursor.sub_column;
     let on_note = sub.accepts_note();
-    let has_pattern = app.current_pattern().is_some();
+    let has_pattern = app.core.current_pattern().is_some();
 
     // Tracker piano keyboard (Impulse/Scream Tracker style). The lower row
     // (Z S X D C V G B H N J M) is the current octave and the upper row
@@ -659,7 +659,7 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
                 preview_note(app, nk);
                 if is_pattern && on_note && app.edit_mode && has_pattern {
                     let note = Note::On(nk);
-                    let mut new_cell = app.get_cell_at_cursor();
+                    let mut new_cell = app.core.get_cell_at_cursor();
                     new_cell.note = note;
                     new_cell.instrument = Some(app.core.selected_instrument as u8);
                     app.set_cell_at_cursor(new_cell);
@@ -670,7 +670,7 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
             return;
         }
     } else if is_pattern && on_note && ch == '.' && app.edit_mode && has_pattern {
-        let mut new_cell = app.get_cell_at_cursor();
+        let mut new_cell = app.core.get_cell_at_cursor();
         new_cell.note = Note::Off;
         app.set_cell_at_cursor(new_cell);
         app.core.last_entered_cell = Some(new_cell);
@@ -698,7 +698,7 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
     if app.core.cursor.sub_column.accepts_decimal() {
         if let Some(d) = ch.to_digit(10) {
             let d = d as u8;
-            let mut cell = app.get_cell_at_cursor();
+            let mut cell = app.core.get_cell_at_cursor();
 
             match app.core.cursor.sub_column {
                 SubColumn::InstrumentTens => {
@@ -743,7 +743,7 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
                 return;
             }
         }
-        let mut cell = app.get_cell_at_cursor();
+        let mut cell = app.core.get_cell_at_cursor();
         let changed = if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
             cell.effect = hex_to_effect(d as u8);
             true
@@ -782,7 +782,7 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
         }
         if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
             let d = d as u8;
-            let mut cell = app.get_cell_at_cursor();
+            let mut cell = app.core.get_cell_at_cursor();
             match app.core.cursor.sub_column {
                 SubColumn::EffectParamHigh => {
                     let param = effect_param(&cell.effect);
@@ -824,7 +824,7 @@ fn preview_note(app: &mut HtrkApp, note_key: u8) {
     } else {
         app.core.selected_sample
     };
-    app.send_command(crate::audio::commands::AudioCommand::TriggerPreviewNote {
+    app.core.send_command(crate::audio::commands::AudioCommand::TriggerPreviewNote {
         sample_index: sample_idx,
         note_key,
         volume: vol,
