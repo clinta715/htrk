@@ -39,6 +39,12 @@ pub fn draw_sample_editor(
 ) -> Option<SampleEditEvent> {
     let mut event = None;
 
+    if *selected_sample != sample_editor.last_sample_index {
+        sample_editor.zoom = 0.0;
+        sample_editor.scroll_offset = 0.0;
+        sample_editor.last_sample_index = *selected_sample;
+    }
+
     let selection = &mut sample_editor.selection;
     let clipboard = &mut sample_editor.clipboard;
     let amplify_factor = &mut sample_editor.amplify_factor;
@@ -239,6 +245,8 @@ pub fn draw_sample_editor(
                             &playback_positions,
                             theme,
                             &mut sample_editor.cursor_pos,
+                            &mut sample_editor.zoom,
+                            &mut sample_editor.scroll_offset,
                         ) {
                             match w_event {
                                 crate::ui::waveform::WaveformEvent::LoopStartChanged(pos) => {
@@ -251,7 +259,6 @@ pub fn draw_sample_editor(
                         }
                     });
                 sample_editor.waveform_height = wave_panel_resp.response.rect.height();
-                }
 
                 // Info bar below waveform
                 if let Some(sample) = module.samples.get(*selected_sample) {
@@ -281,8 +288,31 @@ pub fn draw_sample_editor(
                                 ui.label(egui::RichText::new(format!("RMS:{:.1}dB", rms_db)).size(10.0).monospace());
                             }
                             ui.label(egui::RichText::new(format!("{}Hz|{}smp", sample.sample_rate, sample.data.len())).size(10.0).monospace());
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let zoom_pct = if sample_editor.zoom <= 0.0 || sample_editor.zoom >= sample.data.len() as f32 {
+                                    100.0
+                                } else {
+                                    (sample.data.len() as f32 / sample_editor.zoom) * 100.0
+                                };
+                                ui.label(egui::RichText::new(format!("Zoom:{:.0}%", zoom_pct)).size(10.0).monospace());
+                                if ui.dev_button("waveform.zoom_sel", "Sel").clicked() {
+                                    if let Some((s, e)) = *selection {
+                                        let start = s.min(e);
+                                        let end = s.max(e);
+                                        let sel_len = end.saturating_sub(start).max(1);
+                                        sample_editor.zoom = sel_len as f32;
+                                        sample_editor.scroll_offset = if sel_len >= sample.data.len() { 0.0 } else { start as f32 / (sample.data.len() - sel_len) as f32 };
+                                    }
+                                }
+                                if ui.dev_button("waveform.fit", "Fit").clicked() {
+                                    sample_editor.zoom = 0.0;
+                                    sample_editor.scroll_offset = 0.0;
+                                }
+                            });
                         });
-}
+                    }
+                }
             }
         }
     } else {

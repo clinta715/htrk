@@ -13,6 +13,9 @@ pub struct SampleEditor {
     pub list_width: f32,
     pub waveform_height: f32,
     pub cursor_pos: Option<usize>,
+    pub zoom: f32,
+    pub scroll_offset: f32,
+    pub last_sample_index: usize,
 }
 
 impl Default for SampleEditor {
@@ -25,6 +28,9 @@ impl Default for SampleEditor {
             list_width: 200.0,
             waveform_height: 150.0,
             cursor_pos: None,
+            zoom: 0.0,
+            scroll_offset: 0.0,
+            last_sample_index: 0,
         }
     }
 }
