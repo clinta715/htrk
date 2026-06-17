@@ -345,6 +345,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             app.core.cursor.channel = app.core.cursor.channel.min(app.core.num_channels_checked() - 1);
                         }
                         app.ensure_cursor_visible();
+                        ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Key { key: egui::Key::Tab, pressed: true, .. })));
                     }
                     egui::Key::M if modifiers.alt => {
                         app.core.toggle_mute(app.core.cursor.channel);
