@@ -18,7 +18,8 @@ pub fn draw_phrase_generator(
     egui::Window::new("Generate Phrase")
         .id(egui::Id::new("phrase_generator"))
         .open(open)
-        .resizable(false)
+        .resizable(true)
+        .default_size([280.0, 520.0])
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
             let mode_id = ui.make_persistent_id("phr_mode");
