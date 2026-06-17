@@ -12,6 +12,7 @@ pub struct SampleEditor {
     pub waveform_visible: bool,
     pub list_width: f32,
     pub waveform_height: f32,
+    pub cursor_pos: Option<usize>,
 }
 
 impl Default for SampleEditor {
@@ -23,6 +24,7 @@ impl Default for SampleEditor {
             waveform_visible: true,
             list_width: 200.0,
             waveform_height: 150.0,
+            cursor_pos: None,
         }
     }
 }

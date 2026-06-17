@@ -238,6 +238,7 @@ pub fn draw_sample_editor(
                             *selected_sample,
                             &playback_positions,
                             theme,
+                            &mut sample_editor.cursor_pos,
                         ) {
                             match w_event {
                                 crate::ui::waveform::WaveformEvent::LoopStartChanged(pos) => {
@@ -250,8 +251,42 @@ pub fn draw_sample_editor(
                         }
                     });
                 sample_editor.waveform_height = wave_panel_resp.response.rect.height();
+                }
+
+                // Info bar below waveform
+                if let Some(sample) = module.samples.get(*selected_sample) {
+                    if !sample.data.is_empty() {
+                        ui.horizontal(|ui| {
+                            if let Some(idx) = sample_editor.cursor_pos {
+                                let time_ms = idx as f64 / sample.sample_rate as f64 * 1000.0;
+                                ui.label(egui::RichText::new(format!("Pos:{} ({:.1}ms)", idx, time_ms)).size(10.0).monospace());
+                            }
+                            if let Some((s, e)) = *selection {
+                                let sel_len = e.saturating_sub(s);
+                                let sel_ms = sel_len as f64 / sample.sample_rate as f64 * 1000.0;
+                                let mut peak: f32 = 0.0;
+                                let mut sum_sq: f64 = 0.0;
+                                let s_clamped = s.min(sample.data.len());
+                                let e_clamped = e.min(sample.data.len());
+                                for i in s_clamped..e_clamped {
+                                    let v = sample.data[i].abs();
+                                    if v > peak { peak = v; }
+                                    sum_sq += sample.data[i] as f64 * sample.data[i] as f64;
+                                }
+                                let rms = (sum_sq / sel_len.max(1) as f64).sqrt() as f32;
+                                let peak_db = if peak > 0.0 { 20.0 * peak.log10() } else { -f32::INFINITY };
+                                let rms_db = if rms > 0.0 { 20.0 * rms.log10() } else { -f32::INFINITY };
+                                ui.label(egui::RichText::new(format!("Sel:{}-{} ({}smp, {:.1}ms)", s, e, sel_len, sel_ms)).size(10.0).monospace());
+                                ui.label(egui::RichText::new(format!("Peak:{:.1}dB", peak_db)).size(10.0).monospace());
+                                ui.label(egui::RichText::new(format!("RMS:{:.1}dB", rms_db)).size(10.0).monospace());
+                            }
+                            ui.label(egui::RichText::new(format!("{}Hz|{}smp", sample.sample_rate, sample.data.len())).size(10.0).monospace());
+                        });
+}
             }
         }
+    } else {
+        sample_editor.cursor_pos = None;
     }
 
     egui::CentralPanel::default()

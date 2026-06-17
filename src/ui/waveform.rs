@@ -18,6 +18,7 @@ pub fn draw_waveform(
     sample_index: usize,
     playback_positions: &[f64],
     theme: &TrackerTheme,
+    cursor_pos: &mut Option<usize>,
 ) -> Option<WaveformEvent> {
     let mut event = None;
     let desired_size = ui.available_size();
@@ -41,6 +42,12 @@ pub fn draw_waveform(
     let width = rect.width();
     let height = rect.height();
     let middle_y = rect.top() + height / 2.0;
+
+    // Track cursor position on hover
+    *cursor_pos = response.hover_pos().map(|pos| {
+        let ratio = ((pos.x - rect.left()) / width).clamp(0.0, 1.0);
+        (ratio * len as f32) as usize
+    });
 
     let points_per_pixel = (len as f32 / width).max(1.0);
 
