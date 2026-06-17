@@ -73,7 +73,7 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             shortcut_row(ui, "F2", "Pattern editor");
                             shortcut_row(ui, "F3", "Sample tab");
                             shortcut_row(ui, "F4", "Instrument tab");
-                            shortcut_row(ui, "F5", "Playback tab");
+                            shortcut_row(ui, "F5", "Playback tab + Play from start");
                             ui.add_space(8.0);
 
                             section_header(ui, "CHANNEL");
