@@ -140,7 +140,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             handled = true;
                         }
                         egui::Key::Q => {
-                            if app.core.module_dirty() {
+                            if app.config.confirm_on_exit && app.core.module_dirty() {
                                 app.show_exit_confirm = true;
                             } else {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);

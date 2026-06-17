@@ -1036,7 +1036,7 @@ impl eframe::App for HtrkApp {
             self.draw_preamble(&ctx);
 
         if ctx.input(|i| i.viewport().close_requested()) {
-            if self.core.module_dirty() && !self.show_exit_confirm {
+            if self.config.confirm_on_exit && self.core.module_dirty() && !self.show_exit_confirm {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.show_exit_confirm = true;
             }
@@ -1154,7 +1154,7 @@ impl eframe::App for HtrkApp {
                 self.settings_state.open = true;
             }
             if menu_resp.quit {
-                if self.core.module_dirty() {
+                if self.config.confirm_on_exit && self.core.module_dirty() {
                     self.show_exit_confirm = true;
                 } else {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1496,7 +1496,13 @@ impl eframe::App for HtrkApp {
                 AppView::Playback => {
                     let num_channels = self.core.num_channels();
                     let current_pattern = playback_pattern
-                        .and_then(|pat| self.core.module.as_ref()?.patterns.get(pat));
+                        .and_then(|pat| self.core.module.as_ref()?.patterns.get(pat))
+                        .or_else(|| {
+                            let pat_idx = self.core.module.as_ref()
+                                .and_then(|m| m.order_list.get(self.core.selected_order))
+                                .copied().unwrap_or(0) as usize;
+                            self.core.module.as_ref()?.patterns.get(pat_idx)
+                        });
                     let current_module = self.core.module.as_ref().map(|m| &**m);
                     let grid_playback_row = playback_row;
 

@@ -163,6 +163,9 @@ pub struct AppConfig {
     pub sample_map_cell_size: f32,
     #[serde(default = "default_grid_cell_size")]
     pub note_map_cell_size: f32,
+
+    #[serde(default = "default_true")]
+    pub confirm_on_exit: bool,
 }
 
 fn default_col_vis() -> bool { true }
@@ -246,6 +249,7 @@ impl Default for AppConfig {
             file_browser_modified_width: None,
             sample_map_cell_size: default_grid_cell_size(),
             note_map_cell_size: default_grid_cell_size(),
+            confirm_on_exit: true,
         }
     }
 }

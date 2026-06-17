@@ -67,6 +67,8 @@ pub struct SettingsState {
     new_sample_path: String,
 
     pending_refresh_devices: bool,
+
+    confirm_on_exit: bool,
 }
 
 impl SettingsState {
@@ -112,6 +114,8 @@ impl SettingsState {
             new_sample_path: String::new(),
 
             pending_refresh_devices: false,
+
+            confirm_on_exit: config.confirm_on_exit,
         }
     }
 
@@ -149,6 +153,8 @@ impl SettingsState {
         config.theme_preset = self.theme_preset.clone();
 
         config.debug = self.debug_enabled;
+
+        config.confirm_on_exit = self.confirm_on_exit;
     }
 }
 
@@ -372,6 +378,11 @@ fn draw_editor_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
     ui.checkbox(&mut state.show_hex_row_numbers, "Hex Row Numbers");
     ui.checkbox(&mut state.snap_to_grid, "Snap Selection to Grid");
     ui.checkbox(&mut state.follow_playback_default, "Follow Playback (default)");
+
+    ui.add_space(8.0);
+    section_header(ui, "General");
+    ui.add_space(4.0);
+    ui.checkbox(&mut state.confirm_on_exit, "Confirm before exiting with unsaved changes");
 
     ui.add_space(8.0);
     ui.horizontal(|ui| {

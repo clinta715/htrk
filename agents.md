@@ -123,3 +123,9 @@ When any egui widget has keyboard focus, the `handle_keyboard_input` function in
 - File > Quit Ctrl+Q menu item and `Ctrl+Q` keybind follow the same path: if dirty, set flag; if clean, `Close` immediately.
 - `module_dirty()` returns `false` safely when no module is loaded.
 
+## 13. Session Pitfalls (2026-06-16)
+
+### Avoid
+- **`#[serde(default)]` on `AppConfig` fields does NOT exempt you from adding the field to `Default::default()`**: The `Default` impl for `AppConfig` is hand-written (not derived), so new fields must be added both with `#[serde(default = "...")]` and in the `Default` block. The compiler error is an immediate `missing field` in the struct literal.
+- **Playback tab grid must always be visible**: If the pattern grid is only rendered when `playback_pattern` is `Some`, the channel blocks and info footer jump downward when playback starts and back up when it stops. Always resolve a fallback pattern (e.g. the selected editing pattern) so the layout is stable regardless of playback state.
+- **Ctrl+ shortcuts and note preview keys share `Key` variants**: `Ctrl+Q` and plain `Q` are independent because `Ctrl` suppresses `Event::Text`. New Ctrl+ shortcuts added via `Event::Key` inside the `modifiers.ctrl` block will never collide with note preview (which runs on `Event::Text`).

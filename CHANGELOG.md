@@ -2,7 +2,15 @@
 
 All notable changes to htrk will be documented in this file.
 
-## [0.14.0] - 2026-06-16
+## [0.14.1] - 2026-06-16
+
+### Added
+
+- **Confirm-on-exit preference**: New checkbox in Settings > Editor > General ("Confirm before exiting with unsaved changes") persists between sessions via `confirm_on_exit` config field. When unchecked, close and Ctrl+Q exit immediately without prompting.
+
+### Fixed
+
+- **Playback tab layout shift**: Pattern grid now always renders (shows the selected editing pattern when stopped, the playing pattern during playback), preventing channel blocks and info footer from jumping when playback starts or stops.
 
 ### Added
 
