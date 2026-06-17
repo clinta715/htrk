@@ -2,7 +2,6 @@ use eframe::egui;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::Module;
 use crate::ui::TrackerTheme;
-use eguidev::DevUiExt;
 
 const INLINE_PALETTE_HEIGHT: f32 = 120.0;
 
@@ -18,13 +17,6 @@ pub fn draw_inline_sample_palette(
             ui.label(
                 egui::RichText::new("Samples").font(egui::FontId::proportional(11.0))
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(format!("Selected: {:02X}", paint_sample))
-                        .font(egui::FontId::monospace(10.0))
-                        .color(egui::Color32::from_rgb(180, 220, 180)),
-                );
-            });
         });
 
         egui::ScrollArea::vertical()
@@ -201,11 +193,6 @@ pub(crate) fn draw_waveform_thumbnail(
     }
 }
 
-pub struct SampleBrowserResult {
-    pub selected_sample: u8,
-    pub open: bool,
-}
-
 pub fn draw_sample_browser_popup(
     ctx: &egui::Context,
     module: &Module,
@@ -217,120 +204,120 @@ pub fn draw_sample_browser_popup(
     let mut result = None;
     let mut should_close = false;
 
-    let window_name = "sample_browser";
-
-    egui::Window::new("Sample Browser")
-        .id(egui::Id::new(window_name))
+    egui::Window::new("Select Sample")
+        .id(egui::Id::new("sample_browser"))
         .open(open)
         .resizable(true)
-        .default_size(egui::vec2(360.0, 400.0))
-        .min_size(egui::vec2(200.0, 200.0))
+        .default_size(egui::vec2(280.0, 350.0))
+        .min_size(egui::vec2(180.0, 150.0))
         .show(ctx, |ui| {
             let filter_id = ui.make_persistent_id("sample_browser_filter");
             let mut filter = ui.data(|d| d.get_temp::<String>(filter_id).unwrap_or_default());
 
             ui.horizontal(|ui| {
-                ui.label("Search:");
-                ui.dev_text_edit("inst.browser.search", &mut filter);
+                ui.label(egui::RichText::new("Search:").size(11.0).color(theme.fg_dim));
+                let resp = ui.add(egui::TextEdit::singleline(&mut filter).desired_width(ui.available_width()));
+                if resp.changed() {
+                    ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
+                }
             });
+            ui.add_space(2.0);
 
             let filter_lower = filter.to_lowercase();
 
-            ui.vertical(|ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        for i in 0..module.samples.len().min(1000) {
-                            let sample = &module.samples[i];
-                            if !filter_lower.is_empty()
-                                && !sample.name.to_lowercase().contains(&filter_lower)
-                            {
-                                continue;
-                            }
-                            let has_data = !sample.data.is_empty();
-                            let is_selected = paint_sample == i as u8;
-
-                            let bg = if is_selected {
-                                egui::Color32::from_rgb(35, 60, 35)
-                            } else if has_data {
-                                egui::Color32::from_rgb(25, 25, 30)
-                            } else {
-                                egui::Color32::TRANSPARENT
-                            };
-
-                            let frame = egui::Frame::NONE
-                                .fill(bg)
-                                .corner_radius(4.0)
-                                .inner_margin(egui::Margin::same(6))
-                                .outer_margin(egui::Margin::symmetric(0, 2));
-
-                            frame.show(ui, |ui| {
-                                let resp = ui.allocate_response(
-                                    ui.available_size(),
-                                    egui::Sense::click(),
-                                );
-
-                                ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.set_width(140.0);
-                                        let name = if sample.name.is_empty() {
-                                            format!("{:02X}: (unnamed)", i)
-                                        } else {
-                                            format!("{:02X}: {}", i, sample.name)
-                                        };
-                                        ui.label(
-                                            egui::RichText::new(name)
-                                                .font(egui::FontId::monospace(11.0))
-                                                .color(if is_selected {
-                                                    egui::Color32::from_rgb(140, 230, 140)
-                                                } else if has_data {
-                                                    egui::Color32::WHITE
-                                                } else {
-                                                    egui::Color32::from_rgb(100, 100, 100)
-                                                }),
-                                        );
-
-                                        if has_data {
-                                            let dur_secs = sample.data.len() as f64 / sample.sample_rate as f64;
-                                            let info = format!(
-                                                "{}Hz | {} smpl | {:.1}s",
-                                                sample.sample_rate,
-                                                sample.data.len(),
-                                                dur_secs,
-                                            );
-                                            ui.label(
-                                                egui::RichText::new(info)
-                                                    .font(egui::FontId::monospace(9.0))
-                                                    .color(egui::Color32::from_rgb(120, 120, 130)),
-                                            );
-                                        }
-                                    });
-
-                                    if has_data {
-                                        let (rect, _) = ui.allocate_exact_size(
-                                            egui::vec2(ui.available_width().max(80.0), 28.0),
-                                            egui::Sense::hover(),
-                                        );
-                                        let painter = ui.painter_at(rect);
-                                        painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(15, 15, 18));
-                                        draw_waveform_thumbnail_browser(&painter, rect, &sample.data, is_selected, &playback_state.sample_positions_for(i), theme);
-                                    }
-                                });
-
-                                if resp.clicked() {
-                                    result = Some(i as u8);
-                                }
-                            });
+            egui::ScrollArea::vertical()
+                .id_salt("sample_browser_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    for i in 0..module.samples.len().min(1000) {
+                        let sample = &module.samples[i];
+                        if !filter_lower.is_empty()
+                            && !sample.name.to_lowercase().contains(&filter_lower)
+                        {
+                            continue;
                         }
-                    });
-            });
+                        let has_data = !sample.data.is_empty();
+                        let is_selected = paint_sample == i as u8;
 
-            ui.separator();
-            if ui.dev_button("inst.browser.close", "Close").clicked() {
-                should_close = true;
+                        let bg = if is_selected {
+                            theme.bg_selected
+                        } else if has_data {
+                            theme.bg_highlight.gamma_multiply(0.3)
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        };
+
+                        let (rect, resp) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), 18.0),
+                            egui::Sense::click(),
+                        );
+
+                        let painter = ui.painter_at(rect);
+                        if bg != egui::Color32::TRANSPARENT {
+                            painter.rect_filled(rect, 2.0, bg);
+                        }
+
+                        if resp.hovered() && !is_selected {
+                            painter.rect_filled(rect, 2.0, theme.bg_highlight.gamma_multiply(0.2));
+                        }
+
+                        let text_color = if is_selected {
+                            egui::Color32::WHITE
+                        } else if has_data {
+                            theme.fg_text
+                        } else {
+                            theme.fg_dim
+                        };
+
+                        let name = if sample.name.is_empty() {
+                            format!("{:02X}: ---", i)
+                        } else {
+                            format!("{:02X}: {}", i, sample.name)
+                        };
+
+                        painter.text(
+                            egui::pos2(rect.left() + 4.0, rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            &name,
+                            egui::FontId::monospace(11.0),
+                            text_color,
+                        );
+
+                        if has_data {
+                            let thumb_rect = egui::Rect::from_min_max(
+                                egui::pos2(rect.right() - 64.0, rect.top() + 2.0),
+                                egui::pos2(rect.right() - 4.0, rect.bottom() - 2.0),
+                            );
+                            painter.rect_filled(thumb_rect, 1.0, egui::Color32::from_black_alpha(100));
+                            draw_waveform_thumbnail_browser(&painter, thumb_rect, &sample.data, is_selected, &playback_state.sample_positions_for(i), theme);
+                        }
+
+                        if resp.clicked() {
+                            result = Some(i as u8);
+                            should_close = true;
+                        }
+
+                        eguidev::track_response_full(
+                            format!("inst.browser.row.{}", i),
+                            &resp,
+                            eguidev::WidgetMeta {
+                                role: eguidev::WidgetRole::Button,
+                                label: Some(name),
+                                visible: ui.is_visible() && ui.is_rect_visible(rect),
+                                ..Default::default()
+                            },
+                        );
+                    }
+                });
+
+            if !filter.is_empty() {
+                ui.add_space(2.0);
+                if ui.button("Clear Search").clicked() {
+                    filter.clear();
+                    ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
+                }
             }
-
-            ui.data_mut(|d| d.insert_temp(filter_id, filter));
         });
 
     if should_close {

@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod effects;
+pub mod sequencer;
 pub mod engine;
 pub mod filter;
 pub mod sendfx;

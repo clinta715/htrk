@@ -48,7 +48,7 @@ impl HtrkCore {
                 }
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 
     pub fn clear_cell_at_cursor(&mut self) {
@@ -124,7 +124,7 @@ impl HtrkCore {
                 }
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 
     pub fn paste_at_cursor(&mut self) {
@@ -174,7 +174,7 @@ impl HtrkCore {
                 }
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 
     pub fn select_all(&mut self) {
@@ -230,7 +230,7 @@ impl HtrkCore {
                 }
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 
     pub fn handle_context_menu_action(&mut self, action: crate::ui::pattern_grid::ContextMenuAction) {
@@ -366,7 +366,7 @@ impl HtrkCore {
                 }
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 
     pub fn skip_to_prev_pattern(&mut self) {
@@ -416,7 +416,7 @@ impl HtrkCore {
                 let _ = self.undo_manager.undo(arc_module);
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 
     pub fn redo(&mut self) {
@@ -426,7 +426,7 @@ impl HtrkCore {
                 let _ = self.undo_manager.redo(arc_module);
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 
     pub fn copy_channel(&mut self, channel: usize) {
@@ -467,7 +467,7 @@ impl HtrkCore {
                 }
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 
     pub fn copy_column(&mut self, channel: usize, sub_column: SubColumn) {
@@ -503,7 +503,7 @@ impl HtrkCore {
                 let _ = self.undo_manager.execute(cmd, arc_module);
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 
     pub fn execute_edit_commands(&mut self, cmds: Vec<Box<dyn crate::edit::EditCommand>>) {
@@ -515,6 +515,6 @@ impl HtrkCore {
                 }
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 }

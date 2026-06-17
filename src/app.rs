@@ -86,14 +86,18 @@ pub struct HtrkApp {
     pub(crate) instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor,
     pub(crate) devmcp: Arc<DevMcp>,
     pub(crate) pending_view_switch: Arc<AtomicU8>,
+    pub(crate) show_exit_confirm: bool,
 }
 
 impl Default for HtrkApp {
     fn default() -> Self {
         let config = AppConfig::load();
+        let inst_list_w = config.instrument_list_width.unwrap_or(150.0);
+        let inst_env_h = config.instrument_envelope_height.unwrap_or(180.0);
         let mut file_browser = FileBrowser::default();
         file_browser.restore_last_dirs(&config);
         file_browser.restore_favorites(&config.favorites);
+        file_browser.restore_widths_from_config(&config);
         let playback_state = Arc::new(AtomicPlaybackState::default());
         let pending_view_switch = Arc::new(AtomicU8::new(0));
         HtrkApp {
@@ -136,8 +140,12 @@ impl Default for HtrkApp {
             playback_view: crate::ui::playback_view_panel::PlaybackView::default(),
             sendfx_panel: crate::ui::sendfx_panel::SendFxPanel::default(),
             automation_editor: crate::ui::automation_editor_panel::AutomationEditor::default(),
-            instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor::default(),
+            instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor {
+                list_width: inst_list_w,
+                envelope_height: inst_env_h,
+            },
             pending_view_switch: pending_view_switch.clone(),
+            show_exit_confirm: false,
             devmcp: {
                 let ps = pending_view_switch.clone();
                 let devmcp = DevMcp::new()
@@ -907,6 +915,37 @@ impl HtrkApp {
                 });
         }
 
+        if self.show_exit_confirm {
+            let mut open = true;
+            egui::Window::new("Unsaved Changes")
+                .open(&mut open)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .resizable(false)
+                .default_width(400.0)
+                .show(ctx, |ui| {
+                    ui.label("The current project has unsaved changes.");
+                    ui.label("Do you want to save before exiting?");
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Save").clicked() {
+                            crate::actions::save_current_file(self);
+                            self.show_exit_confirm = false;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        if ui.button("Don't Save").clicked() {
+                            self.show_exit_confirm = false;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.show_exit_confirm = false;
+                        }
+                    });
+                });
+            if !open {
+                self.show_exit_confirm = false;
+            }
+        }
+
         if let Some(ref mut dialog) = self.sample_export_dialog {
             if let Some((path, bit_depth)) = dialog.show(ctx) {
                 let sample_idx = dialog.sample_index;
@@ -989,8 +1028,19 @@ impl eframe::App for HtrkApp {
         let devmcp = self.devmcp.clone();
         let _guard = FrameGuard::new(devmcp.as_ref(), &ctx);
 
+        let vp_rect = ctx.viewport_rect();
+        self.config.window_width = Some(vp_rect.width());
+        self.config.window_height = Some(vp_rect.height());
+
         let (playback_row, playback_order, playback_pattern, playback_tick, playback_speed) =
             self.draw_preamble(&ctx);
+
+        if ctx.input(|i| i.viewport().close_requested()) {
+            if self.core.module_dirty() && !self.show_exit_confirm {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.show_exit_confirm = true;
+            }
+        }
 
         egui::Panel::top("menu_bar").show_inside(ui, |ui| {
             let menu_resp = crate::ui::menu_bar::draw_menu_bar(
@@ -1102,6 +1152,13 @@ impl eframe::App for HtrkApp {
             if menu_resp.show_settings {
                 self.settings_state = crate::ui::settings_window::SettingsState::from_config(&self.config);
                 self.settings_state.open = true;
+            }
+            if menu_resp.quit {
+                if self.core.module_dirty() {
+                    self.show_exit_confirm = true;
+                } else {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
             }
         });
 
@@ -1398,6 +1455,7 @@ impl eframe::App for HtrkApp {
                             &mut self.core.selected_sample,
                             &self.theme,
                             &self.core.playback_state,
+                            &mut self.config,
                         ) {
                             match event {
                                 crate::ui::instrument_editor::InstrumentEditEvent::SaveInstrument => {

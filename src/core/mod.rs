@@ -209,19 +209,7 @@ impl HtrkCore {
         }
     }
 
-    fn with_module_mut<R>(&mut self, f: impl FnOnce(&mut Module) -> R) -> Option<R> {
-        self.ensure_module_ownership();
-        let result = self.module.as_mut().and_then(|arc| {
-            Arc::get_mut(arc).map(f)
-        });
-        if result.is_some() {
-            self.sync_to_audio();
-            self.module_dirty = true;
-        }
-        result
-    }
-
-    pub fn sync_to_audio(&mut self) {
+    pub fn sync_module_to_audio(&mut self) {
         if let Some(ref module) = self.module {
             self.send_command(AudioCommand::LoadModule(module.clone()));
             self.module_dirty = true;
@@ -330,7 +318,7 @@ impl HtrkCore {
                 m.samples[sample_idx] = sample;
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 }
 

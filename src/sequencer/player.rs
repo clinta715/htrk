@@ -1,3 +1,4 @@
+use crate::audio::sequencer::clock::SequencerClock;
 use crate::sequencer::effect::Effect;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::note::Note;
@@ -220,12 +221,8 @@ pub struct SequencerState {
     pub current_order: u16,
     pub current_row: u8,
     pub current_pattern: u8,
-    pub current_tick: u8,
 
-    pub bpm: u16,
-    pub speed: u8,
-    pub samples_per_tick: f64,
-    pub sample_counter: f64,
+    pub clock: SequencerClock,
 
     pub global_volume: u8,
     pub last_global_volume_up: u8,
@@ -250,7 +247,6 @@ pub struct SequencerState {
     pub play_mode: PlayMode,
 
     pub auto_global_vol_factor: f32,
-    pub auto_tempo_factor: f32,
 }
 
 impl Default for SequencerState {
@@ -259,11 +255,7 @@ impl Default for SequencerState {
             current_order: 0,
             current_row: 0,
             current_pattern: 0,
-            current_tick: 0,
-            bpm: 125,
-            speed: 6,
-            samples_per_tick: 0.0,
-            sample_counter: 0.0,
+            clock: SequencerClock::new(125, 6, 44100.0),
             global_volume: 128,
             last_global_volume_up: 0,
             last_global_volume_down: 0,
@@ -283,7 +275,6 @@ impl Default for SequencerState {
             channels: vec![ChannelState::default(); crate::sequencer::module::DEFAULT_CHANNELS],
             play_mode: PlayMode::Once,
             auto_global_vol_factor: 1.0,
-            auto_tempo_factor: 1.0,
         }
     }
 }
@@ -305,8 +296,8 @@ mod tests {
     #[test]
     fn sequencer_state_default() {
         let ss = SequencerState::default();
-        assert_eq!(ss.bpm, 125);
-        assert_eq!(ss.speed, 6);
+        assert_eq!(ss.clock.bpm, 125);
+        assert_eq!(ss.clock.speed, 6);
         assert!(!ss.playing);
         assert!(!ss.paused);
         assert_eq!(ss.channels.len(), crate::sequencer::module::DEFAULT_CHANNELS);

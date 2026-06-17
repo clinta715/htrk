@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use crate::audio::effects::compute_samples_per_tick;
 use crate::audio::effects::{compute_playback_frequency, fastrand};
 use crate::audio::filter::StateVariableFilter;
 use crate::audio::voice::EnvelopeState;
-use crate::sequencer::effect::{Effect, FilterType, FormatEffect, ItEffect, ModEffect, S3mEffect, XmEffect, NUM_SEND_BUSES};
+use crate::sequencer::effect::{Effect, FormatEffect, ItEffect, ModEffect, S3mEffect, XmEffect};
 use crate::sequencer::instrument::{DuplicateCheckAction, DuplicateCheckType, NewNoteAction};
 use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
@@ -18,21 +17,16 @@ impl LegacyProcessor {
     }
 
     pub fn apply_effect(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, effect: &Effect, is_row_start: bool) {
+        if super::shared::dispatch_shared_effect(engine, channel, effect) {
+            return;
+        }
+
         let ch = &mut engine.state.channels[channel];
 
         match effect {
-            Effect::None => {}
-
-            Effect::SetSpeed { speed } => {
-                if *speed > 0 {
-                    engine.state.speed = *speed;
-                }
-            }
             Effect::SetTempo { bpm } => {
                 if *bpm >= 32 {
-                    engine.state.bpm = *bpm as u16;
-                    engine.state.samples_per_tick =
-                        compute_samples_per_tick(engine.state.bpm, engine.output_sample_rate);
+                    engine.state.clock.set_bpm(*bpm as u16);
                 }
             }
 
@@ -45,20 +39,6 @@ impl LegacyProcessor {
                         voice.base_volume = vol;
 
                     }
-                }
-            }
-
-            Effect::SetPanning { pan } | Effect::SetPanning16 { pan } => {
-                ch.channel_panning = (*pan).min(255);
-            }
-
-            Effect::SetPanPosition { pan } => {
-                ch.channel_panning = (*pan).min(255);
-            }
-
-            Effect::SetSampleOffset { offset } => {
-                if *offset > 0 {
-                    ch.last_sample_offset = *offset;
                 }
             }
 
@@ -99,14 +79,6 @@ impl LegacyProcessor {
                     }
                     _ => {}
                 }
-            }
-
-            Effect::PositionJump { order } => {
-                engine.state.position_jump_order = Some(*order);
-            }
-
-            Effect::PatternBreak { row } => {
-                engine.state.pattern_break_row = Some(*row);
             }
 
             Effect::TonePortamento { speed } => {
@@ -214,17 +186,6 @@ impl LegacyProcessor {
             Effect::SetGlobalVolume { volume } => {
                 engine.state.global_volume = (*volume).min(128);
 
-            }
-
-            Effect::PatternDelay { ticks } => {
-                if !engine.state.row_delay_active {
-                    engine.state.pattern_delay_ticks = *ticks;
-                    engine.state.row_delay_active = true;
-                }
-            }
-
-            Effect::GlissandoControl { on } => {
-                ch.glissando = *on;
             }
 
             Effect::VibratoWaveform { waveform } => {
@@ -457,68 +418,7 @@ impl LegacyProcessor {
                 engine.state.channels[channel].active_effects.vibrato = true;
             }
 
-            Effect::SetFilterCutoff { cutoff } => {
-                let cutoff_f = *cutoff as f32;
-                engine.state.channels[channel].filter_cutoff = cutoff_f;
-                for voice in &mut engine.voice_pool.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.filter_cutoff = cutoff_f;
-                    }
-                }
-            }
-
-            Effect::SetFilterResonance { resonance } => {
-                let res_f = *resonance as f32 / 128.0;
-                engine.state.channels[channel].filter_resonance = res_f;
-                for voice in &mut engine.voice_pool.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.filter_resonance = res_f;
-                    }
-                }
-            }
-
-            Effect::SetFilterType { filter_type } => {
-                let ft = FilterType::from_u8(*filter_type);
-                engine.state.channels[channel].filter_type = ft;
-                for voice in &mut engine.voice_pool.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.filter_type = ft;
-                        voice.svf.filter_type = ft;
-                    }
-                }
-            }
-
-            Effect::FilterCutoffSlide { amount } => {
-                engine.state.channels[channel].last_filter_cutoff_slide = *amount;
-                engine.state.channels[channel].active_effects.filter_cutoff_slide = true;
-                let slide = *amount as f32;
-                let new_cutoff = (engine.state.channels[channel].filter_cutoff + slide).clamp(0.0, 0xFFFF as f32);
-                engine.state.channels[channel].filter_cutoff = new_cutoff;
-                for voice in &mut engine.voice_pool.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.filter_cutoff = new_cutoff;
-                    }
-                }
-            }
-
-            Effect::SetSendLevel { send_index, level } => {
-                let idx = *send_index as usize;
-                if idx < NUM_SEND_BUSES {
-                    let level_f = (*level as f32) / 15.0;
-                    engine.state.channels[channel].send_levels[idx] = level_f;
-                }
-            }
-
-            Effect::SetSendBusParam { bus, param, .. } => {
-                let bus = *bus as usize;
-                let param_idx = (*param as u32) % 4;
-                let mem_idx = bus * 4 + (*param as usize) % 4;
-                let value = engine.state.channels[channel].last_send_param_value[mem_idx];
-                let actual_value = (value as f32) / 255.0;
-                if bus < NUM_SEND_BUSES {
-                    engine.pending_send_fx_params.push((bus, param_idx, actual_value));
-                }
-            }
+            _ => { /* handled by shared dispatch */ }
         }
     }
 
@@ -602,17 +502,6 @@ impl LegacyProcessor {
                 }
             }
 
-            if ae.filter_cutoff_slide {
-                let slide = engine.state.channels[ch].last_filter_cutoff_slide as f32;
-                let new_cutoff = (engine.state.channels[ch].filter_cutoff + slide).clamp(0.0, 0xFFFF as f32);
-                engine.state.channels[ch].filter_cutoff = new_cutoff;
-                for voice in &mut engine.voice_pool.voices {
-                    if voice.active && voice.channel == Some(ch) {
-                        voice.filter_cutoff = new_cutoff;
-                    }
-                }
-            }
-
             let fs = engine.state.channels[ch].funk_speed;
             if fs > 0 {
                 let fp = &mut engine.state.channels[ch].funk_pos;
@@ -645,14 +534,7 @@ impl LegacyProcessor {
                 }
             }
 
-            if !ae.tremolo {
-                let vol = engine.compute_channel_volume(ch);
-                for voice in &mut engine.voice_pool.voices {
-                    if voice.active && voice.channel == Some(ch) {
-                        voice.base_volume = vol;
-                    }
-                }
-            }
+            super::shared::shared_process_tick_tail(engine, ch, tick);
         }
     }
 

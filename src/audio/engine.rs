@@ -175,19 +175,19 @@ impl AudioEngine {
         if self.sequencer.state.playing {
             let mut samples_done = 0;
             while samples_done < frame_count && self.sequencer.state.playing {
-                let samples_per_tick = self.sequencer.state.samples_per_tick.max(1.0);
+                let samples_per_tick = self.sequencer.state.clock.samples_per_tick.max(1.0);
 
                 // If sample_counter reached or exceeded samples_per_tick, it's time for a new tick
-                if self.sequencer.state.sample_counter >= samples_per_tick {
+                if self.sequencer.state.clock.sample_counter >= samples_per_tick {
                     self.sequencer.process_tick();
-                    self.sequencer.state.sample_counter -= samples_per_tick;
+                    self.sequencer.state.clock.sample_counter -= samples_per_tick;
 
                     if !self.sequencer.state.playing {
                         break;
                     }
                 }
 
-                let samples_remaining_in_tick = samples_per_tick - self.sequencer.state.sample_counter;
+                let samples_remaining_in_tick = samples_per_tick - self.sequencer.state.clock.sample_counter;
                 let samples_remaining_in_buffer = (frame_count - samples_done) as f64;
 
                 let chunk_f = samples_remaining_in_tick.min(samples_remaining_in_buffer);
@@ -226,7 +226,7 @@ impl AudioEngine {
                     self.output_sample_rate as f32,
                 );
 
-                self.sequencer.state.sample_counter += chunk as f64;
+                self.sequencer.state.clock.sample_counter += chunk as f64;
                 samples_done += chunk;
             }
         } else {
@@ -271,7 +271,7 @@ impl AudioEngine {
 
         // ── Send bus processing ──
         if !self.send_buses.is_empty() {
-            let bpm = self.sequencer.state.bpm;
+            let bpm = self.sequencer.state.clock.bpm;
             let sample_rate = self.output_sample_rate as f32;
             let channels = &self.sequencer.state.channels;
 
@@ -412,8 +412,8 @@ impl AudioEngine {
                         _debug_info.4,
                         _debug_info.2,
                         _debug_info.3,
-                        self.sequencer.state.bpm,
-                        self.sequencer.state.speed);
+                        self.sequencer.state.clock.bpm,
+                        self.sequencer.state.clock.speed);
                 }
                 AudioCommand::SetMasterVolume(vol) => {
                     self.master_volume = vol.clamp(0.0, 2.0);
@@ -422,12 +422,10 @@ impl AudioEngine {
                     self.sequencer.play_from(order, row);
                 }
                 AudioCommand::SetBPM(bpm) => {
-                    self.sequencer.state.bpm = bpm;
-                    self.sequencer.state.samples_per_tick =
-                        self.output_sample_rate * 5.0 / (bpm as f64 * 2.0);
+                    self.sequencer.state.clock.set_bpm(bpm);
                 }
                 AudioCommand::SetSpeed(speed) => {
-                    self.sequencer.state.speed = speed;
+                    self.sequencer.state.clock.set_speed(speed);
                 }
                 AudioCommand::SetChannelMuted { channel, muted } => {
                     if channel < self.sequencer.state.channels.len() {
@@ -503,10 +501,10 @@ impl AudioEngine {
             .store(state.playing, std::sync::atomic::Ordering::Relaxed);
         self.playback_state
             .bpm
-            .store(state.bpm, std::sync::atomic::Ordering::Relaxed);
+            .store(state.clock.bpm, std::sync::atomic::Ordering::Relaxed);
         self.playback_state
             .speed
-            .store(state.speed, std::sync::atomic::Ordering::Relaxed);
+            .store(state.clock.speed, std::sync::atomic::Ordering::Relaxed);
         self.playback_state
             .current_order
             .store(state.current_order as u16, std::sync::atomic::Ordering::Relaxed);
@@ -518,7 +516,7 @@ impl AudioEngine {
             .store(state.current_pattern as u16, std::sync::atomic::Ordering::Relaxed);
         self.playback_state
             .current_tick
-            .store(state.current_tick, std::sync::atomic::Ordering::Relaxed);
+            .store(state.clock.current_tick, std::sync::atomic::Ordering::Relaxed);
         self.playback_state
             .set_play_mode(state.play_mode);
 
@@ -543,6 +541,13 @@ impl AudioEngine {
 
         self.playback_state.clear_all_sample_positions();
         self.playback_state.clear_all_env_positions();
+        let preview_voice = &self.sequencer.voice_pool.voices[PREVIEW_VOICE_INDEX];
+        if preview_voice.active {
+            if let Some(si) = preview_voice.sample_index {
+                self.playback_state.set_preview_sample_position(Some(preview_voice.position));
+                self.playback_state.set_preview_sample_index(Some(si));
+            }
+        }
         for voice in &self.sequencer.voice_pool.voices {
             if voice.active {
                 if let (Some(ch), Some(si)) = (voice.channel, voice.sample_index) {
@@ -718,7 +723,7 @@ impl AudioEngine {
             panning,
             0,
             None,
-            None,
+            Some(sample_index as u8),
             note,
             NewNoteAction::NoteCut,
             0,

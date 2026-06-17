@@ -221,6 +221,17 @@ fn detail_cell(ui: &mut egui_module::Ui, text: &str, width: f32, color: egui_mod
     );
 }
 
+fn detail_drag_handle(ui: &mut egui_module::Ui, target_width: &mut f32, min: f32, max: f32) {
+    let (_, resp) = ui.allocate_exact_size(egui_module::vec2(4.0, 14.0), egui_module::Sense::drag());
+    if resp.dragged() {
+        *target_width = (*target_width + resp.drag_delta().x).clamp(min, max);
+    }
+}
+
+fn detail_drag_spacer(ui: &mut egui_module::Ui) {
+    ui.allocate_exact_size(egui_module::vec2(4.0, 14.0), egui_module::Sense::hover());
+}
+
 fn wav_duration(path: &Path) -> Option<f64> {
     let mut file = fs::File::open(path).ok()?;
     let mut buf = [0u8; 12];
@@ -307,6 +318,10 @@ pub struct FileBrowser {
     pub sort_descending: bool,
     pub preview_sample: Option<(PathBuf, Arc<Vec<f32>>, u32)>,
     pub preview_requested: bool,
+    pub dur_width: f32,
+    pub type_width: f32,
+    pub size_width: f32,
+    pub modified_width: f32,
 }
 
 impl Default for FileBrowser {
@@ -335,6 +350,10 @@ impl Default for FileBrowser {
             sort_descending: false,
             preview_sample: None,
             preview_requested: false,
+            dur_width: 56.0,
+            type_width: 44.0,
+            size_width: 64.0,
+            modified_width: 76.0,
         }
     }
 }
@@ -431,6 +450,20 @@ impl FileBrowser {
         self.favorites.iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect()
+    }
+
+    pub fn restore_widths_from_config(&mut self, config: &crate::app_config::AppConfig) {
+        self.dur_width = config.file_browser_dur_width.unwrap_or(56.0);
+        self.type_width = config.file_browser_type_width.unwrap_or(44.0);
+        self.size_width = config.file_browser_size_width.unwrap_or(64.0);
+        self.modified_width = config.file_browser_modified_width.unwrap_or(76.0);
+    }
+
+    pub fn sync_widths_to_config(&self, config: &mut crate::app_config::AppConfig) {
+        config.file_browser_dur_width = Some(self.dur_width);
+        config.file_browser_type_width = Some(self.type_width);
+        config.file_browser_size_width = Some(self.size_width);
+        config.file_browser_modified_width = Some(self.modified_width);
     }
 
     pub fn refresh(&mut self, config: Option<&mut crate::app_config::AppConfig>) -> std::io::Result<()> {
@@ -867,27 +900,26 @@ impl FileBrowser {
 
                                             if entry.is_dir {
                                                 detail_cell(ui, "DIR", 36.0, theme.fg_dimmer);
-                                                ui.end_row();
                                             } else {
                                                 let audio_exts = ["wav", "mp3", "ogg", "flac", "it", "xm", "s3m", "mod", "669"];
                                                 if audio_exts.contains(&entry.extension.as_str()) {
                                                     if let Some(dur) = self.get_duration(&entry.path) {
-                                                        detail_cell(ui, &format_duration(dur), 56.0, theme.fg_instrument);
+                                                        detail_cell(ui, &format_duration(dur), self.dur_width, theme.fg_instrument);
                                                     } else {
-                                                        detail_cell(ui, "", 56.0, theme.fg_dim);
+                                                        detail_cell(ui, "", self.dur_width, theme.fg_dim);
                                                     }
                                                 } else {
-                                                    detail_cell(ui, "", 56.0, theme.fg_dim);
+                                                    detail_cell(ui, "", self.dur_width, theme.fg_dim);
                                                 }
-                                                detail_cell(ui, &entry.extension.to_uppercase(), 44.0, theme.fg_dim);
-                                                detail_cell(ui, &entry.format_size(), 64.0, theme.fg_dim);
+                                                detail_cell(ui, &entry.extension.to_uppercase(), self.type_width, theme.fg_dim);
+                                                detail_cell(ui, &entry.format_size(), self.size_width, theme.fg_dim);
                                                 if let Some(modified) = entry.modified {
-                                                    detail_cell(ui, &format_date(modified), 76.0, theme.fg_dim);
+                                                    detail_cell(ui, &format_date(modified), self.modified_width, theme.fg_dim);
                                                 } else {
-                                                    detail_cell(ui, "", 76.0, theme.fg_dim);
+                                                    detail_cell(ui, "", self.modified_width, theme.fg_dim);
                                                 }
-                                                ui.end_row();
                                             }
+                                            ui.end_row();
 
                                             if response.clicked() {
                                                 self.select_index(vis_idx);
@@ -910,10 +942,13 @@ impl FileBrowser {
                                     .spacing(egui_module::vec2(2.0, 2.0))
                                     .show(ui, |ui| {
                                         ui.label(egui_module::RichText::new("Name").strong());
-                                        detail_cell(ui, "Dur", 56.0, theme.fg_dim);
-                                        detail_cell(ui, "Type", 44.0, theme.fg_dim);
-                                        detail_cell(ui, "Size", 64.0, theme.fg_dim);
-                                        detail_cell(ui, "Modified", 76.0, theme.fg_dim);
+                                        detail_cell(ui, "Dur", self.dur_width, theme.fg_dim);
+                                        detail_drag_handle(ui, &mut self.dur_width, 30.0, 150.0);
+                                        detail_cell(ui, "Type", self.type_width, theme.fg_dim);
+                                        detail_drag_handle(ui, &mut self.type_width, 30.0, 120.0);
+                                        detail_cell(ui, "Size", self.size_width, theme.fg_dim);
+                                        detail_drag_handle(ui, &mut self.size_width, 40.0, 150.0);
+                                        detail_cell(ui, "Modified", self.modified_width, theme.fg_dim);
                                         ui.end_row();
                                     });
                                 ui.separator();
@@ -943,27 +978,33 @@ impl FileBrowser {
                                             );
 
                                             if entry.is_dir {
-                                                detail_cell(ui, "", 56.0, theme.fg_dim);
-                                                detail_cell(ui, "DIR", 44.0, theme.fg_dimmer);
-                                                detail_cell(ui, "", 64.0, theme.fg_dim);
-                                                detail_cell(ui, "", 76.0, theme.fg_dim);
+                                                detail_cell(ui, "", self.dur_width, theme.fg_dim);
+                                                detail_drag_spacer(ui);
+                                                detail_cell(ui, "DIR", self.type_width, theme.fg_dimmer);
+                                                detail_drag_spacer(ui);
+                                                detail_cell(ui, "", self.size_width, theme.fg_dim);
+                                                detail_drag_spacer(ui);
+                                                detail_cell(ui, "", self.modified_width, theme.fg_dim);
                                             } else {
                                                 let audio_exts = ["wav", "mp3", "ogg", "flac", "it", "xm", "s3m", "mod", "669"];
                                                 if audio_exts.contains(&entry.extension.as_str()) {
                                                     if let Some(dur) = self.get_duration(&entry.path) {
-                                                        detail_cell(ui, &format_duration(dur), 56.0, theme.fg_instrument);
+                                                        detail_cell(ui, &format_duration(dur), self.dur_width, theme.fg_instrument);
                                                     } else {
-                                                        detail_cell(ui, "", 56.0, theme.fg_dim);
+                                                        detail_cell(ui, "", self.dur_width, theme.fg_dim);
                                                     }
                                                 } else {
-                                                    detail_cell(ui, "", 56.0, theme.fg_dim);
+                                                    detail_cell(ui, "", self.dur_width, theme.fg_dim);
                                                 }
-                                                detail_cell(ui, &entry.extension.to_uppercase(), 44.0, theme.fg_dim);
-                                                detail_cell(ui, &entry.format_size(), 64.0, theme.fg_dim);
+                                                detail_drag_spacer(ui);
+                                                detail_cell(ui, &entry.extension.to_uppercase(), self.type_width, theme.fg_dim);
+                                                detail_drag_spacer(ui);
+                                                detail_cell(ui, &entry.format_size(), self.size_width, theme.fg_dim);
+                                                detail_drag_spacer(ui);
                                                 if let Some(modified) = entry.modified {
-                                                    detail_cell(ui, &format_date(modified), 76.0, theme.fg_dim);
+                                                    detail_cell(ui, &format_date(modified), self.modified_width, theme.fg_dim);
                                                 } else {
-                                                    detail_cell(ui, "", 76.0, theme.fg_dim);
+                                                    detail_cell(ui, "", self.modified_width, theme.fg_dim);
                                                 }
                                             }
                                             ui.end_row();

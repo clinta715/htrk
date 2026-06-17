@@ -1,6 +1,5 @@
 use eframe::egui;
 use crate::sequencer::Module;
-use eguidev::DevUiExt;
 
 pub enum SampleMapEvent {
     NoteClicked(u8),
@@ -13,15 +12,17 @@ pub fn draw_sample_map(
     sample_map: &[u8; 120],
     selected_sample: u8,
     module: &Module,
+    cell_size: f32,
 ) -> Option<SampleMapEvent> {
     let mut event = None;
 
     ui.vertical(|ui| {
-        ui.heading("Sample Map");
-        ui.dev_label("sample_map.mapping", format!("Mapping to sample: {:02X}", selected_sample));
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Mapped Sample:").size(11.0).color(ui.visuals().text_color().gamma_multiply(0.7)));
+            ui.label(egui::RichText::new(format!("{:02X}", selected_sample)).strong().color(egui::Color32::WHITE));
+        });
+        ui.add_space(2.0);
 
-        let available_width = ui.available_width();
-        let cell_size = (available_width / 12.0).floor().min(30.0);
         let grid_width = cell_size * 12.0;
         let grid_height = cell_size * 10.0;
 
@@ -35,14 +36,12 @@ pub fn draw_sample_map(
 
         let notes = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
 
-        let mut hovered_note: Option<usize> = None;
-        if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-            if rect.contains(pos) {
-                let col = ((pos.x - rect.left()) / cell_size).floor() as usize;
-                let row = ((pos.y - rect.top()) / cell_size).floor() as usize;
-                if col < 12 && row < 10 {
-                    hovered_note = Some(row * 12 + col);
-                }
+        let mut current_hovered_note: Option<usize> = None;
+        if let Some(pos) = response.hover_pos() {
+            let col = ((pos.x - rect.left()) / cell_size).floor() as usize;
+            let row = ((pos.y - rect.top()) / cell_size).floor() as usize;
+            if col < 12 && row < 10 {
+                current_hovered_note = Some(row * 12 + col);
             }
         }
 
@@ -58,34 +57,31 @@ pub fn draw_sample_map(
 
                 let sample_idx = sample_map[note_idx as usize];
 
-                let bg_color: egui::Color32 = if sample_idx == 0 {
+                let is_hovered = current_hovered_note == Some(note_idx);
+                let mut bg_color: egui::Color32 = if sample_idx == 0 {
                     ui.visuals().faint_bg_color
                 } else {
                     let hue = (sample_idx as f32 * 0.1) % 1.0;
                     egui::ecolor::Hsva::new(hue, 0.5, 0.3, 1.0).into()
                 };
 
+                if is_hovered {
+                    let mut hsva = egui::ecolor::Hsva::from(bg_color);
+                    hsva.v += 0.1;
+                    bg_color = hsva.into();
+                }
+
                 painter.rect_filled(cell_rect.shrink(1.0), 1.0, bg_color);
+                if is_hovered {
+                    painter.rect_stroke(cell_rect.shrink(1.0), 1.0, egui::Stroke::new(1.0, ui.visuals().selection.stroke.color), egui::StrokeKind::Inside);
+                }
 
                 let text = format!("{}{}", notes[note_in_octave as usize], octave);
-                eguidev::track_response_full(
-                    format!("inst.samplemap.cell.{}", note_idx),
-                    &response,
-                    eguidev::WidgetMeta {
-                        role: eguidev::WidgetRole::Button,
-                        label: Some(text.clone()),
-                        value: Some(eguidev::WidgetValue::Int(sample_idx as i64)),
-                        visible: ui.is_visible() && ui.is_rect_visible(cell_rect),
-                        rect: Some(cell_rect),
-                        interact_rect: Some(cell_rect),
-                        ..Default::default()
-                    },
-                );
                 painter.text(
                     cell_rect.center() - egui::vec2(0.0, cell_size * 0.2),
                     egui::Align2::CENTER_CENTER,
                     text,
-                    egui::FontId::monospace(cell_size * 0.3),
+                    egui::FontId::monospace(cell_size * 0.32),
                     ui.visuals().text_color()
                 );
 
@@ -94,25 +90,14 @@ pub fn draw_sample_map(
                         cell_rect.center() + egui::vec2(0.0, cell_size * 0.2),
                         egui::Align2::CENTER_CENTER,
                         format!("{:02X}", sample_idx),
-                        egui::FontId::monospace(cell_size * 0.4),
+                        egui::FontId::monospace(cell_size * 0.42),
                         egui::Color32::WHITE
                     );
-                }
-
-                if response.clicked() && cell_rect.contains(response.interact_pointer_pos().unwrap_or(egui::Pos2::ZERO)) {
-                    if ui.input(|i| i.pointer.secondary_clicked()) {
-                        event = Some(SampleMapEvent::NoteCleared(note_idx as u8));
-                    } else {
-                        event = Some(SampleMapEvent::NoteClicked(note_idx as u8));
-                    }
-                }
-                if response.dragged() && cell_rect.contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or(egui::Pos2::ZERO)) {
-                    event = Some(SampleMapEvent::NoteDragged(note_idx as u8));
                 }
             }
         }
 
-        if let Some(note_idx) = hovered_note {
+        if let Some(note_idx) = current_hovered_note {
             let sample_idx = sample_map[note_idx];
             let tooltip_text = if sample_idx == 0 {
                 let notes_name = format!("{}{}", notes[note_idx % 12], note_idx / 12);
@@ -124,7 +109,13 @@ pub fn draw_sample_map(
                 let notes_name = format!("{}{}", notes[note_idx % 12], note_idx / 12);
                 format!("{}: Sample {:02X} - {}", notes_name, sample_idx, sname)
             };
-            let _ = response.on_hover_text(tooltip_text);
+            response.clone().on_hover_text(tooltip_text);
+
+            if response.clicked_by(egui::PointerButton::Primary) || response.dragged_by(egui::PointerButton::Primary) {
+                event = Some(SampleMapEvent::NoteClicked(note_idx as u8));
+            } else if response.clicked_by(egui::PointerButton::Secondary) || response.dragged_by(egui::PointerButton::Secondary) {
+                event = Some(SampleMapEvent::NoteCleared(note_idx as u8));
+            }
         }
 
         for i in 0..=12 {

@@ -27,7 +27,7 @@ impl HtrkCore {
                         }
                     }
                 }
-                self.sync_to_audio();
+                self.sync_module_to_audio();
             }
             crate::ui::pattern_grid::AutomationInteraction::PointMoved { channel, order, row, value } => {
                 if let Some(ref mut module) = self.module {
@@ -48,7 +48,7 @@ impl HtrkCore {
                         }
                     }
                 }
-                self.sync_to_audio();
+                self.sync_module_to_audio();
             }
             crate::ui::pattern_grid::AutomationInteraction::FreehandDraw { channel, points } => {
                 if let Some(ref mut module) = self.module {
@@ -71,7 +71,7 @@ impl HtrkCore {
                         }
                     }
                 }
-                self.sync_to_audio();
+                self.sync_module_to_audio();
             }
         }
     }
@@ -106,7 +106,7 @@ impl HtrkCore {
                 }
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 
     pub fn delete_automation_point(&mut self, channel: usize, row: usize) {
@@ -126,6 +126,6 @@ impl HtrkCore {
                 }
             }
         }
-        self.sync_to_audio();
+        self.sync_module_to_audio();
     }
 }

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use crate::sequencer::module::{Module, MAX_VOICES};
 use crate::sequencer::player::SequencerState;
-use crate::sequencer::note::Note;
 use crate::sequencer::instrument::{NewNoteAction, DuplicateCheckType, DuplicateCheckAction};
 use crate::sequencer::period::period_to_frequency;
 use crate::audio::voice::Voice;

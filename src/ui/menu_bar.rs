@@ -33,6 +33,7 @@ pub struct MenuResponse {
     pub show_shortcuts: bool,
     pub show_about: bool,
     pub show_settings: bool,
+    pub quit: bool,
 }
 
 impl Default for MenuResponse {
@@ -65,6 +66,7 @@ impl Default for MenuResponse {
             show_shortcuts: false,
             show_about: false,
             show_settings: false,
+            quit: false,
         }
     }
 }
@@ -118,6 +120,10 @@ pub fn draw_menu_bar(
             ui.dev_separator("menu.file.sep2");
             if ui.dev_button("menu.file.settings", "Settings...    F10").clicked() {
                 resp.show_settings = true;
+                ui.close();
+            }
+            if ui.dev_button("menu.file.quit", "Quit    Ctrl+Q").clicked() {
+                resp.quit = true;
                 ui.close();
             }
         });

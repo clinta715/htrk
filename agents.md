@@ -114,3 +114,12 @@ When any egui widget has keyboard focus, the `handle_keyboard_input` function in
 - `Event::Text` must always be handled **before** the focus gate, because it carries both widget text input AND note-preview keystrokes.
 - Never compute `any_dialog_open` inside `ctx.input()` — compute it outside so all branches agree on the same dialog-state snapshot.
 - When adding a new keyboard shortcut that should work regardless of widget focus, add it to a pre-gate `ctx.input()` pass, not the main match block.
+
+## 12. Save-on-Exit Confirmation
+
+- **`show_exit_confirm: bool`** on `HtrkApp` gates the dialog.
+- Intercept `ctx.input(|i| i.viewport().close_requested())` early in `ui()`; if dirty and not already confirming, `CancelClose + show_exit_confirm = true`.
+- The dialog in `draw_dialogs()` has three buttons: Save → `save_current_file + Close`, Don't Save → `Close`, Cancel → `show_exit_confirm = false`.
+- File > Quit Ctrl+Q menu item and `Ctrl+Q` keybind follow the same path: if dirty, set flag; if clean, `Close` immediately.
+- `module_dirty()` returns `false` safely when no module is loaded.
+

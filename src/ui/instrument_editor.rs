@@ -48,9 +48,8 @@ pub fn draw_instrument_editor(
     selected_sample: &mut usize,
     theme: &TrackerTheme,
     playback_state: &AtomicPlaybackState,
-    instrument_split: &mut f32,
-    instrument_settings_split: &mut f32,
-    instrument_map_split: &mut f32,
+    instrument_editor: &mut crate::ui::instrument_editor_panel::InstrumentEditor,
+    config: &mut crate::app_config::AppConfig,
 ) -> Option<InstrumentEditEvent> {
     let mut event = None;
 
@@ -66,12 +65,12 @@ pub fn draw_instrument_editor(
     let env_visible_id = ui.make_persistent_id("instrument_env_visible");
     let mut env_visible = ui.data(|d| d.get_temp::<bool>(env_visible_id).unwrap_or(true));
 
-    let total_w = ui.available_width();
+    let _total_w = ui.available_width();
     let total_h = ui.available_height();
 
     // 1. Instrument List (Side Panel)
-    let list_width = (total_w * *instrument_split).clamp(100.0, 400.0);
-    egui::Panel::left("instrument_list_panel")
+    let list_width = instrument_editor.list_width;
+    let list_panel_resp = egui::Panel::left("instrument_list_panel")
         .resizable(true)
         .size_range(100.0..=400.0)
         .default_size(list_width)
@@ -94,10 +93,24 @@ pub fn draw_instrument_editor(
                             } else {
                                 (format!("  {:02}: (empty)", i), theme.fg_dimmer)
                             };
-                            let response = ui.add_sized(
-                                [ui.available_width(), 18.0],
-                                egui::Label::new(egui::RichText::new(&label).color(label_color)).sense(egui::Sense::click()),
+                            let (rect, response) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), 18.0),
+                                egui::Sense::click(),
                             );
+
+                            let painter = ui.painter_at(rect);
+                            if is_selected {
+                                painter.rect_filled(rect, 0.0, theme.bg_selected);
+                            }
+
+                            painter.text(
+                                egui::pos2(rect.left() + 4.0, rect.center().y),
+                                egui::Align2::LEFT_CENTER,
+                                &label,
+                                egui::FontId::proportional(14.0),
+                                label_color,
+                            );
+
                             if response.clicked() {
                                 *selected_instrument = i;
                                 if let Some(inst) = module.instruments.get(i) {
@@ -106,18 +119,7 @@ pub fn draw_instrument_editor(
                                     }
                                 }
                             }
-                            if is_selected {
-                                let r = response.rect;
-                                let painter = ui.painter_at(r);
-                                painter.rect_filled(r, 0.0, theme.bg_selected);
-                                painter.text(
-                                    egui::pos2(r.left() + 4.0, r.center().y),
-                                    egui::Align2::LEFT_CENTER,
-                                    &label,
-                                    egui::FontId::proportional(14.0),
-                                    if has_inst { theme.fg_text } else { theme.fg_dimmer },
-                                );
-                            }
+                            
                             if has_inst && i > 0 {
                                 response.context_menu(|ui| {
                                     if ui.button("Export...").clicked() {
@@ -130,21 +132,21 @@ pub fn draw_instrument_editor(
                                     }
                                 });
                             }
-                            let r = response.rect;
-                            ui.painter_at(r).line_segment(
-                                [egui::pos2(r.left() + 2.0, r.bottom()), egui::pos2(r.right() - 2.0, r.bottom())],
+                            ui.painter_at(rect).line_segment(
+                                [egui::pos2(rect.left() + 2.0, rect.bottom()), egui::pos2(rect.right() - 2.0, rect.bottom())],
                                 egui::Stroke::new(1.0, theme.grid_line_minor),
                             );
                         }
                     });
             });
-            *instrument_split = ui.available_width() / total_w;
         });
+    instrument_editor.list_width = list_panel_resp.response.rect.width();
+    config.instrument_list_width = Some(instrument_editor.list_width);
 
     // 2. Envelope Editor (Bottom Panel)
     if env_visible {
-        let env_height = (total_h * *instrument_settings_split).clamp(100.0, total_h * 0.8);
-        egui::Panel::bottom("instrument_envelope_panel")
+        let env_height = instrument_editor.envelope_height;
+        let env_panel_resp = egui::Panel::bottom("instrument_envelope_panel")
             .resizable(true)
             .size_range(100.0..=total_h * 0.8)
             .default_size(env_height)
@@ -157,8 +159,9 @@ pub fn draw_instrument_editor(
                         event = Some(e);
                     }
                 }
-                *instrument_settings_split = ui.available_height() / total_h;
             });
+        instrument_editor.envelope_height = env_panel_resp.response.rect.height();
+        config.instrument_envelope_height = Some(instrument_editor.envelope_height);
     }
 
     // 3. Central Panel (Settings & Maps)
@@ -190,7 +193,7 @@ pub fn draw_instrument_editor(
                 });
                 ui.separator();
 
-                egui::ScrollArea::vertical()
+                    egui::ScrollArea::vertical()
                     .id_salt("instrument_central_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -198,7 +201,10 @@ pub fn draw_instrument_editor(
                             event = Some(e);
                         }
                         ui.add_space(8.0);
-                        if let Some(e) = draw_maps_row(ui, inst, theme, module, &mut paint_sample_idx, &mut browser_open, playback_state, instrument_map_split) {
+                        
+                        // Wrap the mapping section in its own vertical scroll if needed, 
+                        // or just let the main central scroll handle it.
+                        if let Some(e) = draw_maps_row(ui, inst, theme, module, &mut paint_sample_idx, &mut browser_open, playback_state, config) {
                             event = Some(e);
                         }
                     });
@@ -444,69 +450,76 @@ fn draw_maps_row(
     paint_sample_idx: &mut u8,
     browser_open: &mut bool,
     playback_state: &AtomicPlaybackState,
-    instrument_map_split: &mut f32,
+    config: &mut crate::app_config::AppConfig,
 ) -> Option<InstrumentEditEvent> {
     let mut event = None;
 
     ui.add_space(4.0);
-    let total_w = ui.available_width();
-    ui.horizontal(|ui| {
-        let left_w = total_w * *instrument_map_split;
-        let right_w = total_w - left_w - crate::ui::V_SPLITTER_W;
-
-        // --- Sample Map Column ---
-        ui.allocate_ui(egui::vec2(left_w, ui.available_height()), |ui| {
-            ui.group(|ui| {
-                ui.set_height(ui.available_height());
-                ui.horizontal(|ui| {
-                    ui.dev_label("inst.map.paint_label", egui::RichText::new("Sample Map").strong());
-                    ui.add_space(8.0);
-                    ui.label("Paint:");
-                    if ui.dev_button("inst.map.browse", "Browse...").clicked() {
-                        *browser_open = true;
-                    }
-                    ui.add_space(ui.available_width());
-                    if ui.dev_button("inst.map.fill_all", "Fill All").clicked() {
-                        event = Some(InstrumentEditEvent::SampleMapFillAll(*paint_sample_idx));
-                    }
-                });
-                ui.add_space(4.0);
-                crate::ui::sample_palette::draw_inline_sample_palette(ui, module, paint_sample_idx, playback_state, theme);
-                if let Some(map_event) = crate::ui::sample_map::draw_sample_map(
-                    ui, &inst.sample_map, *paint_sample_idx, module,
-                ) {
-                    match map_event {
-                        crate::ui::sample_map::SampleMapEvent::NoteClicked(note) |
-                        crate::ui::sample_map::SampleMapEvent::NoteDragged(note) => {
-                            if inst.sample_map[note as usize].saturating_sub(1) != *paint_sample_idx {
-                                event = Some(InstrumentEditEvent::SampleMapChanged(note, *paint_sample_idx));
-                            }
+    ui.vertical(|ui| {
+        // --- Sample Map ---
+        ui.group(|ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new("Sample Map").strong());
+                ui.add_space(8.0);
+                if ui.button(" - ").on_hover_text("Shrink grid").clicked() {
+                    config.sample_map_cell_size = (config.sample_map_cell_size - 2.0).max(16.0);
+                }
+                if ui.button(" + ").on_hover_text("Grow grid").clicked() {
+                    config.sample_map_cell_size = (config.sample_map_cell_size + 2.0).min(80.0);
+                }
+                ui.separator();
+                if ui.dev_button("inst.map.browse", "Browse...").clicked() {
+                    *browser_open = true;
+                }
+                ui.separator();
+                if ui.dev_button("inst.map.fill_all", "Fill All").clicked() {
+                    event = Some(InstrumentEditEvent::SampleMapFillAll(*paint_sample_idx));
+                }
+            });
+            ui.add_space(4.0);
+            crate::ui::sample_palette::draw_inline_sample_palette(ui, module, paint_sample_idx, playback_state, theme);
+            if let Some(map_event) = crate::ui::sample_map::draw_sample_map(
+                ui, &inst.sample_map, *paint_sample_idx, module, config.sample_map_cell_size,
+            ) {
+                match map_event {
+                    crate::ui::sample_map::SampleMapEvent::NoteClicked(note) |
+                    crate::ui::sample_map::SampleMapEvent::NoteDragged(note) => {
+                        if inst.sample_map[note as usize].saturating_sub(1) != *paint_sample_idx {
+                            event = Some(InstrumentEditEvent::SampleMapChanged(note, *paint_sample_idx));
                         }
-                        crate::ui::sample_map::SampleMapEvent::NoteCleared(note) => {
-                            if inst.sample_map[note as usize] != 0 {
-                                event = Some(InstrumentEditEvent::SampleMapChanged(note, 0));
-                            }
+                    }
+                    crate::ui::sample_map::SampleMapEvent::NoteCleared(note) => {
+                        if inst.sample_map[note as usize] != 0 {
+                            event = Some(InstrumentEditEvent::SampleMapChanged(note, 0));
                         }
                     }
                 }
-            });
+            }
         });
 
-        // Splitter
-        crate::ui::draw_vertical_splitter(ui, total_w, instrument_map_split, 0.2, 0.8, theme);
+        ui.add_space(8.0);
 
-        // --- Note Map Column ---
-        ui.allocate_ui(egui::vec2(right_w, ui.available_height()), |ui| {
-            ui.group(|ui| {
-                ui.set_height(ui.available_height());
+        // --- Note Map (Transpose) ---
+        ui.group(|ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new("Note Map (Transpose)").strong());
-                ui.add_space(4.0);
-                if let Some(nm_event) = crate::ui::note_map::draw_note_map(ui, &inst.note_map, *paint_sample_idx, theme) {
-                    if inst.note_map[nm_event.note as usize] != nm_event.new_dest {
-                        event = Some(InstrumentEditEvent::NoteMapChanged(nm_event.note, nm_event.new_dest));
-                    }
+                ui.add_space(8.0);
+                if ui.button(" - ").on_hover_text("Shrink grid").clicked() {
+                    config.note_map_cell_size = (config.note_map_cell_size - 2.0).max(16.0);
                 }
+                if ui.button(" + ").on_hover_text("Grow grid").clicked() {
+                    config.note_map_cell_size = (config.note_map_cell_size + 2.0).min(80.0);
+                }
+                ui.separator();
             });
+            ui.add_space(4.0);
+            if let Some(nm_event) = crate::ui::note_map::draw_note_map(ui, &inst.note_map, *paint_sample_idx, theme, config.note_map_cell_size) {
+                if inst.note_map[nm_event.note as usize] != nm_event.new_dest {
+                    event = Some(InstrumentEditEvent::NoteMapChanged(nm_event.note, nm_event.new_dest));
+                }
+            }
         });
     });
 

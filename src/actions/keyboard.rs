@@ -139,6 +139,14 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             crate::actions::save_current_file(app);
                             handled = true;
                         }
+                        egui::Key::Q => {
+                            if app.core.module_dirty() {
+                                app.show_exit_confirm = true;
+                            } else {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                            handled = true;
+                        }
                         egui::Key::ArrowRight if is_pattern => {
                             app.step_sub_column_forward();
                             handled = true;

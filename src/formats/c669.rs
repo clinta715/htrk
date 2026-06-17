@@ -44,7 +44,7 @@ impl FormatHandler for C669Handler {
         let name = read_string(&data[2..], 0, 108)?;
         let num_samples = data[110] as usize;
         let num_patterns = data[111] as usize;
-        let loop_order = data[112];
+        let _loop_order = data[112];
 
         if num_samples > 64 || num_patterns > 128 {
             return Err(FormatError::InvalidHeader {
@@ -65,7 +65,7 @@ impl FormatHandler for C669Handler {
         }
 
         let pattern_tempos = data[241..369].to_vec();
-        let pattern_breaks = data[369..497].to_vec();
+        let _pattern_breaks = data[369..497].to_vec();
 
         let mut offset = C669_HEADER_SIZE;
 
@@ -118,7 +118,7 @@ impl FormatHandler for C669Handler {
             };
             samples.push(sample);
 
-            let mut inst = Instrument {
+            let inst = Instrument {
                 name: inst_name,
                 sample_map: [(i + 1) as u8; 120],
                 global_volume: 128,

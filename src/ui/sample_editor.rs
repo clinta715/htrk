@@ -1,10 +1,10 @@
 use eframe::egui;
-use std::sync::Arc;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::Module;
 use crate::ui::TrackerTheme;
 use eguidev::DevUiExt;
 
+#[derive(Debug, Clone)]
 pub enum SampleEditEvent {
     NameChanged(String),
     VolumeChanged(u8),
@@ -34,23 +34,22 @@ pub fn draw_sample_editor(
     module: &Module,
     selected_sample: &mut usize,
     theme: &TrackerTheme,
-    selection: &mut Option<(usize, usize)>,
-    clipboard: &mut Option<Arc<Vec<f32>>>,
-    amplify_factor: &mut f32,
     playback_state: &AtomicPlaybackState,
-    sample_split: &mut f32,
+    sample_editor: &mut crate::ui::sample_editor_panel::SampleEditor,
 ) -> Option<SampleEditEvent> {
     let mut event = None;
 
-    ui.horizontal(|ui| {
-        let total_w = ui.available_width();
-        let list_w = (total_w * *sample_split).max(120.0);
+    let selection = &mut sample_editor.selection;
+    let clipboard = &mut sample_editor.clipboard;
+    let amplify_factor = &mut sample_editor.amplify_factor;
+    let waveform_visible = &mut sample_editor.waveform_visible;
 
-        // Sample List
-        ui.vertical(|ui| {
-            ui.set_width(list_w);
-            ui.set_height(ui.available_height());
-
+    let list_width = sample_editor.list_width;
+    let list_panel_resp = egui::Panel::left("sample_list_panel")
+        .resizable(true)
+        .size_range(120.0..=400.0)
+        .default_size(list_width)
+        .show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Samples");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -59,10 +58,10 @@ pub fn draw_sample_editor(
                     }
                 });
             });
-
             ui.separator();
 
             egui::ScrollArea::vertical()
+                .id_salt("sample_list_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     let num_samples = module.samples.len();
@@ -90,13 +89,13 @@ pub fn draw_sample_editor(
 
                             let loop_info = match sample.loop_type {
                                 crate::sequencer::sample::LoopType::None => "",
-                                crate::sequencer::sample::LoopType::Forward => " · fwd",
-                                crate::sequencer::sample::LoopType::PingPong => " · pong",
-                                crate::sequencer::sample::LoopType::Backward => " · bwd",
+                                crate::sequencer::sample::LoopType::Forward => " \u{00b7} fwd",
+                                crate::sequencer::sample::LoopType::PingPong => " \u{00b7} pong",
+                                crate::sequencer::sample::LoopType::Backward => " \u{00b7} bwd",
                             };
 
                             let detail = if has_data {
-                                format!("{} · {}Hz{}", len_str, sample.sample_rate, loop_info)
+                                format!("{} \u{00b7} {}Hz{}", len_str, sample.sample_rate, loop_info)
                             } else {
                                 String::new()
                             };
@@ -217,306 +216,287 @@ pub fn draw_sample_editor(
                     }
                 });
         });
+    sample_editor.list_width = list_panel_resp.response.rect.width();
 
-        crate::ui::draw_vertical_splitter(ui, total_w, sample_split, 0.15, 0.70, theme);
-
-        // Sample Editor Main Area
+    if *waveform_visible {
         if let Some(sample) = module.samples.get(*selected_sample) {
-            ui.vertical(|ui| {
+            if !sample.data.is_empty() {
+                let wave_height = sample_editor.waveform_height;
+                let wave_panel_resp = egui::Panel::bottom("sample_waveform_panel")
+                    .resizable(true)
+                    .size_range(80.0..=400.0)
+                    .default_size(wave_height)
+                    .show_inside(ui, |ui| {
+                        let playback_positions = playback_state.sample_positions_for(*selected_sample);
+                        if let Some(w_event) = crate::ui::waveform::draw_waveform(
+                            ui,
+                            &sample.data,
+                            sample.loop_start,
+                            sample.loop_end,
+                            sample.loop_type != crate::sequencer::sample::LoopType::None,
+                            selection,
+                            *selected_sample,
+                            &playback_positions,
+                            theme,
+                        ) {
+                            match w_event {
+                                crate::ui::waveform::WaveformEvent::LoopStartChanged(pos) => {
+                                    event = Some(SampleEditEvent::LoopStartChanged(pos));
+                                }
+                                crate::ui::waveform::WaveformEvent::LoopEndChanged(pos) => {
+                                    event = Some(SampleEditEvent::LoopEndChanged(pos));
+                                }
+                            }
+                        }
+                    });
+                sample_editor.waveform_height = wave_panel_resp.response.rect.height();
+            }
+        }
+    }
+
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE.fill(theme.bg_default))
+        .show_inside(ui, |ui| {
+            if let Some(sample) = module.samples.get(*selected_sample) {
                 ui.horizontal(|ui| {
-                    if ui.button("<< Prev").clicked() && *selected_sample > 1 {
-                        *selected_sample -= 1;
-                        *selection = None;
-                    }
-                    ui.heading(format!("Sample {:02X}:", *selected_sample));
+                    ui.label(egui::RichText::new(format!("SAMPLE {:02X}", *selected_sample)).strong().size(16.0));
                     let mut name = sample.name.clone();
-                    if ui.text_edit_singleline(&mut name).changed() {
+                    if ui.dev_text_edit("sample.header.name", &mut name).changed() {
                         event = Some(SampleEditEvent::NameChanged(name));
                     }
-                    if ui.button("Next >>").clicked() && *selected_sample + 1 < module.samples.len() {
-                        *selected_sample += 1;
-                        *selection = None;
-                    }
-                });
-                
-                // Waveform display
-                let waveform_group = ui.group(|ui| {
-                    ui.set_min_height(200.0);
-                    let playback_positions = playback_state.sample_positions_for(*selected_sample);
-                    if let Some(w_event) = crate::ui::waveform::draw_waveform(
-                        ui,
-                        &sample.data,
-                        sample.loop_start,
-                        sample.loop_end,
-                        sample.loop_type != crate::sequencer::sample::LoopType::None,
-                        selection,
-                        *selected_sample,
-                        &playback_positions,
-                        theme,
-                    ) {
-                        match w_event {
-                            crate::ui::waveform::WaveformEvent::LoopStartChanged(pos) => {
-                                event = Some(SampleEditEvent::LoopStartChanged(pos));
-                            }
-                            crate::ui::waveform::WaveformEvent::LoopEndChanged(pos) => {
-                                event = Some(SampleEditEvent::LoopEndChanged(pos));
-                            }
+                    ui.dev_separator("sample.header.sep");
+                    if !sample.data.is_empty() {
+                        if ui.dev_button("sample.header.export", "Export...").clicked() {
+                            event = Some(SampleEditEvent::ExportSample(*selected_sample));
                         }
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.selectable_label(*waveform_visible, "Waveform").clicked() {
+                            *waveform_visible = !*waveform_visible;
+                        }
+                        ui.separator();
+                        if ui.dev_button("sample.header.next", ">>").clicked() && *selected_sample + 1 < module.samples.len() {
+                            *selected_sample += 1;
+                            *selection = None;
+                        }
+                        if ui.dev_button("sample.header.prev", "<<").clicked() && *selected_sample > 1 {
+                            *selected_sample -= 1;
+                            *selection = None;
+                        }
+                    });
                 });
-                eguidev::track_response_full(
-                    "sample.waveform",
-                    &waveform_group.response,
-                    eguidev::WidgetMeta {
-                        role: eguidev::WidgetRole::Label,
-                        label: Some("Waveform".to_string()),
-                        visible: ui.is_visible() && ui.is_rect_visible(waveform_group.response.rect),
-                        ..Default::default()
-                    },
-                );
+                ui.separator();
 
-                ui.horizontal(|ui| {
-                    let col_w = ui.available_width() / 3.0;
+                egui::ScrollArea::vertical()
+                    .id_salt("sample_central_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.columns(2, |columns| {
+                            let left_event = {
+                                let mut ev = None;
+                                crate::ui::draw_group(&mut columns[0], "Playback", theme, |ui| {
+                                    egui::Grid::new("sample_playback_grid").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
+                                        ui.label("Default Vol:");
+                                        let mut vol = sample.default_volume as f32;
+                                        if ui.dev_slider("sample.prop.volume", &mut vol, 0.0..=64.0).changed() {
+                                            ev = Some(SampleEditEvent::VolumeChanged(vol as u8));
+                                        }
+                                        ui.end_row();
 
-                    // Properties Left Column
-                    ui.vertical(|ui| {
-                        ui.group(|ui| {
-                            ui.set_min_width(col_w);
-                            ui.heading("Playback");
-                            egui::Grid::new(format!("sample_playback_{}", *selected_sample)).show(ui, |ui| {
-                                ui.label("Default Vol:");
-                                let mut vol = sample.default_volume as f32;
-                                if ui.dev_slider("sample.prop.volume", &mut vol, 0.0..=64.0).changed() {
-                                    event = Some(SampleEditEvent::VolumeChanged(vol as u8));
-                                }
-                                ui.end_row();
+                                        ui.label("Global Vol:");
+                                        let mut gvol = sample.global_volume as f32;
+                                        if ui.dev_slider("sample.prop.global_volume", &mut gvol, 0.0..=64.0).changed() {
+                                            ev = Some(SampleEditEvent::GlobalVolumeChanged(gvol as u8));
+                                        }
+                                        ui.end_row();
 
-                                ui.label("Global Vol:");
-                                let mut gvol = sample.global_volume as f32;
-                                if ui.dev_slider("sample.prop.global_volume", &mut gvol, 0.0..=64.0).changed() {
-                                    event = Some(SampleEditEvent::GlobalVolumeChanged(gvol as u8));
-                                }
-                                ui.end_row();
-
-                                ui.label("Panning:");
-                                let mut pan = sample.default_panning as f32;
-                                if ui.dev_slider("sample.prop.panning", &mut pan, 0.0..=64.0).changed() {
-                                    event = Some(SampleEditEvent::PanningChanged(pan as u8));
-                                }
-                                ui.end_row();
-                            });
-                        });
-                    });
-
-                    // Properties Middle Column
-                    ui.vertical(|ui| {
-                        ui.group(|ui| {
-                            ui.set_min_width(col_w);
-                            ui.heading("Tuning");
-                            egui::Grid::new(format!("sample_tuning_{}", *selected_sample)).show(ui, |ui| {
-                                ui.label("Relative Note:");
-                                let mut rel = sample.relative_note as i32;
-                                if ui.dev_drag_value_i32_range("sample.prop.relative_note", &mut rel, -96..=95).changed() {
-                                    event = Some(SampleEditEvent::RelativeNoteChanged(rel as i8));
-                                }
-                                ui.end_row();
-
-                                ui.label("Fine Tune:");
-                                let mut fine = sample.fine_tune as i32;
-                                if ui.dev_drag_value_i32_range("sample.prop.finetune", &mut fine, -128..=127).changed() {
-                                    event = Some(SampleEditEvent::FineTuneChanged(fine as i8));
-                                }
-                                ui.end_row();
-
-                                ui.label("C5 Speed:");
-                                ui.label(format!("{} Hz", sample.sample_rate));
-                                ui.end_row();
-                            });
-                        });
-                    });
-
-                    // Properties Right Column (Loops)
-                    ui.vertical(|ui| {
-                        ui.group(|ui| {
-                            ui.set_min_width(col_w);
-                            ui.heading("Loop");
-                            egui::Grid::new(format!("sample_loop_{}", *selected_sample)).show(ui, |ui| {
-                                ui.label("Type:");
-                                ui.horizontal(|ui| {
-                                    if ui.selectable_label(sample.loop_type == crate::sequencer::sample::LoopType::None, "Off").clicked() {
-                                        event = Some(SampleEditEvent::LoopTypeChanged(crate::sequencer::sample::LoopType::None));
-                                    }
-                                    if ui.selectable_label(sample.loop_type == crate::sequencer::sample::LoopType::Forward, "Forward").clicked() {
-                                        event = Some(SampleEditEvent::LoopTypeChanged(crate::sequencer::sample::LoopType::Forward));
-                                    }
-                                    if ui.selectable_label(sample.loop_type == crate::sequencer::sample::LoopType::PingPong, "Ping-Pong").clicked() {
-                                        event = Some(SampleEditEvent::LoopTypeChanged(crate::sequencer::sample::LoopType::PingPong));
-                                    }
+                                        ui.label("Panning:");
+                                        let mut pan = sample.default_panning as f32;
+                                        if ui.dev_slider("sample.prop.panning", &mut pan, 0.0..=64.0).changed() {
+                                            ev = Some(SampleEditEvent::PanningChanged(pan as u8));
+                                        }
+                                        ui.end_row();
+                                    });
                                 });
-                                ui.end_row();
 
-                                ui.label("Start:");
-                                let mut start = sample.loop_start as i32;
-                                if ui.dev_drag_value_i32_range("sample.prop.loop_start", &mut start, 0..=sample.data.len() as i32).changed() {
-                                    event = Some(SampleEditEvent::LoopStartChanged(start as usize));
-                                }
-                                ui.end_row();
+                                crate::ui::draw_group(&mut columns[0], "Loop", theme, |ui| {
+                                    egui::Grid::new("sample_loop_grid").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
+                                        ui.label("Type:");
+                                        ui.horizontal(|ui| {
+                                            let lt = sample.loop_type;
+                                            if ui.dev_selectable_value("sample.loop.none", &mut lt.clone(), crate::sequencer::sample::LoopType::None, "Off").clicked() {
+                                                ev = Some(SampleEditEvent::LoopTypeChanged(crate::sequencer::sample::LoopType::None));
+                                            }
+                                            if ui.dev_selectable_value("sample.loop.fwd", &mut lt.clone(), crate::sequencer::sample::LoopType::Forward, "Fwd").clicked() {
+                                                ev = Some(SampleEditEvent::LoopTypeChanged(crate::sequencer::sample::LoopType::Forward));
+                                            }
+                                            if ui.dev_selectable_value("sample.loop.pong", &mut lt.clone(), crate::sequencer::sample::LoopType::PingPong, "Pong").clicked() {
+                                                ev = Some(SampleEditEvent::LoopTypeChanged(crate::sequencer::sample::LoopType::PingPong));
+                                            }
+                                        });
+                                        ui.end_row();
 
-                                ui.label("End:");
-                                let mut end = sample.loop_end as i32;
-                                if ui.dev_drag_value_i32_range("sample.prop.loop_end", &mut end, 0..=sample.data.len() as i32).changed() {
-                                    event = Some(SampleEditEvent::LoopEndChanged(end as usize));
+                                        ui.label("Start:");
+                                        let mut start = sample.loop_start as i32;
+                                        if ui.dev_drag_value_i32_range("sample.prop.loop_start", &mut start, 0..=sample.data.len() as i32).changed() {
+                                            ev = Some(SampleEditEvent::LoopStartChanged(start as usize));
+                                        }
+                                        ui.end_row();
+
+                                        ui.label("End:");
+                                        let mut end = sample.loop_end as i32;
+                                        if ui.dev_drag_value_i32_range("sample.prop.loop_end", &mut end, 0..=sample.data.len() as i32).changed() {
+                                            ev = Some(SampleEditEvent::LoopEndChanged(end as usize));
+                                        }
+                                        ui.end_row();
+                                    });
+                                });
+                                ev
+                            };
+
+                            let right_event = {
+                                let mut ev = None;
+                                crate::ui::draw_group(&mut columns[1], "Tuning", theme, |ui| {
+                                    egui::Grid::new("sample_tuning_grid").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
+                                        ui.label("Relative Note:");
+                                        let mut rel = sample.relative_note as i32;
+                                        if ui.dev_drag_value_i32_range("sample.prop.relative_note", &mut rel, -96..=95).changed() {
+                                            ev = Some(SampleEditEvent::RelativeNoteChanged(rel as i8));
+                                        }
+                                        ui.end_row();
+
+                                        ui.label("Fine Tune:");
+                                        let mut fine = sample.fine_tune as i32;
+                                        if ui.dev_drag_value_i32_range("sample.prop.finetune", &mut fine, -128..=127).changed() {
+                                            ev = Some(SampleEditEvent::FineTuneChanged(fine as i8));
+                                        }
+                                        ui.end_row();
+
+                                        ui.label("C5 Speed:");
+                                        ui.label(format!("{} Hz", sample.sample_rate));
+                                        ui.end_row();
+                                    });
+                                });
+
+                                crate::ui::draw_group(&mut columns[1], "Clipboard", theme, |ui| {
+                                    let has_sel = selection.is_some();
+                                    let has_clip = clipboard.is_some();
+                                    ui.horizontal_wrapped(|ui| {
+                                        let r = ui.add_enabled(has_sel, egui::Button::new("Cut"));
+                                        eguidev::track_response_full(
+                                            "sample.process.cut", &r,
+                                            eguidev::WidgetMeta { role: eguidev::WidgetRole::Button, label: Some("Cut".to_string()),
+                                                visible: ui.is_visible() && ui.is_rect_visible(r.rect), ..Default::default() },
+                                        );
+                                        if r.clicked() {
+                                            if let Some((s, e)) = *selection {
+                                                ev = Some(SampleEditEvent::CutRegion(s.min(e), s.max(e)));
+                                                *selection = None;
+                                            }
+                                        }
+
+                                        let r = ui.add_enabled(has_sel, egui::Button::new("Copy"));
+                                        eguidev::track_response_full(
+                                            "sample.process.copy", &r,
+                                            eguidev::WidgetMeta { role: eguidev::WidgetRole::Button, label: Some("Copy".to_string()),
+                                                visible: ui.is_visible() && ui.is_rect_visible(r.rect), ..Default::default() },
+                                        );
+                                        if r.clicked() {
+                                            if let Some((s, e)) = *selection {
+                                                ev = Some(SampleEditEvent::CopyRegion(s.min(e), s.max(e)));
+                                            }
+                                        }
+
+                                        let r = ui.add_enabled(has_clip, egui::Button::new("Paste"));
+                                        eguidev::track_response_full(
+                                            "sample.process.paste", &r,
+                                            eguidev::WidgetMeta { role: eguidev::WidgetRole::Button, label: Some("Paste".to_string()),
+                                                visible: ui.is_visible() && ui.is_rect_visible(r.rect), ..Default::default() },
+                                        );
+                                        if r.clicked() {
+                                            let pos = selection.map(|(s, e)| s.min(e)).unwrap_or(0);
+                                            ev = Some(SampleEditEvent::PasteRegion(pos));
+                                        }
+                                    });
+                                });
+                                ev
+                            };
+
+                            if left_event.is_some() { event = left_event; }
+                            if right_event.is_some() { event = right_event; }
+                        });
+
+                        ui.add_space(4.0);
+                        crate::ui::draw_group(ui, "Process", theme, |ui| {
+                            let has_sel = selection.is_some();
+                            ui.horizontal(|ui| {
+                                let r = ui.add_enabled(has_sel, egui::Button::new("Crop"));
+                                eguidev::track_response_full(
+                                    "sample.process.crop", &r,
+                                    eguidev::WidgetMeta { role: eguidev::WidgetRole::Button, label: Some("Crop".to_string()),
+                                        visible: ui.is_visible() && ui.is_rect_visible(r.rect), ..Default::default() },
+                                );
+                                if r.clicked() {
+                                    if let Some((s, e)) = *selection {
+                                        event = Some(SampleEditEvent::CropRegion(s.min(e), s.max(e)));
+                                        *selection = None;
+                                    }
                                 }
-                                ui.end_row();
+
+                                ui.label("Amp:");
+                                ui.add(egui::DragValue::new(amplify_factor).speed(0.05).range(0.0..=10.0));
+                                if ui.dev_button("sample.process.amplify", "Apply").clicked() && *amplify_factor != 1.0 {
+                                    event = Some(SampleEditEvent::Amplify(*amplify_factor));
+                                }
+
+                                let r = ui.add_enabled(has_sel, egui::Button::new("Silence"));
+                                eguidev::track_response_full(
+                                    "sample.process.silence", &r,
+                                    eguidev::WidgetMeta { role: eguidev::WidgetRole::Button, label: Some("Silence".to_string()),
+                                        visible: ui.is_visible() && ui.is_rect_visible(r.rect), ..Default::default() },
+                                );
+                                if r.clicked() {
+                                    if let Some((s, e)) = *selection {
+                                        event = Some(SampleEditEvent::SilenceRegion(s.min(e), s.max(e)));
+                                        *selection = None;
+                                    }
+                                }
+
+                                let r = ui.add_enabled(has_sel, egui::Button::new("Set Loop"));
+                                eguidev::track_response_full(
+                                    "sample.process.loop", &r,
+                                    eguidev::WidgetMeta { role: eguidev::WidgetRole::Button, label: Some("Set Loop".to_string()),
+                                        visible: ui.is_visible() && ui.is_rect_visible(r.rect), ..Default::default() },
+                                );
+                                if r.clicked() {
+                                    if let Some((s, e)) = *selection {
+                                        event = Some(SampleEditEvent::SetLoopFromSelection(s.min(e), s.max(e)));
+                                        *selection = None;
+                                    }
+                                }
+                            });
+                        });
+
+                        crate::ui::draw_group(ui, "Destructive", theme, |ui| {
+                            ui.horizontal(|ui| {
+                                if !sample.data.is_empty() && ui.dev_button("sample.process.trim", "Trim Silence").clicked() {
+                                    event = Some(SampleEditEvent::TrimSilence);
+                                }
+                                if ui.dev_button("sample.process.normalize", "Normalize").clicked() {
+                                    event = Some(SampleEditEvent::Normalize);
+                                }
+                                if ui.dev_button("sample.process.reverse", "Reverse").clicked() {
+                                    event = Some(SampleEditEvent::Reverse);
+                                }
                             });
                         });
                     });
+            } else {
+                ui.centered_and_justified(|ui| {
+                    ui.label("No sample selected. Click on a sample in the list to the left.");
                 });
-
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let has_sel = selection.is_some();
-                    let has_clip = clipboard.is_some();
-                    let len = sample.data.len();
-
-                    ui.label(egui::RichText::new("Clipboard:").size(10.0).color(theme.fg_dim));
-                    {
-                        let r = ui.add_enabled(has_sel, egui::Button::new("Cut"));
-                        eguidev::track_response_full(
-                            "sample.process.cut",
-                            &r,
-                            eguidev::WidgetMeta {
-                                role: eguidev::WidgetRole::Button,
-                                label: Some("Cut".to_string()),
-                                visible: ui.is_visible() && ui.is_rect_visible(r.rect),
-                                ..Default::default()
-                            },
-                        );
-                        if r.clicked() {
-                            if let Some((s, e)) = *selection {
-                                event = Some(SampleEditEvent::CutRegion(s.min(e), s.max(e)));
-                                *selection = None;
-                            }
-                        }
-                    }
-                    {
-                        let r = ui.add_enabled(has_sel, egui::Button::new("Copy"));
-                        eguidev::track_response_full(
-                            "sample.process.copy",
-                            &r,
-                            eguidev::WidgetMeta {
-                                role: eguidev::WidgetRole::Button,
-                                label: Some("Copy".to_string()),
-                                visible: ui.is_visible() && ui.is_rect_visible(r.rect),
-                                ..Default::default()
-                            },
-                        );
-                        if r.clicked() {
-                            if let Some((s, e)) = *selection {
-                                event = Some(SampleEditEvent::CopyRegion(s.min(e), s.max(e)));
-                            }
-                        }
-                    }
-                    {
-                        let r = ui.add_enabled(has_clip, egui::Button::new("Paste"));
-                        eguidev::track_response_full(
-                            "sample.process.paste",
-                            &r,
-                            eguidev::WidgetMeta {
-                                role: eguidev::WidgetRole::Button,
-                                label: Some("Paste".to_string()),
-                                visible: ui.is_visible() && ui.is_rect_visible(r.rect),
-                                ..Default::default()
-                            },
-                        );
-                        if r.clicked() {
-                            let pos = selection.map(|(s, e)| s.min(e)).unwrap_or(0);
-                            event = Some(SampleEditEvent::PasteRegion(pos));
-                        }
-                    }
-                    ui.separator();
-                    ui.label(egui::RichText::new("Process:").size(10.0).color(theme.fg_dim));
-                    {
-                        let r = ui.add_enabled(has_sel, egui::Button::new("Crop"));
-                        eguidev::track_response_full(
-                            "sample.process.crop",
-                            &r,
-                            eguidev::WidgetMeta {
-                                role: eguidev::WidgetRole::Button,
-                                label: Some("Crop".to_string()),
-                                visible: ui.is_visible() && ui.is_rect_visible(r.rect),
-                                ..Default::default()
-                            },
-                        );
-                        if r.clicked() {
-                            if let Some((s, e)) = *selection {
-                                event = Some(SampleEditEvent::CropRegion(s.min(e), s.max(e)));
-                                *selection = None;
-                            }
-                        }
-                    }
-                    ui.label("Amp:");
-                    ui.add(egui::DragValue::new(amplify_factor).speed(0.05).range(0.0..=10.0));
-                    if ui.dev_button("sample.process.amplify", "Apply").clicked() && *amplify_factor != 1.0 {
-                        event = Some(SampleEditEvent::Amplify(*amplify_factor));
-                    }
-                    {
-                        let r = ui.add_enabled(has_sel, egui::Button::new("Silence"));
-                        eguidev::track_response_full(
-                            "sample.process.silence",
-                            &r,
-                            eguidev::WidgetMeta {
-                                role: eguidev::WidgetRole::Button,
-                                label: Some("Silence".to_string()),
-                                visible: ui.is_visible() && ui.is_rect_visible(r.rect),
-                                ..Default::default()
-                            },
-                        );
-                        if r.clicked() {
-                            if let Some((s, e)) = *selection {
-                                event = Some(SampleEditEvent::SilenceRegion(s.min(e), s.max(e)));
-                                *selection = None;
-                            }
-                        }
-                    }
-                    {
-                        let r = ui.add_enabled(has_sel, egui::Button::new("Set Loop"));
-                        eguidev::track_response_full(
-                            "sample.process.loop",
-                            &r,
-                            eguidev::WidgetMeta {
-                                role: eguidev::WidgetRole::Button,
-                                label: Some("Set Loop".to_string()),
-                                visible: ui.is_visible() && ui.is_rect_visible(r.rect),
-                                ..Default::default()
-                            },
-                        );
-                        if r.clicked() {
-                            if let Some((s, e)) = *selection {
-                                event = Some(SampleEditEvent::SetLoopFromSelection(s.min(e), s.max(e)));
-                                *selection = None;
-                            }
-                        }
-                    }
-                    ui.separator();
-                    ui.label(egui::RichText::new("Destructive:").size(10.0).color(theme.fg_dim));
-                    if len > 0 && ui.dev_button("sample.process.trim", "Trim").clicked() {
-                        event = Some(SampleEditEvent::TrimSilence);
-                    }
-                    if ui.dev_button("sample.process.normalize", "Normalize").clicked() {
-                        event = Some(SampleEditEvent::Normalize);
-                    }
-                    if ui.dev_button("sample.process.reverse", "Reverse").clicked() {
-                        event = Some(SampleEditEvent::Reverse);
-                    }
-                });
-            });
-        } else {
-            ui.centered_and_justified(|ui| {
-                ui.label("No sample selected. Click on a sample in the list to the left.");
-            });
-        }
-    });
+            }
+        });
 
     event
 }

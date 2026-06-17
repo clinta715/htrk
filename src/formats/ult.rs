@@ -187,8 +187,8 @@ impl FormatHandler for UltHandler {
         }
 
         let mut patterns = Vec::new();
-        for pattern_idx in 0..num_patterns {
-            let mut pattern = Pattern::new(ULT_PATTERN_ROWS);
+        for _pattern_idx in 0..num_patterns {
+            let pattern = Pattern::new(ULT_PATTERN_ROWS);
             patterns.push(pattern);
         }
 

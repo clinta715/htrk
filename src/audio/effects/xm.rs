@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use super::compute_samples_per_tick;
 use crate::audio::filter::StateVariableFilter;
 use crate::audio::voice::EnvelopeState;
-use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, S3mEffect, ItEffect, FilterType, NUM_SEND_BUSES};
+use crate::sequencer::effect::{Effect, FormatEffect, XmEffect};
 use crate::sequencer::instrument::{DuplicateCheckAction, DuplicateCheckType, NewNoteAction};
 use crate::sequencer::note::Note;
 use crate::sequencer::period::{get_note_period, period_to_frequency};
@@ -17,27 +16,40 @@ impl XmProcessor {
         XmProcessor
     }
 
-    pub fn apply_effect(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, effect: &Effect, is_row_start: bool) {
+    fn update_period_voices(
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        channel: usize,
+    ) {
+        let out = engine.state.channels[channel].out_period;
+        let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
+        let freq = period_to_frequency(out, linear_slides, 8363);
+        let delta = if engine.output_sample_rate > 0.0 {
+            freq / engine.output_sample_rate
+        } else {
+            0.0
+        };
+        for voice in &mut engine.voice_pool.voices {
+            if voice.active && voice.channel == Some(channel) {
+                voice.current_frequency = freq;
+                voice.sample_delta = delta;
+            }
+        }
+    }
+
+    pub fn apply_effect(
+        &mut self,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        channel: usize,
+        effect: &Effect,
+        is_row_start: bool,
+    ) {
+        if super::shared::dispatch_shared_effect(engine, channel, effect) {
+            return;
+        }
+
         let ch = &mut engine.state.channels[channel];
 
         match effect {
-            Effect::None => {}
-
-            Effect::SetSpeed { speed } => {
-                if *speed > 0 {
-                    engine.state.speed = *speed;
-                }
-            }
-            Effect::SetTempo { bpm } => {
-                if *bpm >= 32 {
-                    engine.state.bpm = *bpm as u16;
-                    engine.state.samples_per_tick =
-                        compute_samples_per_tick(engine.state.bpm, engine.output_sample_rate);
-                } else if *bpm > 0 {
-                    engine.state.speed = *bpm;
-                }
-            }
-
             Effect::SetVolume { volume } | Effect::VolSetVolume { vol: volume } => {
                 ch.channel_volume = (*volume).min(64);
                 ch.row_volume = (*volume).min(64);
@@ -50,43 +62,21 @@ impl XmProcessor {
                 }
             }
 
-            Effect::SetPanning { pan } | Effect::SetPanning16 { pan } => {
-                ch.channel_panning = (*pan).min(255);
-            }
-
-            Effect::SetPanPosition { pan } => {
-                ch.channel_panning = (*pan).min(255);
-            }
-
-            Effect::SetSampleOffset { offset } => {
-                if *offset > 0 {
-                    ch.last_sample_offset = *offset;
+            Effect::SetTempo { bpm } => {
+                if *bpm >= 32 {
+                    engine.state.clock.set_bpm(*bpm as u16);
+                } else if *bpm > 0 {
+                    engine.state.clock.set_speed(*bpm);
                 }
             }
 
             Effect::FormatSpecific(fe) => {
                 match fe {
-                    FormatEffect::Xm(XmEffect::SetSampleOffset(offset))
-                    | FormatEffect::S3m(S3mEffect::SetSampleOffset(offset))
-                    | FormatEffect::It(ItEffect::SetSampleOffset(offset)) => {
-                        if *offset > 0 {
-                            ch.last_sample_offset = *offset;
-                        }
-                    }
                     FormatEffect::Xm(XmEffect::KeyOff { .. }) => {
                         ch.active_effects.key_off = true;
                     }
                     _ => {}
                 }
-            }
-
-            Effect::PositionJump { order } => {
-                engine.state.position_jump_order = Some(*order);
-            }
-
-            Effect::PatternBreak { row } => {
-                engine.state.position_jump_flag = true;
-                engine.state.pattern_break_row = Some(*row);
             }
 
             Effect::TonePortamento { speed } => {
@@ -117,22 +107,11 @@ impl XmProcessor {
                     ch.last_portamento_up_speed = *speed;
                 }
                 ch.active_effects.portamento_up = true;
-                if is_row_start {
-                    if *speed > 0 {
-                        let spd = (*speed as u16) << 2;
-                        ch.real_period = ch.real_period.saturating_sub(spd).max(1);
-                        ch.out_period = ch.real_period;
-                        let out = ch.out_period;
-                        let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
-                        let freq = period_to_frequency(out, linear_slides, 8363);
-                        let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                        for voice in &mut engine.voice_pool.voices {
-                            if voice.active && voice.channel == Some(channel) {
-                                voice.current_frequency = freq;
-                                voice.sample_delta = delta;
-                            }
-                        }
-                    }
+                if is_row_start && *speed > 0 {
+                    let spd = (*speed as u16) << 2;
+                    ch.real_period = ch.real_period.saturating_sub(spd).max(1);
+                    ch.out_period = ch.real_period;
+                    Self::update_period_voices(engine, channel);
                 }
             }
 
@@ -141,22 +120,11 @@ impl XmProcessor {
                     ch.last_portamento_down_speed = *speed;
                 }
                 ch.active_effects.portamento_down = true;
-                if is_row_start {
-                    if *speed > 0 {
-                        let spd = (*speed as u16) << 2;
-                        ch.real_period = ch.real_period.saturating_add(spd).min(31999);
-                        ch.out_period = ch.real_period;
-                        let out = ch.out_period;
-                        let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
-                        let freq = period_to_frequency(out, linear_slides, 8363);
-                        let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                        for voice in &mut engine.voice_pool.voices {
-                            if voice.active && voice.channel == Some(channel) {
-                                voice.current_frequency = freq;
-                                voice.sample_delta = delta;
-                            }
-                        }
-                    }
+                if is_row_start && *speed > 0 {
+                    let spd = (*speed as u16) << 2;
+                    ch.real_period = ch.real_period.saturating_add(spd).min(31999);
+                    ch.out_period = ch.real_period;
+                    Self::update_period_voices(engine, channel);
                 }
             }
 
@@ -165,16 +133,7 @@ impl XmProcessor {
                     let spd = ((*speed as u16 + 2) >> 2).max(1);
                     ch.real_period = ch.real_period.saturating_sub(spd).max(1);
                     ch.out_period = ch.real_period;
-                    let out = ch.out_period;
-                    let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
-                    let freq = period_to_frequency(out, linear_slides, 8363);
-                    let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                    for voice in &mut engine.voice_pool.voices {
-                        if voice.active && voice.channel == Some(channel) {
-                            voice.current_frequency = freq;
-                            voice.sample_delta = delta;
-                        }
-                    }
+                    Self::update_period_voices(engine, channel);
                 }
             }
 
@@ -183,56 +142,25 @@ impl XmProcessor {
                     let spd = ((*speed as u16 + 2) >> 2).max(1);
                     ch.real_period = ch.real_period.saturating_add(spd).min(31999);
                     ch.out_period = ch.real_period;
-                    let out = ch.out_period;
-                    let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
-                    let freq = period_to_frequency(out, linear_slides, 8363);
-                    let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                    for voice in &mut engine.voice_pool.voices {
-                        if voice.active && voice.channel == Some(channel) {
-                            voice.current_frequency = freq;
-                            voice.sample_delta = delta;
-                        }
-                    }
+                    Self::update_period_voices(engine, channel);
                 }
             }
 
             Effect::FinePortamentoUp { speed } => {
-                if is_row_start {
-                    if *speed > 0 {
-                        let spd = *speed as u16;
-                        ch.real_period = ch.real_period.saturating_sub(spd).max(1);
-                        ch.out_period = ch.real_period;
-                        let out = ch.out_period;
-                        let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
-                        let freq = period_to_frequency(out, linear_slides, 8363);
-                        let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                        for voice in &mut engine.voice_pool.voices {
-                            if voice.active && voice.channel == Some(channel) {
-                                voice.current_frequency = freq;
-                                voice.sample_delta = delta;
-                            }
-                        }
-                    }
+                if is_row_start && *speed > 0 {
+                    let spd = *speed as u16;
+                    ch.real_period = ch.real_period.saturating_sub(spd).max(1);
+                    ch.out_period = ch.real_period;
+                    Self::update_period_voices(engine, channel);
                 }
             }
 
             Effect::FinePortamentoDown { speed } => {
-                if is_row_start {
-                    if *speed > 0 {
-                        let spd = *speed as u16;
-                        ch.real_period = ch.real_period.saturating_add(spd).min(31999);
-                        ch.out_period = ch.real_period;
-                        let out = ch.out_period;
-                        let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
-                        let freq = period_to_frequency(out, linear_slides, 8363);
-                        let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
-                        for voice in &mut engine.voice_pool.voices {
-                            if voice.active && voice.channel == Some(channel) {
-                                voice.current_frequency = freq;
-                                voice.sample_delta = delta;
-                            }
-                        }
-                    }
+                if is_row_start && *speed > 0 {
+                    let spd = *speed as u16;
+                    ch.real_period = ch.real_period.saturating_add(spd).min(31999);
+                    ch.out_period = ch.real_period;
+                    Self::update_period_voices(engine, channel);
                 }
             }
 
@@ -296,17 +224,6 @@ impl XmProcessor {
 
             Effect::SetGlobalVolume { volume } => {
                 engine.state.global_volume = (*volume).min(64);
-            }
-
-            Effect::PatternDelay { ticks } => {
-                if !engine.state.row_delay_active {
-                    engine.state.pattern_delay_ticks = *ticks;
-                    engine.state.row_delay_active = true;
-                }
-            }
-
-            Effect::GlissandoControl { on } => {
-                ch.glissando = *on;
             }
 
             Effect::VibratoWaveform { waveform } => {
@@ -424,69 +341,7 @@ impl XmProcessor {
             Effect::VolSlideDown { .. } => {}
             Effect::VolPortamento { .. } => {}
             Effect::VolVibrato { .. } => {}
-
-            Effect::SetFilterCutoff { cutoff } => {
-                let cutoff_f = *cutoff as f32;
-                engine.state.channels[channel].filter_cutoff = cutoff_f;
-                for voice in &mut engine.voice_pool.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.filter_cutoff = cutoff_f;
-                    }
-                }
-            }
-
-            Effect::SetFilterResonance { resonance } => {
-                let res_f = *resonance as f32 / 128.0;
-                engine.state.channels[channel].filter_resonance = res_f;
-                for voice in &mut engine.voice_pool.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.filter_resonance = res_f;
-                    }
-                }
-            }
-
-            Effect::SetFilterType { filter_type } => {
-                let ft = FilterType::from_u8(*filter_type);
-                engine.state.channels[channel].filter_type = ft;
-                for voice in &mut engine.voice_pool.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.filter_type = ft;
-                        voice.svf.filter_type = ft;
-                    }
-                }
-            }
-
-            Effect::FilterCutoffSlide { amount } => {
-                engine.state.channels[channel].last_filter_cutoff_slide = *amount;
-                engine.state.channels[channel].active_effects.filter_cutoff_slide = true;
-                let slide = *amount as f32;
-                let new_cutoff = (engine.state.channels[channel].filter_cutoff + slide).clamp(0.0, 0xFFFF as f32);
-                engine.state.channels[channel].filter_cutoff = new_cutoff;
-                for voice in &mut engine.voice_pool.voices {
-                    if voice.active && voice.channel == Some(channel) {
-                        voice.filter_cutoff = new_cutoff;
-                    }
-                }
-            }
-
-            Effect::SetSendLevel { send_index, level } => {
-                let idx = *send_index as usize;
-                if idx < NUM_SEND_BUSES {
-                    let level_f = (*level as f32) / 15.0;
-                    engine.state.channels[channel].send_levels[idx] = level_f;
-                }
-            }
-
-            Effect::SetSendBusParam { bus, param, .. } => {
-                let bus = *bus as usize;
-                let param_idx = (*param as u32) % 4;
-                let mem_idx = bus * 4 + (*param as usize) % 4;
-                let value = engine.state.channels[channel].last_send_param_value[mem_idx];
-                let actual_value = (value as f32) / 255.0;
-                if bus < NUM_SEND_BUSES {
-                    engine.pending_send_fx_params.push((bus, param_idx, actual_value));
-                }
-            }
+            _ => { /* handled by shared dispatch */ }
         }
     }
 
@@ -591,17 +446,6 @@ impl XmProcessor {
                 engine.apply_panning_slide(ch);
             }
 
-            if ae.filter_cutoff_slide {
-                let slide = engine.state.channels[ch].last_filter_cutoff_slide as f32;
-                let new_cutoff = (engine.state.channels[ch].filter_cutoff + slide).clamp(0.0, 0xFFFF as f32);
-                engine.state.channels[ch].filter_cutoff = new_cutoff;
-                for voice in &mut engine.voice_pool.voices {
-                    if voice.active && voice.channel == Some(ch) {
-                        voice.filter_cutoff = new_cutoff;
-                    }
-                }
-            }
-
             let retrig_speed = engine.state.channels[ch].retrig_speed;
             let retrig_interval = engine.state.channels[ch].last_retrigger_interval;
             if retrig_speed > 0 && tick > 0 && tick % retrig_speed == 0 {
@@ -635,14 +479,7 @@ impl XmProcessor {
                 }
             }
 
-            if !ae.tremolo {
-                let vol = engine.compute_channel_volume(ch);
-                for voice in &mut engine.voice_pool.voices {
-                    if voice.active && voice.channel == Some(ch) {
-                        voice.base_volume = vol;
-                    }
-                }
-            }
+            super::shared::shared_process_tick_tail(engine, ch, tick);
         }
     }
 
@@ -834,7 +671,7 @@ impl XmProcessor {
         }
     }
 
-    pub fn setup_portamento(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, note_key: u8, remapped_key: u8, sample: Option<&Sample>, _sample_idx: usize) {
+    pub fn setup_portamento(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, _note_key: u8, remapped_key: u8, sample: Option<&Sample>, _sample_idx: usize) {
         if let Some(s) = sample {
             let ch = &mut engine.state.channels[channel];
             ch.rel_ton = s.relative_note;

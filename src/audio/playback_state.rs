@@ -44,6 +44,9 @@ pub struct AtomicPlaybackState {
 
     channel_env_pos: [[AtomicU32; MAX_CHANNELS]; NUM_ENVELOPE_TYPES],
     channel_env_instrument: [AtomicU16; MAX_CHANNELS],
+
+    pub preview_sample_position: AtomicU64,
+    pub preview_sample_index: AtomicU16,
 }
 
 impl AtomicPlaybackState {
@@ -166,6 +169,16 @@ impl AtomicPlaybackState {
         }
     }
 
+    pub fn set_preview_sample_position(&self, pos: Option<f64>) {
+        let bits = pos.map(|p| p.to_bits()).unwrap_or(Self::SAMPLE_POS_NONE);
+        self.preview_sample_position.store(bits, Ordering::Relaxed);
+    }
+
+    pub fn set_preview_sample_index(&self, idx: Option<u8>) {
+        let val = idx.map(|i| i as u16).unwrap_or(Self::SAMPLE_IDX_NONE);
+        self.preview_sample_index.store(val, Ordering::Relaxed);
+    }
+
     pub fn channel_sample_index_val(&self, ch: usize) -> Option<u8> {
         if ch < MAX_CHANNELS {
             let val = self.channel_sample_index[ch].load(Ordering::Relaxed);
@@ -191,6 +204,13 @@ impl AtomicPlaybackState {
                 }
             }
         }
+        let preview_idx = self.preview_sample_index.load(Ordering::Relaxed);
+        if preview_idx == target {
+            let bits = self.preview_sample_position.load(Ordering::Relaxed);
+            if bits != Self::SAMPLE_POS_NONE {
+                positions.push(f64::from_bits(bits));
+            }
+        }
         positions
     }
 
@@ -199,6 +219,8 @@ impl AtomicPlaybackState {
             self.channel_sample_position[ch].store(Self::SAMPLE_POS_NONE, Ordering::Relaxed);
             self.channel_sample_index[ch].store(Self::SAMPLE_IDX_NONE, Ordering::Relaxed);
         }
+        self.preview_sample_position.store(Self::SAMPLE_POS_NONE, Ordering::Relaxed);
+        self.preview_sample_index.store(Self::SAMPLE_IDX_NONE, Ordering::Relaxed);
     }
 
     pub fn set_channel_env_pos(&self, env_type: usize, ch: usize, pos: Option<f32>) {
@@ -291,6 +313,8 @@ impl Default for AtomicPlaybackState {
             channel_sample_index: std::array::from_fn(|_| AtomicU16::new(0xFFFF)),
             channel_env_pos: std::array::from_fn(|_| std::array::from_fn(|_| AtomicU32::new(ENV_POS_NONE))),
             channel_env_instrument: std::array::from_fn(|_| AtomicU16::new(0xFFFF)),
+            preview_sample_position: AtomicU64::new(u64::MAX),
+            preview_sample_index: AtomicU16::new(0xFFFF),
         }
     }
 }

@@ -89,14 +89,14 @@ impl WavRenderer {
             let mut samples_done = 0;
 
             while samples_done < frame_count && self.sequencer.state.playing {
-                let samples_per_tick = self.sequencer.state.samples_per_tick.max(1.0);
-                if self.sequencer.state.sample_counter >= samples_per_tick {
+                let samples_per_tick = self.sequencer.state.clock.samples_per_tick.max(1.0);
+                if self.sequencer.state.clock.sample_counter >= samples_per_tick {
                     self.sequencer.process_tick();
-                    self.sequencer.state.sample_counter -= samples_per_tick;
+                    self.sequencer.state.clock.sample_counter -= samples_per_tick;
                     if !self.sequencer.state.playing { break; }
                 }
 
-                let samples_remaining_in_tick = samples_per_tick - self.sequencer.state.sample_counter;
+                let samples_remaining_in_tick = samples_per_tick - self.sequencer.state.clock.sample_counter;
                 let samples_remaining_in_buffer = (frame_count - samples_done) as f64;
                 let chunk_f = samples_remaining_in_tick.min(samples_remaining_in_buffer);
                 let chunk = chunk_f.ceil() as usize;
@@ -116,7 +116,7 @@ impl WavRenderer {
                     self.sample_rate as f32,
                 );
 
-                self.sequencer.state.sample_counter += chunk as f64;
+                self.sequencer.state.clock.sample_counter += chunk as f64;
                 samples_done += chunk;
             }
 

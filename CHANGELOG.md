@@ -2,7 +2,19 @@
 
 All notable changes to htrk will be documented in this file.
 
-## [0.11.0] - 2026-05-22
+## [0.14.0] - 2026-06-16
+
+### Added
+
+- **Save-on-exit confirmation**: When closing (OS close button, Alt+F4, or File > Quit Ctrl+Q) with unsaved changes, a Save / Don't Save / Cancel dialog appears. Save triggers `save_current_file`; Don't Save exits immediately; Cancel dismisses. File > Quit Ctrl+Q added to menu and keyboard handler.
+- **Window size persistence**: Window dimensions saved to `AppConfig` every frame via `ctx.viewport_rect()`, restored on next launch.
+- **Instrument editor persistence**: `list_width` and `envelope_height` panel sizes saved to/loaded from `AppConfig`.
+- **File browser column widths**: Drag handles between Details header columns (Name, Duration, Type, Size, Modified) allow resizing. Widths persisted in `AppConfig`.
+
+### Fixed
+
+- **Sample Map +/- visibility**: Moved "Fill All" out of `right_to_left` sub-layout so +/-/Browse/Fill All flow left-to-right without wrapping behind the right edge.
+- **Double-borrow in sample editor**: `sample_editor.rs` now takes `&mut SampleEditor` only (removed redundant individual params).
 
 ### Added
 

@@ -37,7 +37,7 @@ impl FormatHandler for MmdHandler {
 
         let is_mmd1 = data[0] == b'M' && data[1] == b'M' && data[2] == b'D' && data[3] == b'1';
 
-        let mod_len = read_be_u32(data, 4);
+        let _mod_len = read_be_u32(data, 4);
         let song_offset = read_be_u32(data, 8);
         let block_arr_offset = read_be_u32(data, 12);
         let sample_arr_offset = read_be_u32(data, 16);
@@ -72,7 +72,7 @@ impl FormatHandler for MmdHandler {
             let addr = read_be_u32(data, sample_offset + 24);
 
             let mut sample_len: usize = 0;
-            let mut loop_start: usize = 0;
+            let loop_start: usize = 0;
             let mut loop_end: usize = 0;
             let default_vol: u8 = 64;
             let c4_speed: u32 = 8363;
@@ -142,15 +142,15 @@ impl FormatHandler for MmdHandler {
         }
 
         let default_tempo = if offset < data.len() { data[offset] } else { 125 };
-        offset = offset.saturating_add(2);
+        // offset = offset.saturating_add(2); // Unused
 
         let mut patterns = Vec::new();
-        let max_tracks = if is_mmd1 { 64 } else { 64 };
+        let max_tracks = 64;
 
         if block_arr_offset > 0 && (block_arr_offset as usize) < data.len() {
             let mut block_ptr_offset = block_arr_offset as usize;
 
-            for block_idx in 0..num_blocks.min(256) {
+            for _block_idx in 0..num_blocks.min(256) {
                 if block_ptr_offset + 4 > data.len() {
                     patterns.push(Pattern::new(64));
                     continue;
@@ -181,7 +181,7 @@ impl FormatHandler for MmdHandler {
                 } else {
                     0
                 };
-                block_offset = block_offset.saturating_add(4);
+                // block_offset = block_offset.saturating_add(4); // Unused
 
                 let mut pattern = Pattern::new(64);
 
@@ -255,7 +255,7 @@ impl FormatHandler for MmdHandler {
             .max(4)
             .min(32);
 
-        let mut channel_panning = vec![32u8; num_channels];
+        let channel_panning = vec![32u8; num_channels];
 
         Ok(Module {
             name: String::new(),

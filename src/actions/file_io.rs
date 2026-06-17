@@ -278,6 +278,7 @@ pub(crate) fn save_config(app: &mut HtrkApp) {
         app.config.last_file_path = Some(path.clone());
     }
     app.config.favorites = app.file_browser.save_favorites();
+    app.file_browser.sync_widths_to_config(&mut app.config);
     app.config.save();
 }
 

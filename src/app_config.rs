@@ -131,6 +131,38 @@ pub struct AppConfig {
     pub col_vis_volume: bool,
     #[serde(default = "default_col_vis")]
     pub col_vis_effect: bool,
+
+    #[serde(default)]
+    pub window_width: Option<f32>,
+    #[serde(default)]
+    pub window_height: Option<f32>,
+
+    #[serde(default)]
+    pub instrument_list_width: Option<f32>,
+    #[serde(default)]
+    pub instrument_envelope_height: Option<f32>,
+
+    #[serde(default)]
+    pub sample_list_width: Option<f32>,
+    #[serde(default)]
+    pub sample_waveform_height: Option<f32>,
+
+    #[serde(default)]
+    pub order_list_width: Option<f32>,
+
+    #[serde(default)]
+    pub file_browser_dur_width: Option<f32>,
+    #[serde(default)]
+    pub file_browser_type_width: Option<f32>,
+    #[serde(default)]
+    pub file_browser_size_width: Option<f32>,
+    #[serde(default)]
+    pub file_browser_modified_width: Option<f32>,
+
+    #[serde(default = "default_grid_cell_size")]
+    pub sample_map_cell_size: f32,
+    #[serde(default = "default_grid_cell_size")]
+    pub note_map_cell_size: f32,
 }
 
 fn default_col_vis() -> bool { true }
@@ -151,6 +183,8 @@ fn default_file_browser_sort_by() -> String { "name".to_string() }
 fn default_interpolation() -> String { "Linear".to_string() }
 fn default_limiter() -> String { "HardClip".to_string() }
 fn default_sample_length_bg() -> bool { false }
+
+fn default_grid_cell_size() -> f32 { 28.0 }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -199,6 +233,19 @@ impl Default for AppConfig {
             col_vis_instrument: true,
             col_vis_volume: true,
             col_vis_effect: true,
+            window_width: None,
+            window_height: None,
+            instrument_list_width: None,
+            instrument_envelope_height: None,
+            sample_list_width: None,
+            sample_waveform_height: None,
+            order_list_width: None,
+            file_browser_dur_width: None,
+            file_browser_type_width: None,
+            file_browser_size_width: None,
+            file_browser_modified_width: None,
+            sample_map_cell_size: default_grid_cell_size(),
+            note_map_cell_size: default_grid_cell_size(),
         }
     }
 }

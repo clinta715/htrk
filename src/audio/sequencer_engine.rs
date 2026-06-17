@@ -2,17 +2,18 @@ use std::sync::Arc;
 
 use crate::audio::effects::{
     EffectProcessor,
-    VIBRATO_TABLE_SIZE, VIBRATO_SINE_TABLE, FUNK_TRACK,
-    quantize_to_semitone, compute_samples_per_tick, get_vibrato_value,
+    VIBRATO_TABLE_SIZE,
+    quantize_to_semitone, get_vibrato_value,
     compute_playback_frequency,
 };
-use crate::audio::voice::{EnvelopeState, Voice};
+use crate::audio::sequencer::clock::SequencerClock;
+use crate::audio::voice::EnvelopeState;
 use crate::audio::voice_pool::VoicePool;
 use crate::sequencer::effect::{Effect, NUM_SEND_BUSES};
 use crate::sequencer::instrument::{
     DuplicateCheckAction, DuplicateCheckType, NewNoteAction,
 };
-use crate::sequencer::module::{Module, ModuleFormat, MAX_VOICES};
+use crate::sequencer::module::{Module, ModuleFormat};
 use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::player::{ActiveEffects, ChannelState, PlayMode, SequencerState};
@@ -67,11 +68,9 @@ impl SequencerEngine {
         self.stop_playback_state();
 
         let module = self.module.as_ref().unwrap();
-        self.state.bpm = module.initial_bpm;
-        self.state.speed = module.initial_speed;
+        self.state.clock = SequencerClock::new(module.initial_bpm, module.initial_speed, self.output_sample_rate);
         self.state.global_volume = module.initial_global_volume;
         self.state.master_volume = 1.0;
-        self.state.samples_per_tick = compute_samples_per_tick(self.state.bpm, self.output_sample_rate);
 
         let num_ch = module.channel_panning.len();
         self.state.channels.clear();
@@ -83,7 +82,7 @@ impl SequencerEngine {
 
         #[cfg(feature = "audio_debug")]
         debug_log!("[PLAY] Module loaded: {} samples, {} patterns, BPM={} speed={}",
-            module.samples.len(), module.patterns.len(), self.state.bpm, self.state.speed);
+            module.samples.len(), module.patterns.len(), self.state.clock.bpm, self.state.clock.speed);
         #[cfg(feature = "audio_debug")]
         debug_log!("[PLAY] Channel volumes: ch0={} ch1={} ch2={} ch3={}",
             self.state.channels[0].channel_volume,
@@ -105,8 +104,8 @@ impl SequencerEngine {
 
         self.state.playing = true;
         self.state.paused = false;
-        self.state.current_tick = 0;
-        self.state.sample_counter = self.state.samples_per_tick;
+        self.state.clock.current_tick = 0;
+        self.state.clock.sample_counter = self.state.clock.samples_per_tick;
 
         #[cfg(feature = "audio_debug")]
         debug_log!("[PLAY] Ready: playing={}, order={}, row={}",
@@ -120,11 +119,9 @@ impl SequencerEngine {
         self.stop_playback_state();
 
         let module = self.module.as_ref().unwrap();
-        self.state.bpm = module.initial_bpm;
-        self.state.speed = module.initial_speed;
+        self.state.clock = SequencerClock::new(module.initial_bpm, module.initial_speed, self.output_sample_rate);
         self.state.global_volume = module.initial_global_volume;
         self.state.master_volume = 1.0;
-        self.state.samples_per_tick = compute_samples_per_tick(self.state.bpm, self.output_sample_rate);
 
         let num_ch = module.channel_panning.len();
         self.state.channels.clear();
@@ -138,7 +135,7 @@ impl SequencerEngine {
         self.state.current_order = order.min(max_order);
         self.state.current_row = row as u8;
         self.state.current_pattern = self.get_pattern_for_order(self.state.current_order);
-        self.state.current_tick = 0;
+        self.state.clock.current_tick = 0;
         self.state.pattern_break_row = None;
         self.state.position_jump_order = None;
         self.state.pattern_delay_ticks = 0;
@@ -150,8 +147,8 @@ impl SequencerEngine {
 
         self.state.playing = true;
         self.state.paused = false;
-        self.state.current_tick = 0;
-        self.state.sample_counter = self.state.samples_per_tick;
+        self.state.clock.current_tick = 0;
+        self.state.clock.sample_counter = self.state.clock.samples_per_tick;
     }
 
     pub fn stop(&mut self) {
@@ -164,8 +161,7 @@ impl SequencerEngine {
     fn stop_playback_state(&mut self) {
         self.state.playing = false;
         self.state.paused = false;
-        self.state.current_tick = 0;
-        self.state.sample_counter = 0.0;
+        self.state.clock.reset();
     }
 
     pub fn pause(&mut self) {
@@ -185,32 +181,32 @@ impl SequencerEngine {
         let mut samples_remaining = samples_to_generate;
 
         while samples_remaining > 0 {
-            let samples_per_tick = self.state.samples_per_tick;
+            let samples_per_tick = self.state.clock.samples_per_tick;
             if samples_per_tick <= 0.0 {
                 break;
             }
-            let samples_until_tick = (samples_per_tick - self.state.sample_counter).ceil() as usize;
+            let samples_until_tick = (samples_per_tick - self.state.clock.sample_counter).ceil() as usize;
             if samples_until_tick == 0 {
                 self.process_tick();
-                self.state.sample_counter = 0.0;
+                self.state.clock.sample_counter = 0.0;
                 continue;
             }
 
             if samples_remaining < samples_until_tick {
-                self.state.sample_counter += samples_remaining as f64;
+                self.state.clock.sample_counter += samples_remaining as f64;
                 break;
             }
 
             samples_remaining -= samples_until_tick;
             self.process_tick();
-            self.state.sample_counter = 0.0;
+            self.state.clock.sample_counter = 0.0;
         }
     }
 
     pub fn process_tick(&mut self) {
         self.evaluate_automation();
 
-        let tick = self.state.current_tick;
+        let tick = self.state.clock.current_tick;
 
         if tick == 0 {
             self.process_tick_zero_unified();
@@ -223,9 +219,7 @@ impl SequencerEngine {
         // For XM voices triggered this tick, position=-1 so first advance → 0
         self.advance_envelopes();
 
-        self.state.current_tick += 1;
-
-        if self.state.current_tick >= self.state.speed {
+        if self.state.clock.on_tick_processed() {
             self.advance_row();
         }
     }
@@ -240,8 +234,8 @@ impl SequencerEngine {
 
         let order = self.state.current_order;
         let row = self.state.current_row;
-        let tick = self.state.current_tick;
-        let speed = self.state.speed;
+        let tick = self.state.clock.current_tick;
+        let speed = self.state.clock.speed;
 
         for track in &module.automation_tracks {
             if !track.enabled || track.points.is_empty() {
@@ -293,7 +287,7 @@ impl SequencerEngine {
                 self.state.auto_global_vol_factor = value;
             }
             AutomationTarget::Tempo => {
-                self.state.auto_tempo_factor = value;
+                self.state.clock.auto_tempo_factor = value;
             }
             _ => {}
         }
@@ -381,11 +375,7 @@ impl SequencerEngine {
     };
 
     // Set channel defaults from sample
-    {
-        let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
-        processor.init_sample_defaults(self, channel, cell, sample);
-        self.processor = processor;
-    }
+    self.with_processor_mut(|processor, engine| processor.init_sample_defaults(engine, channel, cell, sample));
 
     // Volume column
     if let Some(vol) = cell.volume {
@@ -395,9 +385,7 @@ impl SequencerEngine {
             let mapped = ((vol as u16 * 255 + 49) / 99).min(255) as u8; // 0-99 → 0-255, rounding
             self.state.channels[channel].last_send_param_value[idx] = mapped;
         } else {
-            let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
-            processor.process_volume_column(self, channel, vol);
-            self.processor = processor;
+            self.with_processor_mut(|processor, engine| processor.process_volume_column(engine, channel, vol));
         }
     }
     // Set volume effects
@@ -436,19 +424,13 @@ impl SequencerEngine {
                 self.state.channels[channel].last_note = Note::On(key);
 
                 if is_tone_portamento {
-                    let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
-                    processor.setup_portamento(self, channel, key, remapped_key, sample, sample_idx);
-                    self.processor = processor;
+                    self.with_processor_mut(|processor, engine| processor.setup_portamento(engine, channel, key, remapped_key, sample, sample_idx));
                 } else {
-                    let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
-                    processor.trigger_note(self, channel, key, remapped_key, sample, sample_idx, cell, instrument_idx);
-                    self.processor = processor;
+                    self.with_processor_mut(|processor, engine| processor.trigger_note(engine, channel, key, remapped_key, sample, sample_idx, cell, instrument_idx));
                 }
             }
             Note::Off => {
-                let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
-                processor.handle_note_off(self, channel);
-                self.processor = processor;
+                self.with_processor_mut(|processor, engine| processor.handle_note_off(engine, channel));
             }
             Note::Cut => {
                 self.cut_channel_voices(channel);
@@ -478,16 +460,22 @@ impl SequencerEngine {
     // ─── XM effect application ───────────────────────────────────
 
     fn apply_effect_unified(&mut self, channel: usize, effect: &Effect, is_row_start: bool) {
-        let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
-        processor.apply_effect(self, channel, effect, is_row_start);
-        self.processor = processor;
+        self.with_processor_mut(|processor, engine| processor.apply_effect(engine, channel, effect, is_row_start));
+    }
+
+    /// Temporarily swap out `self.processor` to avoid borrow conflicts with
+    /// methods that take `&mut SequencerEngine`.  The placeholder is swapped
+    /// back automatically when `f` returns.
+    fn with_processor_mut<R>(&mut self, f: impl FnOnce(&mut EffectProcessor, &mut Self) -> R) -> R {
+        let mut saved = std::mem::replace(&mut self.processor, EffectProcessor::placeholder());
+        let result = f(&mut saved, self);
+        self.processor = saved;
+        result
     }
 
     fn process_effects_tick_unified(&mut self) {
-        let tick = self.state.current_tick;
-        let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
-        processor.process_tick(self, tick);
-        self.processor = processor;
+        let tick = self.state.clock.current_tick;
+        self.with_processor_mut(|processor, engine| processor.process_tick(engine, tick));
     }
 
     pub(crate) fn apply_tone_portamento_period(&mut self, channel: usize, linear: bool) {
@@ -1347,9 +1335,8 @@ impl SequencerEngine {
         self.state.channels[channel].note_delay_ticks = 0;
 
         if let Note::On(key) = note {
-            let mut processor = std::mem::replace(&mut self.processor, EffectProcessor::from_module(&Module::default()));
-            processor.trigger_note(self, channel, key, remapped_key, Some(&module.samples[sample_idx]), sample_idx, &cell, instrument_idx);
-            self.processor = processor;
+            let module_ref = &module;
+            self.with_processor_mut(|processor, engine| processor.trigger_note(engine, channel, key, remapped_key, Some(&module_ref.samples[sample_idx]), sample_idx, &cell, instrument_idx));
 
             if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 let voice = self.voice_pool.voices.iter_mut().find(|v| v.active && v.channel == Some(channel));
@@ -1374,7 +1361,7 @@ impl SequencerEngine {
     }
 
     fn advance_row(&mut self) {
-        self.state.current_tick = 0;
+        self.state.clock.current_tick = 0;
 
         self.voice_pool.advance_row_voice_reset(self.use_xm_model, &self.state);
 
@@ -1637,7 +1624,9 @@ mod tests {
     use crate::sequencer::Instrument;
     use crate::sequencer::module::ModuleFlags;
     use crate::sequencer::pattern::Pattern;
-    use crate::audio::effects::{advance_single_envelope, evaluate_envelope};
+    use crate::audio::effects::{compute_samples_per_tick, advance_single_envelope, evaluate_envelope, VIBRATO_SINE_TABLE, FUNK_TRACK};
+    use crate::audio::Voice;
+    use crate::sequencer::module::MAX_VOICES;
 
     #[test]
     fn compute_samples_per_tick_default() {
@@ -1916,7 +1905,7 @@ mod tests {
         engine.state.current_order = 0;
         engine.state.current_pattern = 0;
         engine.state.current_row = 0;
-        engine.state.current_tick = 0;
+        engine.state.clock.current_tick = 0;
         engine.state.channels.resize(64, ChannelState::default());
 
         engine.process_tick_zero_unified();
@@ -2017,7 +2006,7 @@ mod tests {
         engine.state.channels[0].last_instrument = 1;
 
         // Trigger the delayed note (simulating tick 2 processing)
-        engine.state.current_tick = 2;
+        engine.state.clock.current_tick = 2;
         let linear = module.flags.linear_slides;
         engine.trigger_delayed_note_period(0, linear);
 
@@ -2102,7 +2091,7 @@ mod tests {
         cell.note = Note::On(60);
         cell.instrument = Some(1);
 
-        engine.state.current_tick = 0;
+        engine.state.clock.current_tick = 0;
         engine.state.current_row = 0;
         engine.process_cell_unified(0, &cell);
 
@@ -2122,7 +2111,7 @@ mod tests {
         cell2.note = Note::On(72); // C-6
         cell2.instrument = Some(1);
 
-        engine.state.current_tick = 0;
+        engine.state.clock.current_tick = 0;
         engine.state.current_row = 1;
         engine.process_cell_unified(0, &cell2);
 
@@ -2177,7 +2166,7 @@ mod tests {
         cell.instrument = Some(1);
         cell.effect = Effect::VolumeSlide { up: 2, down: 0 };
 
-        engine.state.current_tick = 0;
+        engine.state.clock.current_tick = 0;
         engine.process_cell_unified(0, &cell);
 
         assert!(
@@ -2191,7 +2180,7 @@ mod tests {
 
         // Process non-zero tick — ActiveEffects dispatch should apply slide
         let vol_before = engine.state.channels[0].real_vol;
-        engine.state.current_tick = 1;
+        engine.state.clock.current_tick = 1;
         engine.process_effects_tick_unified();
         let vol_after = engine.state.channels[0].real_vol;
         assert!(
@@ -2240,7 +2229,7 @@ mod tests {
         let mut cell = Cell::default();
         cell.note = Note::On(60);
         cell.instrument = Some(1);
-        engine.state.current_tick = 0;
+        engine.state.clock.current_tick = 0;
         engine.process_cell_unified(0, &cell);
 
         // Now set TPVS: tone portamento to new note + volume slide
@@ -2248,7 +2237,7 @@ mod tests {
         let mut cell2 = Cell::default();
         cell2.note = Note::On(64);
         cell2.effect = Effect::TonePortamentoVolumeSlide { up: 0x15 };
-        engine.state.current_tick = 0;
+        engine.state.clock.current_tick = 0;
         engine.process_cell_unified(0, &cell2);
 
         assert!(
@@ -2309,7 +2298,7 @@ mod tests {
         cell.instrument = Some(1);
         cell.effect = Effect::NoteDelay { ticks: 3 };
 
-        engine.state.current_tick = 0;
+        engine.state.clock.current_tick = 0;
         engine.process_cell_unified(0, &cell);
 
         // No voice should be active yet (note is delayed)
@@ -2321,7 +2310,7 @@ mod tests {
         assert!(engine.state.channels[0].delayed_cell.is_some());
 
         // Tick 1: still no voice
-        engine.state.current_tick = 1;
+        engine.state.clock.current_tick = 1;
         engine.process_effects_tick_unified();
         assert!(
             engine.voice_pool.voices.iter().all(|v| !v.active || v.channel != Some(0)),
@@ -2329,7 +2318,7 @@ mod tests {
         );
 
         // Tick 2: still no voice
-        engine.state.current_tick = 2;
+        engine.state.clock.current_tick = 2;
         engine.process_effects_tick_unified();
         assert!(
             engine.voice_pool.voices.iter().all(|v| !v.active || v.channel != Some(0)),
@@ -2337,7 +2326,7 @@ mod tests {
         );
 
         // Tick 3: delayed note should trigger
-        engine.state.current_tick = 3;
+        engine.state.clock.current_tick = 3;
         engine.process_effects_tick_unified();
         assert!(
             engine.voice_pool.voices.iter().any(|v| v.active && v.channel == Some(0)),
@@ -2614,7 +2603,7 @@ mod tests {
             ..Cell::default()
         };
 
-        engine.state.current_tick = 0;
+        engine.state.clock.current_tick = 0;
         engine.process_cell_unified(0, &cell);
 
         assert!(engine.state.row_delay_active,
@@ -2937,7 +2926,7 @@ mod tests {
         engine.state.last_global_volume_up = 3;
         engine.state.last_global_volume_down = 0;
         engine.state.channels[0].active_effects.global_volume_slide = true;
-        engine.state.current_tick = 1;
+        engine.state.clock.current_tick = 1;
         engine.process_effects_tick_unified();
         assert_eq!(engine.state.global_volume, 35, "XM global volume should increase by up each tick");
     }
@@ -2961,7 +2950,7 @@ mod tests {
         engine.state.last_global_volume_up = 0;
         engine.state.last_global_volume_down = 5;
         engine.state.channels[0].active_effects.global_volume_slide = true;
-        engine.state.current_tick = 1;
+        engine.state.clock.current_tick = 1;
         engine.process_effects_tick_unified();
         assert_eq!(engine.state.global_volume, 59, "non-XM global volume should decrease by down each tick");
     }
@@ -2985,10 +2974,10 @@ mod tests {
         engine.state.last_global_volume_up = 2;
         engine.state.last_global_volume_down = 0;
         engine.state.channels[0].active_effects.global_volume_slide = true;
-        engine.state.current_tick = 1;
+        engine.state.clock.current_tick = 1;
         engine.process_effects_tick_unified();
         assert_eq!(engine.state.global_volume, 66);
-        engine.state.current_tick = 2;
+        engine.state.clock.current_tick = 2;
         engine.process_effects_tick_unified();
         assert_eq!(engine.state.global_volume, 68, "slide should accumulate across ticks");
     }
@@ -3035,7 +3024,7 @@ mod tests {
         let ch = 0;
         engine.state.channels[ch].funk_speed = 4;
         engine.state.channels[ch].funk_toggle = true;
-        engine.state.current_tick = FUNK_TRACK[4] as u8;
+        engine.state.clock.current_tick = FUNK_TRACK[4] as u8;
         engine.voice_pool.voices[0].active = true;
         engine.voice_pool.voices[0].channel = Some(0);
         engine.voice_pool.voices[0].position = 100.0;
@@ -3060,7 +3049,7 @@ mod tests {
 
         engine.state.channels[0].funk_speed = 0;
         let pos_before = engine.voice_pool.voices[0].position;
-        engine.state.current_tick = 5;
+        engine.state.clock.current_tick = 5;
         engine.process_effects_tick_unified();
         assert_eq!(engine.voice_pool.voices[0].position, pos_before, "funk_speed=0 should not move position");
     }
@@ -3100,7 +3089,6 @@ mod tests {
     fn karplus_strong_mixer_produces_output() {
         use crate::audio::mixer;
         use crate::audio::commands::InterpolationType;
-        use std::sync::Arc;
 
         let mut voices = vec![crate::audio::voice::Voice::default()];
         let v = &mut voices[0];

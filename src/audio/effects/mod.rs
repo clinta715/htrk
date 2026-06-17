@@ -1,5 +1,6 @@
 mod xm;
 mod legacy;
+mod shared;
 
 use crate::audio::voice::EnvelopeState;
 use crate::sequencer::effect::Effect;
@@ -171,6 +172,12 @@ pub enum EffectProcessor {
 }
 
 impl EffectProcessor {
+    /// Placeholder processor used during the swap-out pattern.
+    /// Either variant works (both are zero-sized); Legacy chosen arbitrarily.
+    pub fn placeholder() -> Self {
+        EffectProcessor::Legacy(legacy::LegacyProcessor)
+    }
+
     pub fn from_module(module: &Module) -> Self {
         if module.flags.xm_period_model {
             EffectProcessor::Xm(xm::XmProcessor::new())
