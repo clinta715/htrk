@@ -232,6 +232,26 @@ impl HtrkCore {
         module.patterns.get(order as usize)
     }
 
+    pub(crate) fn current_pattern_or_default(&self) -> &crate::sequencer::Pattern {
+        static DEFAULT: std::sync::OnceLock<crate::sequencer::Pattern> = std::sync::OnceLock::new();
+        self.current_pattern().unwrap_or_else(|| DEFAULT.get_or_init(|| crate::sequencer::Pattern::new(64)))
+    }
+
+    pub(crate) fn ensure_pattern_exists(&mut self) {
+        self.ensure_module_ownership();
+        if let Some(ref mut module) = self.module {
+            if let Some(arc_module) = Arc::get_mut(module) {
+                let pat_idx = match arc_module.order_list.get(self.selected_order) {
+                    Some(&idx) => idx as usize,
+                    None => return,
+                };
+                if pat_idx >= arc_module.patterns.len() {
+                    arc_module.patterns.resize_with(pat_idx + 1, || crate::sequencer::Pattern::new(64));
+                }
+            }
+        }
+    }
+
     pub(crate) fn current_pattern_mut(&mut self) -> Option<&mut crate::sequencer::Pattern> {
         self.ensure_module_ownership();
         let module = Arc::get_mut(self.module.as_mut()?)?;

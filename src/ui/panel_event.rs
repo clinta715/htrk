@@ -31,4 +31,5 @@ pub enum PanelEvent {
 
     // Catch-all for module sync
     SyncToAudio,
+    ShowPhraseGenerator,
 }

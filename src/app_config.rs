@@ -151,6 +151,8 @@ pub struct AppConfig {
     pub order_list_width: Option<f32>,
 
     #[serde(default)]
+    pub file_browser_name_width: Option<f32>,
+    #[serde(default)]
     pub file_browser_dur_width: Option<f32>,
     #[serde(default)]
     pub file_browser_type_width: Option<f32>,
@@ -243,6 +245,7 @@ impl Default for AppConfig {
             sample_list_width: None,
             sample_waveform_height: None,
             order_list_width: None,
+            file_browser_name_width: None,
             file_browser_dur_width: None,
             file_browser_type_width: None,
             file_browser_size_width: None,

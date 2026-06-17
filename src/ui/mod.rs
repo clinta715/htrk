@@ -17,6 +17,7 @@ pub mod order_list;
 pub mod pattern_grid;
 pub mod pattern_view;
 pub mod playback_view;
+pub mod phrase_generator_dialog;
 pub mod sample_editor;
 pub mod sample_editor_panel;
 pub mod sendfx_panel;

@@ -8,4 +8,5 @@ pub mod edit;
 pub mod errors;
 pub mod formats;
 pub mod sequencer;
+pub mod tools;
 pub mod ui;

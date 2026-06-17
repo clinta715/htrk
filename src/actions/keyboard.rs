@@ -378,10 +378,8 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     }
                     egui::Key::End if is_pattern && !any_dialog_open => {
                         app.core.selection = None;
-                        if let Some(pattern) = app.core.current_pattern() {
-                            app.core.cursor.row = pattern.num_rows - 1;
-                            app.ensure_cursor_visible();
-                        }
+                        app.core.cursor.row = app.core.current_pattern_or_default().num_rows - 1;
+                        app.ensure_cursor_visible();
                     }
                     egui::Key::Backspace if app.edit_mode && is_pattern && !any_dialog_open => {
                         app.core.clear_cell_at_cursor();
@@ -399,6 +397,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     egui::Key::Insert if app.edit_mode && is_pattern && !any_dialog_open => {
                         let selected_order = app.core.selected_order;
                         let row = app.core.cursor.row;
+                        app.core.ensure_pattern_exists();
                         app.core.ensure_module_ownership();
                         if let Some(ref mut module) = app.core.module {
                             let pat_idx = *module.order_list.get(selected_order).unwrap_or(&0) as usize;
@@ -578,13 +577,13 @@ fn note_key_preview_only(app: &mut HtrkApp, ch: char) {
 fn delete_row(app: &mut HtrkApp) {
     let selected_order = app.core.selected_order;
     let row = app.core.cursor.row;
-    let can_delete = app.core.current_pattern().map_or(false, |p| p.num_rows > 1);
+    app.core.ensure_pattern_exists();
+    let pattern = app.core.current_pattern_or_default();
+    let can_delete = pattern.num_rows > 1;
     if !can_delete {
         return;
     }
-    let deleted_data: Vec<Cell> = app.core.current_pattern()
-        .map(|p| p.data[row].to_vec())
-        .unwrap_or_default();
+    let deleted_data: Vec<Cell> = pattern.data[row].to_vec();
     let pat_idx = app.core.module.as_ref()
         .and_then(|m| m.order_list.get(selected_order).copied())
         .unwrap_or(0) as usize;
@@ -634,7 +633,7 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
     let up = ch.to_ascii_uppercase();
     let sub = app.core.cursor.sub_column;
     let on_note = sub.accepts_note();
-    let has_pattern = app.core.current_pattern().is_some();
+    let has_pattern = app.core.module.is_some();
 
     // Tracker piano keyboard (Impulse/Scream Tracker style). The lower row
     // (Z S X D C V G B H N J M) is the current octave and the upper row

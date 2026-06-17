@@ -74,6 +74,9 @@ impl PatternView {
             if ui.dev_button("pattern.remove_channel", "−").clicked() && can_remove {
                 events.push(PanelEvent::RemoveChannel);
             }
+            if ui.dev_button("pattern.generate", "Generate").clicked() {
+                events.push(PanelEvent::ShowPhraseGenerator);
+            }
         });
 
         let note_on_flash = {
@@ -136,76 +139,75 @@ impl PatternView {
                 let order_idx = core.selected_order.min(module.order_list.len().saturating_sub(1));
                 let pat_idx = module.order_list[order_idx] as usize;
                 let grid_playback_row = if playback_pattern == Some(pat_idx) { playback_row } else { None };
-                if let Some(pattern) = module.patterns.get(pat_idx) {
-                    let auto_overlays: Vec<Option<crate::ui::pattern_grid::AutomationOverlayInfo>> = (0..num_channels).map(|ch| {
-                        core.automation_targets.get(ch).and_then(|t| t.as_ref()).map(|target| {
-                            let track = module.automation_tracks.iter()
-                                .find(|tr| tr.channel == Some(ch) && tr.target == *target)
-                                .map(|tr| std::sync::Arc::new(tr.clone()));
-                            crate::ui::pattern_grid::AutomationOverlayInfo {
-                                target: *target,
-                                track,
-                                current_order: core.selected_order as u16,
-                                speed: module.initial_speed,
-                            }
-                        })
-                    }).collect();
-
-                    let grid_resp = crate::ui::pattern_grid::draw_pattern_grid(
-                        ui,
-                        pattern,
-                        &core.cursor,
-                        core.selection.as_ref(),
-                        grid_playback_row,
-                        if grid_playback_row.is_some() { playback_tick } else { None },
-                        playback_speed,
-                        self.scroll_row,
-                        self.scroll_channel,
-                        num_channels,
-                        metrics,
-                        theme,
-                        config_row_highlight_minor,
-                        config_row_highlight_major,
-                        config_sample_length_bg,
-                        config_col_vis,
-                        core.module.as_ref().map(|v| &**v),
-                        &auto_overlays,
-                    );
-
-                    self.last_visible_rows = grid_resp.visible_rows;
-                    self.last_visible_channels = grid_resp.visible_channels;
-
-                    if let Some(pos) = grid_resp.clicked_position {
-                        core.cursor = pos;
-                        core.selection = None;
-                        core.selection_anchor = None;
-                        cursor_changed = true;
-                    }
-                    if let Some(pos) = grid_resp.drag_position {
-                        if core.selection_anchor.is_none() {
-                            core.selection_anchor = Some(core.cursor);
+                let pattern = core.current_pattern_or_default();
+                let auto_overlays: Vec<Option<crate::ui::pattern_grid::AutomationOverlayInfo>> = (0..num_channels).map(|ch| {
+                    core.automation_targets.get(ch).and_then(|t| t.as_ref()).map(|target| {
+                        let track = module.automation_tracks.iter()
+                            .find(|tr| tr.channel == Some(ch) && tr.target == *target)
+                            .map(|tr| std::sync::Arc::new(tr.clone()));
+                        crate::ui::pattern_grid::AutomationOverlayInfo {
+                            target: *target,
+                            track,
+                            current_order: core.selected_order as u16,
+                            speed: module.initial_speed,
                         }
-                        core.cursor = pos;
-                        if let Some(anchor) = core.selection_anchor {
-                            core.selection = Some(Selection {
-                                start: anchor,
-                                end: core.cursor,
-                            });
-                        }
-                        cursor_changed = true;
+                    })
+                }).collect();
+
+                let grid_resp = crate::ui::pattern_grid::draw_pattern_grid(
+                    ui,
+                    pattern,
+                    &core.cursor,
+                    core.selection.as_ref(),
+                    grid_playback_row,
+                    if grid_playback_row.is_some() { playback_tick } else { None },
+                    playback_speed,
+                    self.scroll_row,
+                    self.scroll_channel,
+                    num_channels,
+                    metrics,
+                    theme,
+                    config_row_highlight_minor,
+                    config_row_highlight_major,
+                    config_sample_length_bg,
+                    config_col_vis,
+                    core.module.as_ref().map(|v| &**v),
+                    &auto_overlays,
+                );
+
+                self.last_visible_rows = grid_resp.visible_rows;
+                self.last_visible_channels = grid_resp.visible_channels;
+
+                if let Some(pos) = grid_resp.clicked_position {
+                    core.cursor = pos;
+                    core.selection = None;
+                    core.selection_anchor = None;
+                    cursor_changed = true;
+                }
+                if let Some(pos) = grid_resp.drag_position {
+                    if core.selection_anchor.is_none() {
+                        core.selection_anchor = Some(core.cursor);
                     }
-                    if let Some(action) = grid_resp.context_menu_action {
-                        events.push(PanelEvent::ContextMenuAction(action));
+                    core.cursor = pos;
+                    if let Some(anchor) = core.selection_anchor {
+                        core.selection = Some(Selection {
+                            start: anchor,
+                            end: core.cursor,
+                        });
                     }
-                    if let Some(interaction) = grid_resp.automation_interaction {
-                        events.push(PanelEvent::AutomationInteraction(interaction));
-                    }
-                    if grid_resp.toggle_sample_length_bg {
-                        events.push(PanelEvent::ToggleSampleLengthBg);
-                    }
-                    if let Some(tooltip) = grid_resp.effect_tooltip {
-                        ui.label(egui::RichText::new(&tooltip).size(10.0).color(egui::Color32::GRAY));
-                    }
+                    cursor_changed = true;
+                }
+                if let Some(action) = grid_resp.context_menu_action {
+                    events.push(PanelEvent::ContextMenuAction(action));
+                }
+                if let Some(interaction) = grid_resp.automation_interaction {
+                    events.push(PanelEvent::AutomationInteraction(interaction));
+                }
+                if grid_resp.toggle_sample_length_bg {
+                    events.push(PanelEvent::ToggleSampleLengthBg);
+                }
+                if let Some(tooltip) = grid_resp.effect_tooltip {
+                    ui.label(egui::RichText::new(&tooltip).size(10.0).color(egui::Color32::GRAY));
                 }
             }
         }

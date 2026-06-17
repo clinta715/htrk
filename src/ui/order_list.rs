@@ -83,6 +83,31 @@ pub fn draw_order_list(
                         resp.selected_order = Some(i);
                     }
 
+                    let mut ctx_insert = false;
+                    let mut ctx_duplicate = false;
+                    let mut ctx_delete = false;
+                    response.context_menu(|ui| {
+                        if ui.button("Insert New Pattern").clicked() {
+                            ctx_insert = true;
+                            ui.close();
+                        }
+                        if ui.button("Insert Copy Here").clicked() {
+                            ctx_duplicate = true;
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.add_enabled(module.order_list.len() > 1, egui::Button::new("Delete")).clicked() {
+                            ctx_delete = true;
+                            ui.close();
+                        }
+                    });
+                    if ctx_insert || ctx_duplicate || ctx_delete {
+                        resp.selected_order = Some(i);
+                        resp.insert_clicked = ctx_insert;
+                        resp.duplicate_clicked = ctx_duplicate;
+                        resp.delete_clicked = ctx_delete;
+                    }
+
                     if response.drag_started() {
                         egui::DragAndDrop::set_payload(ui.ctx(), i as u32);
                     }

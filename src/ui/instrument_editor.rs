@@ -229,7 +229,7 @@ pub fn draw_instrument_editor(
     }
 
     if generator_open {
-        if let Some(points) = draw_envelope_generator_popup(ui.ctx(), env_type, &mut generator_open) {
+        if let Some(points) = draw_envelope_generator_popup(ui.ctx(), env_type, &mut generator_open, theme) {
             event = Some(InstrumentEditEvent::GenerateEnvelope(env_type, points));
         }
     }
@@ -872,6 +872,7 @@ fn draw_envelope_generator_popup(
     ctx: &egui::Context,
     env_type: crate::edit::EnvelopeType,
     open: &mut bool,
+    theme: &TrackerTheme,
 ) -> Option<Vec<crate::sequencer::instrument::EnvelopePoint>> {
     use crate::sequencer::instrument::EnvelopePoint;
 
@@ -888,14 +889,17 @@ fn draw_envelope_generator_popup(
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Envelope:");
-                ui.strong(match env_type {
+                ui.label(egui::RichText::new("Envelope:").color(theme.fg_dim));
+                ui.strong(egui::RichText::new(match env_type {
                     crate::edit::EnvelopeType::Volume => "Volume",
                     crate::edit::EnvelopeType::Panning => "Panning",
                     crate::edit::EnvelopeType::Pitch => "Pitch",
                     crate::edit::EnvelopeType::Filter => "Filter",
-                });
+                }).color(theme.fg_text));
             });
+
+            ui.add_space(4.0);
+            section_header(ui, "Shape");
 
             let shape_id = ui.make_persistent_id("gen_shape");
             let mut shape_idx = ui.data(|d| d.get_temp::<usize>(shape_id).unwrap_or(0));
@@ -921,25 +925,28 @@ fn draw_envelope_generator_popup(
                     }
                 });
 
+            ui.add_space(4.0);
+            section_header(ui, "Parameters");
+            ui.add_space(2.0);
             egui::Grid::new("gen_grid").show(ui, |ui| {
-                ui.label("Length:");
+                ui.label(egui::RichText::new("Length:").color(theme.fg_dim));
                 ui.add(egui::Slider::new(&mut length, 32..=4096));
                 ui.end_row();
 
-                ui.label("Cycles:");
+                ui.label(egui::RichText::new("Cycles:").color(theme.fg_dim));
                 ui.add(egui::Slider::new(&mut cycles, 0.25..=64.0).step_by(0.25));
                 ui.end_row();
 
-                ui.label("Depth:");
+                ui.label(egui::RichText::new("Depth:").color(theme.fg_dim));
                 ui.add(egui::Slider::new(&mut depth, 1..=64));
                 ui.end_row();
 
-                ui.label("Offset:");
+                ui.label(egui::RichText::new("Offset:").color(theme.fg_dim));
                 ui.add(egui::Slider::new(&mut offset, 0..=64));
                 ui.end_row();
 
                 if shape_idx == 5 {
-                    ui.label("Duty %:");
+                    ui.label(egui::RichText::new("Duty %:").color(theme.fg_dim));
                     ui.add(egui::Slider::new(&mut duty, 5.0..=95.0).step_by(1.0));
                     ui.end_row();
                 }
@@ -967,7 +974,8 @@ fn draw_envelope_generator_popup(
             // preview
             let preview_points = generate_envelope_points(shape, length, cycles, depth, offset, duty);
             ui.add_space(4.0);
-            ui.label("Preview:");
+            section_header(ui, "Preview");
+            ui.add_space(2.0);
             let (preview_rect, _) = ui.allocate_exact_size(
                 egui::vec2(ui.available_width().min(400.0), 80.0),
                 egui::Sense::hover(),
@@ -990,7 +998,7 @@ fn draw_envelope_generator_popup(
                 fill_points.push(egui::pos2(preview_rect.right(), preview_rect.bottom()));
                 painter.add(egui::Shape::convex_polygon(
                     fill_points,
-                    ui.visuals().widgets.noninteractive.bg_fill.gamma_multiply(0.3),
+                    theme.bg_highlight.gamma_multiply(0.3),
                     egui::Stroke::NONE,
                 ));
                 // line
@@ -998,13 +1006,13 @@ fn draw_envelope_generator_popup(
                     let line_pts: Vec<egui::Pos2> = preview_points.iter().map(to_screen).collect();
                     painter.add(egui::Shape::line(
                         line_pts,
-                        egui::Stroke::new(1.5, ui.visuals().widgets.noninteractive.fg_stroke.color),
+                        egui::Stroke::new(1.5, theme.fg_instrument),
                     ));
                 }
                 // points
                 for p in &preview_points {
                     let pos = to_screen(p);
-                    painter.circle_filled(pos, 2.0, ui.visuals().widgets.noninteractive.fg_stroke.color);
+                    painter.circle_filled(pos, 2.0, theme.fg_instrument);
                 }
             }
 
@@ -1037,4 +1045,10 @@ fn draw_envelope_generator_popup(
     }
 
     result
+}
+
+fn section_header(ui: &mut egui::Ui, text: &str) {
+    ui.add(egui::Label::new(
+        egui::RichText::new(text).size(13.0).strong().color(egui::Color32::from_rgb(100, 200, 255)),
+    ));
 }

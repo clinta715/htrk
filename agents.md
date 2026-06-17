@@ -129,3 +129,42 @@ When any egui widget has keyboard focus, the `handle_keyboard_input` function in
 - **`#[serde(default)]` on `AppConfig` fields does NOT exempt you from adding the field to `Default::default()`**: The `Default` impl for `AppConfig` is hand-written (not derived), so new fields must be added both with `#[serde(default = "...")]` and in the `Default` block. The compiler error is an immediate `missing field` in the struct literal.
 - **Playback tab grid must always be visible**: If the pattern grid is only rendered when `playback_pattern` is `Some`, the channel blocks and info footer jump downward when playback starts and back up when it stops. Always resolve a fallback pattern (e.g. the selected editing pattern) so the layout is stable regardless of playback state.
 - **Ctrl+ shortcuts and note preview keys share `Key` variants**: `Ctrl+Q` and plain `Q` are independent because `Ctrl` suppresses `Event::Text`. New Ctrl+ shortcuts added via `Event::Key` inside the `modifiers.ctrl` block will never collide with note preview (which runs on `Event::Text`).
+
+## 14. Virtual Pattern Auto-Creation
+
+### The Problem
+When the order list references a pattern index that doesn't exist in `module.patterns` (e.g., user types a pattern number beyond the allocated range), the pattern editor shows a blank grid, edits silently fail, and playback stops at that position.
+
+### The Solution
+- **`ensure_pattern_exists(&mut self)`** on `HtrkCore` grows `module.patterns` with blank 64-row `Pattern`s until the currently selected pattern index is valid, then syncs to audio. Call this **before any edit operation** that writes to a pattern (set cell, paste, transpose, insert/delete row, fill instrument, interpolate, etc.).
+- **`current_pattern_or_default(&self)`** on `HtrkCore` returns a reference to the real pattern if it exists, or a static default 64-row blank `Pattern`. Use this for **read-only** access (cursor bounds, copy, grid rendering) when a blank fallback is acceptable.
+- **Edit commands** (`SetCellCommand`, `BulkSetCellsCommand`, etc.) use `ensure_pattern()` / `ensure_pattern_by_index()` helpers in `commands.rs` that grow `module.patterns` before accessing it. Undo also calls these helpers, so undoing an edit on a previously-virtual pattern works correctly.
+- **Pattern view** always renders using `current_pattern_or_default()`, so the grid is always visible even when the pattern hasn't been materialized yet.
+
+### Rule for Future Changes
+- Any code path that **writes** to a pattern must call `ensure_pattern_exists()` before the write.
+- Any code path that **reads** a pattern for display/copy can use `current_pattern_or_default()`.
+- Never use `current_pattern().unwrap()` — always use `current_pattern_or_default()` or handle the `None` case.
+
+## 15. Phrase Generator Architecture
+
+### Modes
+`GenMode` enum in `src/tools/phrase_generator.rs`: `Melodic`, `Euclidean`, `Drum`, `Chord`. Each mode has its own `generate_*()` function that returns `Vec<(row, channel, Cell)>`.
+
+### Chord Mode
+- `ChordType` enum: `Triad` `[0,4,7]`, `Seventh` `[0,4,7,11]`, `Sus2` `[0,2,7]`, `Sus4` `[0,5,7]`.
+- `Progression` enum: `OneFourFiveOne`, `OneFiveSixFour`, `OneSixFourFive`, `OneThreeFourFive`, `Circle`.
+- `generate_chord()` places each chord on separate channels via `chord_channels` (default `[0,1,2,3]`), with a mid-bar retrigger.
+- `chord_progression_degrees()` maps progressions to scale degree indices, branching on major/minor scale.
+
+### Parameter Persistence
+All phrase generator parameters persist via `egui::Id` temp storage (`ui.data()` / `ui.data_mut()`), NOT through `AppConfig`. Changes are lost on app restart.
+
+### Adding New Modes
+1. Add variant to `GenMode` and `GenMode::all()`.
+2. Add any new param structs/enums with `name()`, `all()`, and `Default` impl.
+3. Add fields to `PhraseParams` and its `Default`.
+4. Implement `generate_*()` function returning `Vec<(usize, usize, Cell)>`.
+5. Wire into `generate_phrase()` match arm.
+6. Add UI controls in `src/ui/phrase_generator_dialog.rs` inside the `match mode` block.
+7. Add persistent state IDs and `ui.data_mut()` save/restore for new fields.

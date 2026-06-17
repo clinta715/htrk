@@ -87,6 +87,8 @@ pub struct HtrkApp {
     pub(crate) devmcp: Arc<DevMcp>,
     pub(crate) pending_view_switch: Arc<AtomicU8>,
     pub(crate) show_exit_confirm: bool,
+    pub(crate) exit_confirmed: bool,
+    pub(crate) show_phrase_generator: bool,
 }
 
 impl Default for HtrkApp {
@@ -146,6 +148,8 @@ impl Default for HtrkApp {
             },
             pending_view_switch: pending_view_switch.clone(),
             show_exit_confirm: false,
+            exit_confirmed: false,
+            show_phrase_generator: false,
             devmcp: {
                 let ps = pending_view_switch.clone();
                 let devmcp = DevMcp::new()
@@ -490,10 +494,8 @@ impl HtrkApp {
     }
 
     pub(crate) fn advance_cursor_down(&mut self, step: usize) {
-        if let Some(pattern) = self.core.current_pattern() {
-            let max_row = pattern.num_rows.max(1);
-            self.core.cursor.row = (self.core.cursor.row + step).min(max_row - 1);
-        }
+        let max_row = self.core.current_pattern_or_default().num_rows.max(1);
+        self.core.cursor.row = (self.core.cursor.row + step).min(max_row - 1);
         self.ensure_cursor_visible();
     }
 
@@ -930,10 +932,12 @@ impl HtrkApp {
                         if ui.button("Save").clicked() {
                             crate::actions::save_current_file(self);
                             self.show_exit_confirm = false;
+                            self.exit_confirmed = true;
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                         if ui.button("Don't Save").clicked() {
                             self.show_exit_confirm = false;
+                            self.exit_confirmed = true;
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                         if ui.button("Cancel").clicked() {
@@ -943,6 +947,57 @@ impl HtrkApp {
                 });
             if !open {
                 self.show_exit_confirm = false;
+            }
+        }
+
+        if self.show_phrase_generator {
+            let num_ch = self.core.num_channels_checked();
+            let num_rows = self.core.current_pattern().map_or(64, |p| p.num_rows);
+            let cursor_ch = self.core.cursor.channel;
+            if let Some(params) = crate::ui::phrase_generator_dialog::draw_phrase_generator(
+                ctx,
+                &mut self.show_phrase_generator,
+                &self.theme,
+                num_ch,
+                num_rows,
+                cursor_ch,
+            ) {
+                let (start_row, end_row) = match &self.core.selection {
+                    Some(sel) => {
+                        let (min, max) = sel.normalized();
+                        (min.row, max.row)
+                    }
+                    None => (0, num_rows.saturating_sub(1)),
+                };
+                let notes = crate::tools::phrase_generator::generate_phrase(
+                    &params, start_row, end_row, num_ch,
+                );
+                if !notes.is_empty() {
+                    self.core.ensure_module_ownership();
+                    if let Some(ref mut m) = self.core.module {
+                        if let Some(arc_module) = Arc::get_mut(m) {
+                            let pat_idx = *arc_module.order_list.get(self.core.selected_order).unwrap_or(&0) as usize;
+                            if pat_idx < arc_module.patterns.len() {
+                                let pattern = &arc_module.patterns[pat_idx];
+                                let mut old_cells = Vec::new();
+                                let mut new_cells = Vec::new();
+                                for &(row, ch, cell) in &notes {
+                                    if row < pattern.num_rows && ch < crate::sequencer::pattern::MAX_CHANNELS {
+                                        old_cells.push((row, ch, pattern.data[row][ch]));
+                                        new_cells.push((row, ch, cell));
+                                    }
+                                }
+                                let cmd = Box::new(crate::edit::BulkSetCellsCommand {
+                                    order: self.core.selected_order,
+                                    old_cells,
+                                    new_cells,
+                                });
+                                let _ = self.core.undo_manager.execute(cmd, arc_module);
+                            }
+                        }
+                    }
+                    self.core.sync_module_to_audio();
+                }
             }
         }
 
@@ -968,9 +1023,10 @@ impl HtrkApp {
 
         if self.file_browser.show {
             let mut file_browser_open = true;
+
             egui::Window::new("File Browser")
                 .open(&mut file_browser_open)
-                .default_size([600.0, 400.0])
+                .default_size([550.0, 400.0])
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .resizable(true)
                 .show(ctx, |ui| {
@@ -1036,7 +1092,7 @@ impl eframe::App for HtrkApp {
             self.draw_preamble(&ctx);
 
         if ctx.input(|i| i.viewport().close_requested()) {
-            if self.config.confirm_on_exit && self.core.module_dirty() && !self.show_exit_confirm {
+            if self.config.confirm_on_exit && self.core.module_dirty() && !self.show_exit_confirm && !self.exit_confirmed {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.show_exit_confirm = true;
             }
@@ -1209,7 +1265,7 @@ impl eframe::App for HtrkApp {
             .exact_size(22.0)
             .show_inside(ui, |ui| {
                 let cpu = self.core.playback_state.cpu_usage_pct.load(std::sync::atomic::Ordering::Relaxed);
-                let total_rows = self.core.current_pattern().map_or(64, |p| p.num_rows);
+                let total_rows = self.core.current_pattern_or_default().num_rows;
                 let hint = format!("Ins: {} | Smp: {}", self.core.selected_instrument, self.core.selected_sample);
                 let sample_delta = crate::ui::status_bar::draw_status_bar(
                     ui,
@@ -1425,6 +1481,9 @@ impl eframe::App for HtrkApp {
                             }
                             PanelEvent::SyncToAudio => {
                                 cursor_changed = true;
+                            }
+                            PanelEvent::ShowPhraseGenerator => {
+                                self.show_phrase_generator = true;
                             }
                             _ => {}
                         }

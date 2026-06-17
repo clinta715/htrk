@@ -1,7 +1,19 @@
 use crate::sequencer::instrument::{EnvelopeFlags, EnvelopePoint};
 use crate::sequencer::note::Note;
-use crate::sequencer::pattern::Cell;
+use crate::sequencer::pattern::{Cell, Pattern};
 use std::sync::Arc;
+
+fn ensure_pattern_by_index(module: &mut crate::sequencer::Module, pat_idx: usize) {
+    if pat_idx >= module.patterns.len() {
+        module.patterns.resize_with(pat_idx + 1, || Pattern::new(64));
+    }
+}
+
+fn ensure_pattern(module: &mut crate::sequencer::Module, order: usize) -> Result<usize, EditError> {
+    let pat_idx = *module.order_list.get(order).ok_or(EditError::NoSelection)? as usize;
+    ensure_pattern_by_index(module, pat_idx);
+    Ok(pat_idx)
+}
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -59,18 +71,16 @@ edit_cmd! {
     }
     desc = "Set Cell";
     execute(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        let pattern = module.patterns.get(pat_idx).ok_or(EditError::NoSelection)?;
-        if self.row >= pattern.num_rows || self.channel >= crate::sequencer::pattern::MAX_CHANNELS {
+        let pat_idx = ensure_pattern(module, self.order)?;
+        if self.row >= module.patterns[pat_idx].num_rows || self.channel >= crate::sequencer::pattern::MAX_CHANNELS {
             return Err(EditError::NoSelection);
         }
         module.patterns[pat_idx].data[self.row][self.channel] = self.new_cell;
         Ok(())
     }
     undo(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        let pattern = module.patterns.get(pat_idx).ok_or(EditError::NoSelection)?;
-        if self.row >= pattern.num_rows || self.channel >= crate::sequencer::pattern::MAX_CHANNELS {
+        let pat_idx = ensure_pattern(module, self.order)?;
+        if self.row >= module.patterns[pat_idx].num_rows || self.channel >= crate::sequencer::pattern::MAX_CHANNELS {
             return Err(EditError::NoSelection);
         }
         module.patterns[pat_idx].data[self.row][self.channel] = self.old_cell;
@@ -86,9 +96,7 @@ edit_cmd! {
     }
     desc = "Insert Row";
     execute(self, module) {
-        if self.pattern_index >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        ensure_pattern_by_index(module, self.pattern_index);
         let pattern = &mut module.patterns[self.pattern_index];
         if pattern.num_rows >= crate::sequencer::module::MAX_PATTERN_ROWS {
             return Err(EditError::PatternFull);
@@ -98,9 +106,7 @@ edit_cmd! {
         Ok(())
     }
     undo(self, module) {
-        if self.pattern_index >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        ensure_pattern_by_index(module, self.pattern_index);
         let pattern = &mut module.patterns[self.pattern_index];
         if self.row < pattern.data.len() {
             pattern.data.remove(self.row);
@@ -119,9 +125,7 @@ edit_cmd! {
     }
     desc = "Delete Row";
     execute(self, module) {
-        if self.pattern_index >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        ensure_pattern_by_index(module, self.pattern_index);
         let pattern = &mut module.patterns[self.pattern_index];
         if self.row < pattern.data.len() && pattern.num_rows > 1 {
             pattern.data.remove(self.row);
@@ -130,9 +134,7 @@ edit_cmd! {
         Ok(())
     }
     undo(self, module) {
-        if self.pattern_index >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        ensure_pattern_by_index(module, self.pattern_index);
         let pattern = &mut module.patterns[self.pattern_index];
         let mut row_data = [Cell::default(); crate::sequencer::pattern::MAX_CHANNELS];
         for (i, cell) in self.deleted_data.iter().enumerate() {
@@ -804,10 +806,7 @@ edit_cmd! {
     }
     desc = "Transpose";
     execute(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        let pat_idx = ensure_pattern(module, self.order)?;
         for &(row, ch, note) in &self.old_notes {
             if let Note::On(key) = note {
                 let new_key = (key as i8 + self.delta).max(0).min(119) as u8;
@@ -817,10 +816,7 @@ edit_cmd! {
         Ok(())
     }
     undo(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        let pat_idx = ensure_pattern(module, self.order)?;
         for &(row, ch, note) in &self.old_notes {
             module.patterns[pat_idx].data[row][ch].note = note;
         }
@@ -836,10 +832,7 @@ edit_cmd! {
     }
     desc = "Fill Instrument";
     execute(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        let pat_idx = ensure_pattern(module, self.order)?;
         for &(row, ch, _) in &self.old_cells {
             let cell = &mut module.patterns[pat_idx].data[row][ch];
             if cell.note != Note::None {
@@ -849,10 +842,7 @@ edit_cmd! {
         Ok(())
     }
     undo(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        let pat_idx = ensure_pattern(module, self.order)?;
         for (row, ch, old_cell) in &self.old_cells {
             module.patterns[pat_idx].data[*row][*ch] = *old_cell;
         }
@@ -868,20 +858,14 @@ edit_cmd! {
     }
     desc = "Interpolate";
     execute(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        let pat_idx = ensure_pattern(module, self.order)?;
         for (row, ch, cell) in &self.new_cells {
             module.patterns[pat_idx].data[*row][*ch] = *cell;
         }
         Ok(())
     }
     undo(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        let pat_idx = ensure_pattern(module, self.order)?;
         for (row, ch, cell) in &self.old_cells {
             module.patterns[pat_idx].data[*row][*ch] = *cell;
         }
@@ -897,10 +881,7 @@ edit_cmd! {
     }
     desc = "Bulk Set Cells";
     execute(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        let pat_idx = ensure_pattern(module, self.order)?;
         let num_rows = module.patterns[pat_idx].num_rows;
         for &(row, ch, cell) in &self.new_cells {
             if row < num_rows && ch < crate::sequencer::pattern::MAX_CHANNELS {
@@ -910,10 +891,7 @@ edit_cmd! {
         Ok(())
     }
     undo(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        let pat_idx = ensure_pattern(module, self.order)?;
         let num_rows = module.patterns[pat_idx].num_rows;
         for &(row, ch, cell) in &self.old_cells {
             if row < num_rows && ch < crate::sequencer::pattern::MAX_CHANNELS {
@@ -934,10 +912,7 @@ edit_cmd! {
     }
     desc = "Reverse";
     execute(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        let pat_idx = ensure_pattern(module, self.order)?;
         let mut cells: Vec<Cell> = (self.start_row..=self.end_row)
             .map(|r| module.patterns[pat_idx].data[r][self.channel])
             .collect();
@@ -948,10 +923,7 @@ edit_cmd! {
         Ok(())
     }
     undo(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        let pat_idx = ensure_pattern(module, self.order)?;
         for (i, r) in (self.start_row..=self.end_row).enumerate() {
             module.patterns[pat_idx].data[r][self.channel] = self.old_cells[i];
         }
@@ -967,20 +939,14 @@ edit_cmd! {
     }
     desc = "Randomize";
     execute(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        let pat_idx = ensure_pattern(module, self.order)?;
         for (row, ch, cell) in &self.new_cells {
             module.patterns[pat_idx].data[*row][*ch] = *cell;
         }
         Ok(())
     }
     undo(self, module) {
-        let pat_idx = *module.order_list.get(self.order).ok_or(EditError::NoSelection)? as usize;
-        if pat_idx >= module.patterns.len() {
-            return Err(EditError::NoSelection);
-        }
+        let pat_idx = ensure_pattern(module, self.order)?;
         for (row, ch, cell) in &self.old_cells {
             module.patterns[pat_idx].data[*row][*ch] = *cell;
         }
