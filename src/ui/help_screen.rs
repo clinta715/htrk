@@ -61,16 +61,23 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             ui.add_space(8.0);
 
                             section_header(ui, "TRANSPORT");
-                            shortcut_row(ui, "Space", "Repeat last entry / Stop");
-                            shortcut_row(ui, "F5", "Play from start");
                             shortcut_row(ui, "F6", "Play pattern");
                             shortcut_row(ui, "F7", "Play through order");
                             shortcut_row(ui, "F8", "Stop all");
                             shortcut_row(ui, "F9", "Play from current pos");
+                            shortcut_row(ui, "Space", "Repeat last entry / Stop");
+                            ui.add_space(8.0);
+
+                            section_header(ui, "VIEW SWITCHING (IT-style)");
+                            shortcut_row(ui, "F1", "Help / Shortcuts");
+                            shortcut_row(ui, "F2", "Pattern editor");
+                            shortcut_row(ui, "F3", "Sample tab");
+                            shortcut_row(ui, "F4", "Instrument tab");
+                            shortcut_row(ui, "F5", "Playback tab");
                             ui.add_space(8.0);
 
                             section_header(ui, "CHANNEL");
-                            shortcut_row(ui, "Esc / F2", "Toggle edit mode (EDT / VIEW)");
+                            shortcut_row(ui, "Esc", "Toggle edit mode (EDT / VIEW)");
                             shortcut_row(ui, "Alt+M", "Toggle mute channel");
                             shortcut_row(ui, "Alt+S", "Toggle solo channel");
                             ui.add_space(8.0);

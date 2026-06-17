@@ -429,31 +429,16 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         app.show_shortcuts = !app.show_shortcuts;
                     }
                     egui::Key::F2 => {
-                        app.edit_mode = !app.edit_mode;
-                    }
-                    egui::Key::F3 if modifiers.shift && app.edit_mode && is_pattern => {
-                        app.cut_track();
-                    }
-                    egui::Key::F3 if modifiers.alt && app.edit_mode && is_pattern => {
-                        app.cut_column();
+                        app.current_view = AppView::Pattern;
                     }
                     egui::Key::F3 => {
-                        app.show_shortcuts = !app.show_shortcuts;
+                        app.current_view = AppView::Sample;
                     }
-                    egui::Key::F4 if modifiers.shift && is_pattern => {
-                        app.copy_track();
-                    }
-                    egui::Key::F4 if modifiers.alt && is_pattern => {
-                        app.copy_column();
-                    }
-                    egui::Key::F5 if modifiers.shift && is_pattern => {
-                        app.core.paste_at_cursor();
-                    }
-                    egui::Key::F5 if modifiers.alt && is_pattern => {
-                        app.core.paste_at_cursor();
+                    egui::Key::F4 => {
+                        app.current_view = AppView::Instrument;
                     }
                     egui::Key::F5 => {
-                        app.core.send_command(crate::audio::commands::AudioCommand::Play);
+                        app.current_view = AppView::Playback;
                     }
                     egui::Key::F6 => {
                         app.core.send_command(crate::audio::commands::AudioCommand::SetPlayMode(PlayMode::Pattern));
