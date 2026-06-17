@@ -8,6 +8,7 @@ use crate::edit::InsertRowCommand;
 use crate::edit::DeleteRowCommand;
 use crate::sequencer::automation::InterpolationMode;
 use crate::sequencer::effect::Effect;
+use crate::ui::sample_editor::SampleEditEvent;
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::Note;
 use crate::sequencer::player::PlayMode;
@@ -46,6 +47,7 @@ const NOTE_KEYS_UPPER: [(egui::Key, u8); 12] = [
 
 pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
     let is_pattern = app.current_view == AppView::Pattern;
+    let is_sample = app.current_view == AppView::Sample;
     let modifiers = ctx.input(|i| i.modifiers);
     let has_focus = ctx.memory(|m| m.focused().is_some());
     let any_dialog_open = app.file_browser.show
@@ -106,17 +108,50 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             app.core.copy_selection();
                             handled = true;
                         }
+                        egui::Key::C if is_sample => {
+                            if let Some((s, e)) = app.sample_editor.selection {
+                                let start = s.min(e);
+                                let end = s.max(e);
+                                crate::actions::sample_edit::handle_sample_edit(app, SampleEditEvent::CopyRegion(start, end));
+                            }
+                            handled = true;
+                        }
                         egui::Key::X if app.edit_mode && is_pattern => {
                             app.core.copy_selection();
                             app.core.delete_selection();
+                            handled = true;
+                        }
+                        egui::Key::X if is_sample => {
+                            if let Some((s, e)) = app.sample_editor.selection {
+                                let start = s.min(e);
+                                let end = s.max(e);
+                                crate::actions::sample_edit::handle_sample_edit(app, SampleEditEvent::CutRegion(start, end));
+                            }
                             handled = true;
                         }
                         egui::Key::V if app.edit_mode && is_pattern => {
                             app.core.paste_at_cursor();
                             handled = true;
                         }
+                        egui::Key::V if is_sample => {
+                            if app.sample_editor.clipboard.is_some() {
+                                if let Some(pos) = app.sample_editor.cursor_pos {
+                                    crate::actions::sample_edit::handle_sample_edit(app, SampleEditEvent::PasteRegion(pos));
+                                }
+                            }
+                            handled = true;
+                        }
                         egui::Key::A if is_pattern => {
                             app.core.select_all();
+                            handled = true;
+                        }
+                        egui::Key::A if is_sample => {
+                            if let Some(ref module) = app.core.module {
+                                let idx = app.core.selected_sample;
+                                if let Some(sample) = module.samples.get(idx) {
+                                    app.sample_editor.selection = Some((0, sample.data.len().saturating_sub(1)));
+                                }
+                            }
                             handled = true;
                         }
                         egui::Key::N => {
@@ -393,6 +428,13 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             delete_row(app);
                         } else {
                             delete_cell_or_automation(app);
+                        }
+                    }
+                    egui::Key::Delete if is_sample && !any_dialog_open => {
+                        if let Some((s, e)) = app.sample_editor.selection {
+                            let start = s.min(e);
+                            let end = s.max(e);
+                            crate::actions::sample_edit::handle_sample_edit(app, SampleEditEvent::SilenceRegion(start, end));
                         }
                     }
                     egui::Key::Insert if app.edit_mode && is_pattern && !any_dialog_open => {
