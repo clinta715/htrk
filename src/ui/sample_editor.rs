@@ -391,7 +391,6 @@ pub fn draw_sample_editor(
                                         if r.clicked() {
                                             if let Some((s, e)) = *selection {
                                                 ev = Some(SampleEditEvent::CutRegion(s.min(e), s.max(e)));
-                                                *selection = None;
                                             }
                                         }
 
@@ -439,7 +438,6 @@ pub fn draw_sample_editor(
                                 if r.clicked() {
                                     if let Some((s, e)) = *selection {
                                         event = Some(SampleEditEvent::CropRegion(s.min(e), s.max(e)));
-                                        *selection = None;
                                     }
                                 }
 
@@ -458,7 +456,6 @@ pub fn draw_sample_editor(
                                 if r.clicked() {
                                     if let Some((s, e)) = *selection {
                                         event = Some(SampleEditEvent::SilenceRegion(s.min(e), s.max(e)));
-                                        *selection = None;
                                     }
                                 }
 
@@ -471,7 +468,6 @@ pub fn draw_sample_editor(
                                 if r.clicked() {
                                     if let Some((s, e)) = *selection {
                                         event = Some(SampleEditEvent::SetLoopFromSelection(s.min(e), s.max(e)));
-                                        *selection = None;
                                     }
                                 }
                             });

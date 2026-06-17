@@ -1501,7 +1501,16 @@ impl eframe::App for HtrkApp {
                             &self.theme,
                             &self.core.playback_state,
                         ) {
-                            crate::actions::handle_sample_edit(self, event);
+                            if let Some(sel_update) = crate::actions::handle_sample_edit(self, event) {
+                                match sel_update {
+                                    crate::actions::SelectionUpdate::Clear => {
+                                        self.sample_editor.selection = None;
+                                    }
+                                    crate::actions::SelectionUpdate::Set(start, end) => {
+                                        self.sample_editor.selection = Some((start, end));
+                                    }
+                                }
+                            }
                         }
                     }
                 }
