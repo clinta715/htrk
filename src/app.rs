@@ -88,6 +88,7 @@ pub struct HtrkApp {
     pub(crate) pending_view_switch: Arc<AtomicU8>,
     pub(crate) show_exit_confirm: bool,
     pub(crate) exit_confirmed: bool,
+    pub(crate) close_after_save: bool,
     pub(crate) show_phrase_generator: bool,
 }
 
@@ -149,6 +150,7 @@ impl Default for HtrkApp {
             pending_view_switch: pending_view_switch.clone(),
             show_exit_confirm: false,
             exit_confirmed: false,
+            close_after_save: false,
             show_phrase_generator: false,
             devmcp: {
                 let ps = pending_view_switch.clone();
@@ -931,12 +933,12 @@ impl HtrkApp {
                     ui.horizontal(|ui| {
                         if ui.button("Save").clicked() {
                             crate::actions::save_current_file(self);
-                            if self.core.module_dirty() {
-                                self.show_exit_confirm = false;
-                            } else {
-                                self.show_exit_confirm = false;
+                            self.show_exit_confirm = false;
+                            if !self.core.module_dirty() {
                                 self.exit_confirmed = true;
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            } else {
+                                self.close_after_save = true;
                             }
                         }
                         if ui.button("Don't Save").clicked() {
@@ -1071,6 +1073,11 @@ impl HtrkApp {
             }
             if !file_browser_open {
                 self.file_browser.close();
+            }
+            if self.close_after_save && !self.core.module_dirty() {
+                self.close_after_save = false;
+                self.exit_confirmed = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
 
