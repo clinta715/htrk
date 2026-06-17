@@ -931,9 +931,13 @@ impl HtrkApp {
                     ui.horizontal(|ui| {
                         if ui.button("Save").clicked() {
                             crate::actions::save_current_file(self);
-                            self.show_exit_confirm = false;
-                            self.exit_confirmed = true;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            if self.core.module_dirty() {
+                                self.show_exit_confirm = false;
+                            } else {
+                                self.show_exit_confirm = false;
+                                self.exit_confirmed = true;
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
                         }
                         if ui.button("Don't Save").clicked() {
                             self.show_exit_confirm = false;
