@@ -128,6 +128,17 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                             shortcut_row(ui, "▶ Preview (file browser)", "Preview selected WAV at middle C");
                             ui.add_space(8.0);
 
+                            section_header(ui, "SAMPLE EDITOR");
+                            shortcut_row(ui, "Ctrl+C", "Copy selection");
+                            shortcut_row(ui, "Ctrl+X", "Cut selection");
+                            shortcut_row(ui, "Ctrl+V", "Paste at cursor");
+                            shortcut_row(ui, "Ctrl+A", "Select all");
+                            shortcut_row(ui, "Delete", "Silence selection");
+                            shortcut_row(ui, "Right-click", "Context menu (Cut/Crop/Fade...)");
+                            shortcut_row(ui, "Mouse wheel", "Zoom waveform");
+                            shortcut_row(ui, "Fit / Sel", "Zoom fit / zoom to selection");
+                            ui.add_space(8.0);
+
                             section_header(ui, "SETTINGS (F10)");
                             shortcut_row(ui, "Paths", "Default sample/directory paths");
                             shortcut_row(ui, "Editor", "Font, zoom, highlights, etc.");

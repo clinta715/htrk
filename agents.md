@@ -168,3 +168,45 @@ All phrase generator parameters persist via `egui::Id` temp storage (`ui.data()`
 5. Wire into `generate_phrase()` match arm.
 6. Add UI controls in `src/ui/phrase_generator_dialog.rs` inside the `match mode` block.
 7. Add persistent state IDs and `ui.data_mut()` save/restore for new fields.
+
+## 16. Sample Editor Architecture
+
+### Selection Model
+- `SampleEditor.selection: Option<(usize, usize)>` stores (start, end) sample indices. The pair is unordered — always normalize with `.min()/.max()` before use.
+- `handle_sample_edit()` returns `Option<SelectionUpdate>`: `Clear` (for Cut/Crop) or `Set(start, end)` (for operations that change sample length like Paste). Returning `None` preserves the existing selection (Normalize, Reverse, Fade, Silence).
+- Non-destructive edits (Normalize, Reverse, Amplify, Silence, FadeIn, FadeOut) preserve selection. Destructive length-changing edits (Cut, Crop, Paste) update or clear selection.
+
+### Waveform Rendering & Interaction
+- `draw_waveform()` in `src/ui/waveform.rs` renders the waveform with zoom/scroll support.
+- Zoom model: `zoom == 0.0` means fit-to-view (see entire sample). `zoom > 0` is the number of visible samples.
+- Scroll model: `scroll_offset` is `[0.0, 1.0]` — position within the sample. 0 = start, 1 = end minus visible window.
+- Zoom resets to fit-to-view when switching samples (`last_sample_index` tracking).
+- Mouse wheel zooms, keeping the cursor position under the mouse stable.
+- Drag creates selection. Shift+drag reserved for future scroll pan. Right-click opens context menu.
+- `WaveformEvent` enum handles all interactions: loop marker drags, selection, and context menu actions (Cut, Copy, Paste, Crop, Silence, Normalize, Reverse, TrimSilence, SetLoopFromSelection, FadeIn, FadeOut, ZoomToSelection, ZoomFit).
+
+### Zoom Controls
+- Info bar shows position (sample + ms), selection range, peak/RMS dB, sample rate, and zoom percentage.
+- **Fit** button: resets `zoom = 0.0` (fit-to-view).
+- **Sel** button: sets `zoom` to selection length and positions `scroll_offset` to center selection.
+
+### Keyboard Shortcuts (Sample Tab)
+- `Ctrl+C`: Copy selection
+- `Ctrl+X`: Cut selection
+- `Ctrl+V`: Paste at cursor position
+- `Ctrl+A`: Select all
+- `Delete`: Silence selection
+
+### Context Menu (Right-click on Waveform)
+- Cut, Copy, Paste (enabled only when clipboard has data), Crop to Selection, Silence Selection, Normalize, Reverse, Trim Silence, Set Loop from Selection, Fade In, Fade Out, Zoom to Selection, Zoom Fit.
+
+### Fade Processing
+- `FadeIn(start, end)`: multiplies each sample by `i/len` (linear 0→1 ramp).
+- `FadeOut(start, end)`: multiplies each sample by `1 - i/len` (linear 1→0 ramp).
+- Both are undoable via `SetSampleDataCommand`.
+- Non-destructive to sample length; selection is preserved.
+
+### Cursor Position
+- `SampleEditor.cursor_pos: Option<usize>` tracks the sample index under the mouse cursor.
+- Reset to `None` when the waveform panel is hidden.
+- The info bar displays cursor position in both sample index and milliseconds.
