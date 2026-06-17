@@ -437,8 +437,11 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     egui::Key::F4 => {
                         app.current_view = AppView::Instrument;
                     }
-                    egui::Key::F5 => {
+                    egui::Key::F5 if modifiers.shift => {
                         app.current_view = AppView::Playback;
+                        app.core.send_command(crate::audio::commands::AudioCommand::Play);
+                    }
+                    egui::Key::F5 => {
                         app.core.send_command(crate::audio::commands::AudioCommand::Play);
                     }
                     egui::Key::F6 => {
