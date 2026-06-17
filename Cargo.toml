@@ -25,10 +25,14 @@ chrono = "0.4"
 
 [profile.release]
 opt-level = 3
-lto = true
+lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+debug = 0
 
 [profile.dev]
 opt-level = 1
+
+[profile.release.package."*"]
+opt-level = 3
