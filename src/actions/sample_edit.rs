@@ -221,6 +221,38 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> O
             );
             return None;
         }
+        SampleEditEvent::FadeIn(s, e) => {
+            let s = s.min(e);
+            let e = s.max(e);
+            let len = e.saturating_sub(s);
+            if len == 0 { return None; }
+            let mut data = (*sample.data).clone();
+            for i in 0..len {
+                let gain = i as f32 / len as f32;
+                data[s + i] *= gain;
+            }
+            Box::new(SetSampleDataCommand {
+                sample_index: sample_idx,
+                old_data: sample.data.clone(),
+                new_data: Arc::new(data),
+            })
+        }
+        SampleEditEvent::FadeOut(s, e) => {
+            let s = s.min(e);
+            let e = s.max(e);
+            let len = e.saturating_sub(s);
+            if len == 0 { return None; }
+            let mut data = (*sample.data).clone();
+            for i in 0..len {
+                let gain = 1.0 - (i as f32 / len as f32);
+                data[s + i] *= gain;
+            }
+            Box::new(SetSampleDataCommand {
+                sample_index: sample_idx,
+                old_data: sample.data.clone(),
+                new_data: Arc::new(data),
+            })
+        }
     };
 
     app.core.execute_edit_command(cmd);

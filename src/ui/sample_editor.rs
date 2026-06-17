@@ -27,6 +27,8 @@ pub enum SampleEditEvent {
     SetLoopFromSelection(usize, usize),
     ExportSample(usize),
     ImportSample,
+    FadeIn(usize, usize),
+    FadeOut(usize, usize),
 }
 
 pub fn draw_sample_editor(
@@ -45,6 +47,7 @@ pub fn draw_sample_editor(
         sample_editor.last_sample_index = *selected_sample;
     }
 
+    let has_clipboard = sample_editor.clipboard.is_some();
     let selection = &mut sample_editor.selection;
     let clipboard = &mut sample_editor.clipboard;
     let amplify_factor = &mut sample_editor.amplify_factor;
@@ -247,6 +250,7 @@ pub fn draw_sample_editor(
                             &mut sample_editor.cursor_pos,
                             &mut sample_editor.zoom,
                             &mut sample_editor.scroll_offset,
+                            has_clipboard,
                         ) {
                             match w_event {
                                 crate::ui::waveform::WaveformEvent::LoopStartChanged(pos) => {
@@ -254,6 +258,82 @@ pub fn draw_sample_editor(
                                 }
                                 crate::ui::waveform::WaveformEvent::LoopEndChanged(pos) => {
                                     event = Some(SampleEditEvent::LoopEndChanged(pos));
+                                }
+                                crate::ui::waveform::WaveformEvent::CutSelection => {
+                                    if let Some((s, e)) = *selection {
+                                        let start = s.min(e);
+                                        let end = s.max(e);
+                                        event = Some(SampleEditEvent::CutRegion(start, end));
+                                    }
+                                }
+                                crate::ui::waveform::WaveformEvent::CopySelection => {
+                                    if let Some((s, e)) = *selection {
+                                        let start = s.min(e);
+                                        let end = s.max(e);
+                                        event = Some(SampleEditEvent::CopyRegion(start, end));
+                                    }
+                                }
+                                crate::ui::waveform::WaveformEvent::PasteAtCursor => {
+                                    if let Some(pos) = sample_editor.cursor_pos {
+                                        event = Some(SampleEditEvent::PasteRegion(pos));
+                                    }
+                                }
+                                crate::ui::waveform::WaveformEvent::CropToSelection => {
+                                    if let Some((s, e)) = *selection {
+                                        let start = s.min(e);
+                                        let end = s.max(e);
+                                        event = Some(SampleEditEvent::CropRegion(start, end));
+                                    }
+                                }
+                                crate::ui::waveform::WaveformEvent::SilenceSelection => {
+                                    if let Some((s, e)) = *selection {
+                                        let start = s.min(e);
+                                        let end = s.max(e);
+                                        event = Some(SampleEditEvent::SilenceRegion(start, end));
+                                    }
+                                }
+                                crate::ui::waveform::WaveformEvent::Normalize => {
+                                    event = Some(SampleEditEvent::Normalize);
+                                }
+                                crate::ui::waveform::WaveformEvent::Reverse => {
+                                    event = Some(SampleEditEvent::Reverse);
+                                }
+                                crate::ui::waveform::WaveformEvent::TrimSilence => {
+                                    event = Some(SampleEditEvent::TrimSilence);
+                                }
+                                crate::ui::waveform::WaveformEvent::SetLoopFromSelection => {
+                                    if let Some((s, e)) = *selection {
+                                        let start = s.min(e);
+                                        let end = s.max(e);
+                                        event = Some(SampleEditEvent::SetLoopFromSelection(start, end));
+                                    }
+                                }
+                                crate::ui::waveform::WaveformEvent::FadeInSelection => {
+                                    if let Some((s, e)) = *selection {
+                                        let start = s.min(e);
+                                        let end = s.max(e);
+                                        event = Some(SampleEditEvent::FadeIn(start, end));
+                                    }
+                                }
+                                crate::ui::waveform::WaveformEvent::FadeOutSelection => {
+                                    if let Some((s, e)) = *selection {
+                                        let start = s.min(e);
+                                        let end = s.max(e);
+                                        event = Some(SampleEditEvent::FadeOut(start, end));
+                                    }
+                                }
+                                crate::ui::waveform::WaveformEvent::ZoomToSelection => {
+                                    if let Some((s, e)) = *selection {
+                                        let start = s.min(e);
+                                        let end = s.max(e);
+                                        let sel_len = end.saturating_sub(start).max(1);
+                                        sample_editor.zoom = sel_len as f32;
+                                        sample_editor.scroll_offset = if sel_len >= sample.data.len() { 0.0 } else { start as f32 / (sample.data.len() - sel_len) as f32 };
+                                    }
+                                }
+                                crate::ui::waveform::WaveformEvent::ZoomFit => {
+                                    sample_editor.zoom = 0.0;
+                                    sample_editor.scroll_offset = 0.0;
                                 }
                             }
                         }

@@ -6,6 +6,19 @@ use crate::ui::TrackerTheme;
 pub enum WaveformEvent {
     LoopStartChanged(usize),
     LoopEndChanged(usize),
+    CutSelection,
+    CopySelection,
+    PasteAtCursor,
+    CropToSelection,
+    SilenceSelection,
+    Normalize,
+    Reverse,
+    SetLoopFromSelection,
+    TrimSilence,
+    FadeInSelection,
+    FadeOutSelection,
+    ZoomToSelection,
+    ZoomFit,
 }
 
 pub fn draw_waveform(
@@ -21,10 +34,11 @@ pub fn draw_waveform(
     cursor_pos: &mut Option<usize>,
     zoom: &mut f32,
     scroll_offset: &mut f32,
+    clipboard_available: bool,
 ) -> Option<WaveformEvent> {
     let mut event = None;
     let desired_size = ui.available_size();
-    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::drag());
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::drag().union(egui::Sense::click()));
 
     if data.is_empty() {
         ui.painter().text(
@@ -273,6 +287,69 @@ pub fn draw_waveform(
             }
         }
     }
+
+    // Right-click context menu
+    response.context_menu(|ui| {
+        ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
+        let has_sel = selection.is_some();
+        if ui.add_enabled(has_sel, egui::Button::new("Cut")).clicked() {
+            event = Some(WaveformEvent::CutSelection);
+            ui.close();
+        }
+        if ui.add_enabled(has_sel, egui::Button::new("Copy")).clicked() {
+            event = Some(WaveformEvent::CopySelection);
+            ui.close();
+        }
+        if ui.add_enabled(clipboard_available, egui::Button::new("Paste")).clicked() {
+            event = Some(WaveformEvent::PasteAtCursor);
+            ui.close();
+        }
+        ui.separator();
+        if ui.add_enabled(has_sel, egui::Button::new("Crop to Selection")).clicked() {
+            event = Some(WaveformEvent::CropToSelection);
+            ui.close();
+        }
+        if ui.add_enabled(has_sel, egui::Button::new("Silence Selection")).clicked() {
+            event = Some(WaveformEvent::SilenceSelection);
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Normalize").clicked() {
+            event = Some(WaveformEvent::Normalize);
+            ui.close();
+        }
+        if ui.button("Reverse").clicked() {
+            event = Some(WaveformEvent::Reverse);
+            ui.close();
+        }
+        if ui.button("Trim Silence").clicked() {
+            event = Some(WaveformEvent::TrimSilence);
+            ui.close();
+        }
+        ui.separator();
+        if ui.add_enabled(has_sel, egui::Button::new("Set Loop from Selection")).clicked() {
+            event = Some(WaveformEvent::SetLoopFromSelection);
+            ui.close();
+        }
+        ui.separator();
+        if ui.add_enabled(has_sel, egui::Button::new("Fade In")).clicked() {
+            event = Some(WaveformEvent::FadeInSelection);
+            ui.close();
+        }
+        if ui.add_enabled(has_sel, egui::Button::new("Fade Out")).clicked() {
+            event = Some(WaveformEvent::FadeOutSelection);
+            ui.close();
+        }
+        ui.separator();
+        if ui.add_enabled(has_sel, egui::Button::new("Zoom to Selection")).clicked() {
+            event = Some(WaveformEvent::ZoomToSelection);
+            ui.close();
+        }
+        if ui.button("Zoom Fit").clicked() {
+            event = Some(WaveformEvent::ZoomFit);
+            ui.close();
+        }
+    });
 
     event
 }
