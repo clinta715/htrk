@@ -1658,6 +1658,9 @@ impl eframe::App for HtrkApp {
     }
 
     fn on_exit(&mut self) {
+        self.core.send_command(crate::audio::commands::AudioCommand::Stop);
+        self.stream = None;
+        self.core.command_sender = None;
         crate::actions::save_config(self);
     }
 
