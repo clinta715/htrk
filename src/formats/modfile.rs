@@ -200,14 +200,14 @@ fn convert_effect_pt(effect_code: u8, effect_param: u8) -> Effect {
             down: effect_param & 0x0F,
         },
         0xB => Effect::PositionJump {
-            order: effect_param,
+            order: effect_param as u16,
         },
         0xC => Effect::SetVolume {
             volume: effect_param.min(64),
         },
         0xD => {
             let row = ((effect_param >> 4) * 10) + (effect_param & 0x0F);
-            Effect::PatternBreak { row }
+            Effect::PatternBreak { row: row as u16 }
         }
         0xE => {
             let sub = effect_param >> 4;

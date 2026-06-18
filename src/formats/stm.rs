@@ -252,8 +252,8 @@ impl FormatHandler for StmHandler {
 fn convert_stm_effect(effect_code: u8, param: u8) -> Effect {
     match effect_code {
         10 => Effect::SetTempo { bpm: param },
-        11 => Effect::PositionJump { order: param },
-        12 => Effect::PatternBreak { row: param },
+        11 => Effect::PositionJump { order: param as u16 },
+        12 => Effect::PatternBreak { row: param as u16 },
         13 => Effect::VolumeSlide {
             up: param >> 4,
             down: param & 0x0F,

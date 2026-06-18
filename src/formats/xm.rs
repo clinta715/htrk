@@ -812,12 +812,12 @@ fn decode_xm_effect(fx: u8, param: u8, has_param: bool) -> Effect {
             up: param >> 4,
             down: param & 0x0F,
         },
-        0xB => Effect::PositionJump { order: param },
+        0xB => Effect::PositionJump { order: param as u16 },
         0xC => Effect::SetVolume {
             volume: param.min(64),
         },
         0xD => Effect::PatternBreak {
-            row: ((param >> 4) * 10) + (param & 0x0F),
+            row: (((param >> 4) * 10) + (param & 0x0F)) as u16,
         },
         0xE => decode_xm_extended_effect(param),
         0xF => {
@@ -1114,12 +1114,12 @@ fn encode_xm_effect(effect: &Effect) -> (u8, u8) {
         Effect::SetPanning { pan } => (8, *pan),
         Effect::SetSampleOffset { offset } => (9, (offset >> 8) as u8),
         Effect::VolumeSlide { up, down } => (0xA, (up << 4) | down),
-        Effect::PositionJump { order } => (0xB, *order),
+        Effect::PositionJump { order } => (0xB, *order as u8),
         Effect::SetVolume { volume } => (0xC, (*volume).min(64)),
         Effect::PatternBreak { row } => {
             let tens = row / 10;
             let ones = row % 10;
-            (0xD, (tens << 4) | ones)
+            (0xD, ((tens << 4) | ones) as u8)
         }
         Effect::SetSpeed { speed } => (0xF, *speed),
         Effect::SetTempo { bpm } => (0xF, *bpm),

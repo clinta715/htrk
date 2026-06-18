@@ -16,10 +16,10 @@ const S3M_MAX_CHANNELS: usize = 32;
 fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
     match effect_code {
         1 => Effect::SetTempo { bpm: param },
-        2 => Effect::PositionJump { order: param },
+        2 => Effect::PositionJump { order: param as u16 },
         3 => {
             let row = (param >> 4) * 10 + (param & 0x0F);
-            Effect::PatternBreak { row }
+            Effect::PatternBreak { row: row as u16 }
         }
         4 => Effect::VolumeSlide {
             up: param >> 4,
@@ -110,8 +110,8 @@ fn effect_to_s3m(effect: &Effect) -> (u8, u8) {
     match effect {
         Effect::None => (0, 0),
         Effect::SetSpeed { speed } => (20, *speed),
-        Effect::PositionJump { order } => (2, *order),
-        Effect::PatternBreak { row } => (3, ((row / 10) << 4) | (row % 10)),
+        Effect::PositionJump { order } => (2, *order as u8),
+        Effect::PatternBreak { row } => (3, ((row / 10) << 4 | (row % 10)) as u8),
         Effect::VolumeSlide { up, down } => (4, (*up << 4) | *down),
         Effect::PortamentoDown { speed } => (5, *speed),
         Effect::PortamentoUp { speed } => (6, *speed),

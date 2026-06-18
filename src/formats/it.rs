@@ -744,9 +744,9 @@ fn decode_it_effect(fx: u8, p: u8) -> Effect {
         8 => Effect::SetPanning { pan: p },
         9 => Effect::SetSampleOffset { offset: (p as u16) << 8 },
         10 => Effect::VolumeSlide { up: p >> 4, down: p & 0x0F },
-        11 => Effect::PositionJump { order: p },
+        11 => Effect::PositionJump { order: p as u16 },
         12 => Effect::SetVolume { volume: p },
-        13 => Effect::PatternBreak { row: p },
+        13 => Effect::PatternBreak { row: p as u16 },
         14 => {
             let sub = p >> 4;
             let val = p & 0x0F;

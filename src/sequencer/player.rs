@@ -219,8 +219,8 @@ impl Default for PlayMode {
 #[derive(Clone, Debug)]
 pub struct SequencerState {
     pub current_order: u16,
-    pub current_row: u8,
-    pub current_pattern: u8,
+    pub current_row: u16,
+    pub current_pattern: u16,
 
     pub clock: SequencerClock,
 
@@ -231,16 +231,16 @@ pub struct SequencerState {
     pub playing: bool,
     pub paused: bool,
 
-    pub pattern_break_row: Option<u8>,
-    pub position_jump_order: Option<u8>,
+    pub pattern_break_row: Option<u16>,
+    pub position_jump_order: Option<u16>,
     pub position_jump_flag: bool,
     pub pattern_delay_ticks: u8,
     pub pattern_delay_ticks2: u8,
     pub row_delay_active: bool,
-    pub pattern_loop_start: Option<(u16, u8)>,
+    pub pattern_loop_start: Option<(u16, u16)>,
     pub pattern_loop_count: u8,
     pub pattern_loop_final_pass: bool,
-    pub pattern_loop_jump_target: Option<u8>,
+    pub pattern_loop_jump_target: Option<u16>,
 
     pub channels: Vec<ChannelState>,
 

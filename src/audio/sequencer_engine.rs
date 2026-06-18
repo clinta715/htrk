@@ -133,7 +133,7 @@ impl SequencerEngine {
 
         let max_order = self.get_order_count().saturating_sub(1) as u16;
         self.state.current_order = order.min(max_order);
-        self.state.current_row = row as u8;
+        self.state.current_row = row;
         self.state.current_pattern = self.get_pattern_for_order(self.state.current_order);
         self.state.clock.current_tick = 0;
         self.state.pattern_break_row = None;
@@ -1393,8 +1393,8 @@ impl SequencerEngine {
 
         if let Some(target_order) = self.state.position_jump_order.take() {
             if (target_order as usize) < module.order_list.len() {
-                self.state.current_order = target_order as u16;
-                self.state.current_pattern = self.get_pattern_for_order(target_order as u16);
+                self.state.current_order = target_order;
+                self.state.current_pattern = self.get_pattern_for_order(target_order);
                 let target_row = self.state.pattern_break_row.take().unwrap_or(0);
                 self.state.current_row = target_row;
                 self.reset_pattern_loop_state();
@@ -1462,7 +1462,7 @@ impl SequencerEngine {
             self.state.current_row = 0;
             self.reset_pattern_loop_state();
         } else {
-            self.state.current_row = next_row as u8;
+            self.state.current_row = next_row as u16;
         }
     }
 
@@ -1490,7 +1490,7 @@ impl SequencerEngine {
         }
     }
 
-    fn get_pattern_for_order(&self, order: u16) -> u8 {
+    fn get_pattern_for_order(&self, order: u16) -> u16 {
         let module = match self.module.as_ref() {
             Some(m) => m,
             None => return 0,
@@ -1499,7 +1499,7 @@ impl SequencerEngine {
         if order_idx < module.order_list.len() {
             let pat_idx = module.order_list[order_idx] as usize;
             if pat_idx < module.patterns.len() {
-                return pat_idx as u8;
+                return pat_idx as u16;
             }
         }
         0
