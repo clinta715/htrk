@@ -94,7 +94,9 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
 
                             section_header(ui, "IT-STYLE FEATURES");
                             shortcut_row(ui, "Alt+0..9", "Set cursor skip value");
-                            shortcut_row(ui, ", / .", "Prev / next sample (inst col: instrument)");
+                            shortcut_row(ui, ", / .", "Prev / next sample (inst col: inst)");
+                            shortcut_row(ui, ". (note col)", "Note Off (edit mode)");
+                            shortcut_row(ui, "Ctrl+Shift+Left/Right", "Prev / next sample");
                             shortcut_row(ui, "Space (stopped)", "Repeat last cell");
                             shortcut_row(ui, "Alt+N", "Toggle multichannel edit");
                             shortcut_row(ui, "Ctrl+Shift+Up/Dn", "Increase / Decrease octave");

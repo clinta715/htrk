@@ -687,25 +687,28 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
             })
         });
 
-    // While editing a value column, keys that are legitimate value entries
-    // (digits on decimal columns; hex digits or effect letters on FX columns)
-    // are consumed as values instead of triggering a note preview.
     let value_consumed = app.edit_mode && has_pattern && is_pattern && !on_note && is_value_char(sub, up);
 
+    // Note keys always play a preview sound, regardless of edit mode or cursor column.
+    // When value_consumed is true, the key also enters a value into the cell.
     if let Some(nk) = note_key {
+        if !app.preview_browser_sample(nk) {
+            preview_note(app, nk);
+        }
         if !value_consumed {
-            if !app.preview_browser_sample(nk) {
-                preview_note(app, nk);
-                if is_pattern && on_note && app.edit_mode && has_pattern {
-                    let note = Note::On(nk);
-                    let mut new_cell = app.core.get_cell_at_cursor();
-                    new_cell.note = note;
-                    new_cell.instrument = Some(app.core.selected_instrument as u8);
-                    app.set_cell_at_cursor(new_cell);
-                    app.core.last_entered_cell = Some(new_cell);
-                    app.advance_cursor_down(app.cursor_skip as usize);
-                }
+            if is_pattern && on_note && app.edit_mode && has_pattern {
+                let note = Note::On(nk);
+                let mut new_cell = app.core.get_cell_at_cursor();
+                new_cell.note = note;
+                new_cell.instrument = Some(app.core.selected_instrument as u8);
+                app.set_cell_at_cursor(new_cell);
+                app.core.last_entered_cell = Some(new_cell);
+                app.advance_cursor_down(app.cursor_skip as usize);
             }
+        }
+        if value_consumed {
+            // Fall through to value entry below
+        } else {
             return;
         }
     } else if is_pattern && on_note && ch == '.' && app.edit_mode && has_pattern {
@@ -854,6 +857,12 @@ fn preview_note(app: &mut HtrkApp, note_key: u8) {
             let mapped = module.instruments[inst_idx].sample_map[note_key as usize];
             if mapped > 0 && (mapped as usize) < module.samples.len() {
                 mapped as usize
+            } else if let Some(first_mapped) = module.instruments[inst_idx].sample_map.iter().find(|&&s| s > 0) {
+                if (*first_mapped as usize) < module.samples.len() {
+                    *first_mapped as usize
+                } else {
+                    app.core.selected_sample
+                }
             } else {
                 app.core.selected_sample
             }
