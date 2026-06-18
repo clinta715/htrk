@@ -20,8 +20,12 @@ impl XmProcessor {
         engine: &mut crate::audio::sequencer_engine::SequencerEngine,
         channel: usize,
     ) {
+        let module = match engine.module.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
         let out = engine.state.channels[channel].out_period;
-        let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
+        let linear_slides = module.flags.linear_slides;
         let freq = period_to_frequency(out, linear_slides, 8363);
         let delta = if engine.output_sample_rate > 0.0 {
             freq / engine.output_sample_rate
@@ -84,7 +88,11 @@ impl XmProcessor {
                     ch.porta_speed_period = (*speed as u16) << 2;
                 }
                 if let Note::On(key) = ch.last_note {
-                    let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
+                    let module = match engine.module.as_ref() {
+                        Some(m) => m,
+                        None => return,
+                    };
+                    let linear_slides = module.flags.linear_slides;
                     let period = get_note_period(
                         key.saturating_add(ch.rel_ton as u8),
                         ch.fine_tune_offset,
@@ -239,7 +247,10 @@ impl XmProcessor {
             }
 
             Effect::SetEnvelopePosition { tick } => {
-                let module = &*engine.module.as_ref().unwrap();
+                let module = match engine.module.as_ref() {
+                    Some(m) => m,
+                    None => return,
+                };
                 let inst_idx = ch.last_instrument as usize;
                 if inst_idx > 0 && inst_idx < module.instruments.len() {
                     let inst = &module.instruments[inst_idx];
@@ -515,7 +526,11 @@ impl XmProcessor {
             if note_with_rel >= 120 {
                 return;
             }
-            let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
+            let module = match engine.module.as_ref() {
+                Some(m) => m,
+                None => return,
+            };
+            let linear_slides = module.flags.linear_slides;
             let period = get_note_period(note_with_rel, fine_tune, linear_slides);
             ch_state.real_period = period;
             ch_state.out_period = period;
@@ -533,7 +548,10 @@ impl XmProcessor {
         let fade_out;
         let instruments_len;
         {
-            let module = &*engine.module.as_ref().unwrap();
+            let module = match engine.module.as_ref() {
+                Some(m) => m,
+                None => return,
+            };
             nna = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 module.instruments[instrument_idx].nna
             } else {
@@ -584,7 +602,11 @@ impl XmProcessor {
         }
 
         if instrument_idx > 0 && instrument_idx < instruments_len {
-            let inst = &engine.module.as_ref().unwrap().instruments[instrument_idx];
+            let module = match engine.module.as_ref() {
+                Some(m) => m,
+                None => return,
+            };
+            let inst = &module.instruments[instrument_idx];
 
             voice.fade_out_rate = fade_out;
             voice.fade_out_amp = 32768i32;
@@ -676,7 +698,11 @@ impl XmProcessor {
             let ch = &mut engine.state.channels[channel];
             ch.rel_ton = s.relative_note;
         }
-        let linear_slides = engine.module.as_ref().unwrap().flags.linear_slides;
+        let module = match engine.module.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
+        let linear_slides = module.flags.linear_slides;
         let ch = &mut engine.state.channels[channel];
         let ft = ch.fine_tune_offset;
         let want_period = crate::sequencer::period::get_note_period(

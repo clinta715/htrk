@@ -479,6 +479,10 @@ impl SequencerEngine {
     }
 
     pub(crate) fn apply_tone_portamento_period(&mut self, channel: usize, linear: bool) {
+        let module = match self.module.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
         let ch = &self.state.channels[channel];
         if ch.porta_dir == 0 { return; }
         let speed = ch.porta_speed_period;
@@ -509,13 +513,17 @@ impl SequencerEngine {
             ch.out_period = ch.real_period;
         }
 
-        let linear_slides = self.module.as_ref().unwrap().flags.linear_slides;
+        let linear_slides = module.flags.linear_slides;
         self.update_voices_from_period(channel, linear_slides);
     }
 
     // ─── XM vibrato ──────────────────────────────────────────────
 
     pub(crate) fn apply_vibrato_period(&mut self, channel: usize, _linear: bool) {
+        let module = match self.module.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
         let (vib_pos, vib_speed, vib_depth, wave_ctrl) = {
             let ch = &self.state.channels[channel];
             (ch.vib_pos, ch.vib_speed, ch.vib_depth, ch.wave_ctrl & 0x03)
@@ -551,7 +559,7 @@ impl SequencerEngine {
 
         ch.vib_pos = vib_pos.wrapping_add(vib_speed);
 
-        let linear_slides = self.module.as_ref().unwrap().flags.linear_slides;
+        let linear_slides = module.flags.linear_slides;
         self.update_voices_from_period(channel, linear_slides);
     }
 
@@ -775,7 +783,10 @@ impl SequencerEngine {
             Some(c) => c,
             None => return,
         };
-        let module = self.module.as_ref().unwrap().clone();
+        let module = match self.module.as_ref() {
+            Some(m) => m.clone(),
+            None => return,
+        };
         let ch = &mut self.state.channels[channel];
 
         if cell.instrument.is_some() {

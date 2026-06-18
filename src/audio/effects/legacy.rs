@@ -423,7 +423,11 @@ impl LegacyProcessor {
     }
 
     pub fn process_tick(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, tick: u8) {
-        let module_format = engine.module.as_ref().unwrap().format;
+        let module = match engine.module.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
+        let module_format = module.format;
 
         for ch in 0..engine.state.channels.len() {
             let ae = engine.state.channels[ch].active_effects;
@@ -561,7 +565,10 @@ impl LegacyProcessor {
         let linear_slides;
         let instruments_len;
         {
-            let module = &**engine.module.as_ref().unwrap();
+            let module = match engine.module.as_ref() {
+                Some(m) => m,
+                None => return,
+            };
             nna = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
                 module.instruments[instrument_idx].nna
             } else {
@@ -614,7 +621,11 @@ impl LegacyProcessor {
         let mut pan = engine.compute_channel_panning(channel);
 
         if instrument_idx > 0 && instrument_idx < instruments_len {
-            let inst = &engine.module.as_ref().unwrap().instruments[instrument_idx];
+            let module = match engine.module.as_ref() {
+                Some(m) => m,
+                None => return,
+            };
+            let inst = &module.instruments[instrument_idx];
             if inst.random_volume > 0 {
                 let r = fastrand();
                 vol *= 1.0 - (inst.random_volume as f32 / 100.0) * r;
@@ -676,7 +687,11 @@ impl LegacyProcessor {
         }
 
         if instrument_idx > 0 && instrument_idx < instruments_len {
-            let inst = &engine.module.as_ref().unwrap().instruments[instrument_idx];
+            let module = match engine.module.as_ref() {
+                Some(m) => m,
+                None => return,
+            };
+            let inst = &module.instruments[instrument_idx];
             let carry_vol = inst.volume_envelope.as_ref().map_or(false, |e| e.flags.carry);
             let carry_pan = inst.panning_envelope.as_ref().map_or(false, |e| e.flags.carry);
             let carry_pitch = inst.pitch_envelope.as_ref().map_or(false, |e| e.flags.carry);
@@ -820,7 +835,10 @@ impl LegacyProcessor {
     }
 
     pub fn setup_portamento(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, note_key: u8, remapped_key: u8, sample: Option<&Sample>, sample_idx: usize) {
-        let module = &**engine.module.as_ref().unwrap();
+        let module = match engine.module.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
         let (target_period, target_freq) = engine.compute_portamento_target(
             channel, note_key, remapped_key, sample, sample_idx, module,
         );
