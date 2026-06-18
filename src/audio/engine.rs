@@ -37,6 +37,10 @@ pub struct AudioEngine {
     pre_ch_mix_left: Vec<Vec<f32>>,
     pre_ch_mix_right: Vec<Vec<f32>>,
     send_buses: Vec<SendBus>,
+    muted_cache: Vec<bool>,
+    solo_cache: Vec<bool>,
+    effective_mute_cache: Vec<bool>,
+    ch_peak_cache: Vec<f32>,
 }
 
 struct SendBus {
@@ -82,6 +86,10 @@ pub fn create_engine_and_sender(
         ch_mix_right: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
         pre_ch_mix_left: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
         pre_ch_mix_right: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
+        muted_cache: vec![false; DEFAULT_CHANNELS],
+        solo_cache: vec![false; DEFAULT_CHANNELS],
+        effective_mute_cache: vec![false; DEFAULT_CHANNELS],
+        ch_peak_cache: vec![0.0; DEFAULT_CHANNELS],
         send_buses: {
             let configs = [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None];
             let returns = [0.5, 0.0, 0.0, 0.0];
@@ -199,16 +207,20 @@ impl AudioEngine {
                     break;
                 }
 
-                let muted_channels: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.muted).collect();
-                let solo_channels: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.solo).collect();
-                let has_solo = solo_channels.iter().any(|&s| s);
-                let effective_mute: Vec<bool> = if has_solo {
-                    muted_channels.iter().zip(solo_channels.iter())
-                        .map(|(muted, solo)| *muted || !*solo)
-                        .collect()
-                } else {
-                    muted_channels
-                };
+                let num_ch = self.sequencer.state.channels.len();
+                self.muted_cache.resize(num_ch, false);
+                self.solo_cache.resize(num_ch, false);
+                self.effective_mute_cache.resize(num_ch, false);
+                for (i, ch) in self.sequencer.state.channels.iter().enumerate() {
+                    self.muted_cache[i] = ch.muted;
+                    self.solo_cache[i] = ch.solo;
+                }
+                let has_solo = self.solo_cache.iter().any(|&s| s);
+                self.effective_mute_cache.clear();
+                self.effective_mute_cache.extend(
+                    self.muted_cache.iter().zip(self.solo_cache.iter())
+                        .map(|(muted, solo)| *muted || (has_solo && !*solo))
+                );
 
                 mixer::mix_voices_per_channel(
                     &mut self.sequencer.voice_pool.voices,
@@ -222,7 +234,7 @@ impl AudioEngine {
                     chunk,
                     self.master_volume,
                     self.interpolation,
-                    &effective_mute,
+                    &self.effective_mute_cache,
                     self.output_sample_rate as f32,
                 );
 
@@ -232,16 +244,20 @@ impl AudioEngine {
         } else {
             // Sequencer is stopped, but still render any active voices so that
             // preview/jam notes (and release tails) are audible.
-            let muted_channels: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.muted).collect();
-            let solo_channels: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.solo).collect();
-            let has_solo = solo_channels.iter().any(|&s| s);
-            let effective_mute: Vec<bool> = if has_solo {
-                muted_channels.iter().zip(solo_channels.iter())
-                    .map(|(muted, solo)| *muted || !*solo)
-                    .collect()
-            } else {
-                muted_channels
-            };
+            let num_ch = self.sequencer.state.channels.len();
+            self.muted_cache.resize(num_ch, false);
+            self.solo_cache.resize(num_ch, false);
+            self.effective_mute_cache.resize(num_ch, false);
+            for (i, ch) in self.sequencer.state.channels.iter().enumerate() {
+                self.muted_cache[i] = ch.muted;
+                self.solo_cache[i] = ch.solo;
+            }
+            let has_solo = self.solo_cache.iter().any(|&s| s);
+            self.effective_mute_cache.clear();
+            self.effective_mute_cache.extend(
+                self.muted_cache.iter().zip(self.solo_cache.iter())
+                    .map(|(muted, solo)| *muted || (has_solo && !*solo))
+            );
             mixer::mix_voices_per_channel(
                 &mut self.sequencer.voice_pool.voices,
                 &mut self.mix_left[..frame_count],
@@ -254,7 +270,7 @@ impl AudioEngine {
                 frame_count,
                 self.master_volume,
                 self.interpolation,
-                &effective_mute,
+                &self.effective_mute_cache,
                 self.output_sample_rate as f32,
             );
         }
@@ -580,7 +596,7 @@ impl AudioEngine {
         }
     }
 
-    fn capture_monitoring(&self, frame_count: usize) {
+    fn capture_monitoring(&mut self, frame_count: usize) {
         let mut peak_l = 0.0f32;
         let mut peak_r = 0.0f32;
         for i in 0..frame_count {
@@ -593,20 +609,21 @@ impl AudioEngine {
         self.playback_state.master_peak_right.store(peak_r.to_bits(), std::sync::atomic::Ordering::Relaxed);
 
         let num_ch = self.sequencer.state.channels.len();
-        let mut ch_peaks = vec![0.0f32; num_ch];
+        self.ch_peak_cache.resize(num_ch, 0.0);
+        self.ch_peak_cache.fill(0.0);
         for voice in &self.sequencer.voice_pool.voices {
             if voice.active {
                 if let Some(ch) = voice.channel {
-                    if ch < ch_peaks.len() {
+                    if ch < self.ch_peak_cache.len() {
                         let vol = voice.final_volume * self.master_volume;
-                        if vol > ch_peaks[ch] {
-                            ch_peaks[ch] = vol;
+                        if vol > self.ch_peak_cache[ch] {
+                            self.ch_peak_cache[ch] = vol;
                         }
                     }
                 }
             }
         }
-        for (ch, peak) in ch_peaks.iter().enumerate() {
+        for (ch, peak) in self.ch_peak_cache.iter().enumerate() {
             if ch < crate::audio::playback_state::MAX_CHANNELS {
                 self.playback_state.channel_peaks[ch].store(peak.to_bits(), std::sync::atomic::Ordering::Relaxed);
             }
