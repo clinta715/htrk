@@ -97,6 +97,7 @@ pub struct TrackerTheme {
     pub transport_active: Color32,
 
     pub sample_len_shift: f32,
+    pub bg_sample_len: Color32,
 
     pub playback_position_line: Color32,
 
@@ -178,6 +179,7 @@ impl TrackerTheme {
             transport_active: Color32::from_rgb(80, 200, 80),
 
             sample_len_shift: 0.15,
+            bg_sample_len: Color32::from_rgba_premultiplied(40, 40, 80, 80),
 
             playback_position_line: Color32::from_rgba_premultiplied(255, 100, 100, 180),
 
@@ -256,6 +258,7 @@ impl TrackerTheme {
             transport_fg: Color32::from_rgb(0, 160, 0),
             transport_active: Color32::from_rgb(0, 255, 0),
             sample_len_shift: 0.15,
+            bg_sample_len: Color32::from_rgba_premultiplied(40, 40, 80, 80),
             playback_position_line: Color32::from_rgba_premultiplied(0, 255, 0, 180),
             scope_bg: Color32::from_rgb(0, 0, 0),
             scope_cell_bg: Color32::from_rgb(0, 10, 0),
@@ -332,6 +335,7 @@ impl TrackerTheme {
             transport_fg: Color32::from_rgb(40, 40, 80),
             transport_active: Color32::from_rgb(0, 128, 0),
             sample_len_shift: 0.12,
+            bg_sample_len: Color32::from_rgba_premultiplied(40, 40, 80, 80),
             playback_position_line: Color32::from_rgba_premultiplied(0, 100, 200, 180),
             scope_bg: Color32::from_rgb(16, 16, 20),
             scope_cell_bg: Color32::from_rgb(22, 22, 26),
@@ -408,6 +412,7 @@ impl TrackerTheme {
             transport_fg: Color32::from_rgb(200, 140, 0),
             transport_active: Color32::from_rgb(255, 176, 0),
             sample_len_shift: 0.18,
+            bg_sample_len: Color32::from_rgba_premultiplied(40, 40, 80, 80),
             playback_position_line: Color32::from_rgba_premultiplied(255, 220, 100, 180),
             scope_bg: Color32::from_rgb(12, 8, 0),
             scope_cell_bg: Color32::from_rgb(18, 12, 0),
@@ -484,6 +489,7 @@ impl TrackerTheme {
             transport_fg: Color32::from_rgb(0, 140, 200),
             transport_active: Color32::from_rgb(0, 221, 255),
             sample_len_shift: 0.15,
+            bg_sample_len: Color32::from_rgba_premultiplied(40, 40, 80, 80),
             playback_position_line: Color32::from_rgba_premultiplied(0, 255, 200, 200),
             scope_bg: Color32::from_rgb(6, 8, 20),
             scope_cell_bg: Color32::from_rgb(10, 12, 24),
@@ -560,6 +566,7 @@ impl TrackerTheme {
             transport_fg: Color32::from_rgb(200, 200, 200),
             transport_active: Color32::from_rgb(80, 255, 80),
             sample_len_shift: 0.20,
+            bg_sample_len: Color32::from_rgba_premultiplied(40, 40, 80, 80),
             playback_position_line: Color32::from_rgba_premultiplied(255, 255, 0, 220),
             scope_bg: Color32::from_rgb(0, 0, 0),
             scope_cell_bg: Color32::from_rgb(0, 0, 0),
@@ -636,6 +643,7 @@ impl TrackerTheme {
             transport_fg: Color32::from_rgb(0, 128, 0),
             transport_active: Color32::from_rgb(0, 255, 0),
             sample_len_shift: 0.25,
+            bg_sample_len: Color32::from_rgba_premultiplied(40, 40, 80, 80),
             playback_position_line: Color32::from_rgba_premultiplied(0, 255, 0, 200),
             scope_bg: Color32::from_rgb(0, 4, 0),
             scope_cell_bg: Color32::from_rgb(0, 8, 0),
@@ -712,6 +720,7 @@ impl TrackerTheme {
             transport_fg: Color32::from_rgb(200, 200, 255),
             transport_active: Color32::from_rgb(80, 255, 80),
             sample_len_shift: 0.10,
+            bg_sample_len: Color32::from_rgba_premultiplied(40, 40, 80, 80),
             playback_position_line: Color32::from_rgba_premultiplied(80, 255, 80, 200),
             scope_bg: Color32::from_rgb(0, 0, 0),
             scope_cell_bg: Color32::from_rgb(0, 0, 64),

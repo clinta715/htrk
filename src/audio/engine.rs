@@ -494,13 +494,6 @@ impl AudioEngine {
                 AudioCommand::SetSendPreFader { send_index, pre_fader } => {
                     if send_index < self.send_buses.len() {
                         self.send_buses[send_index].pre_fader = pre_fader;
-                        if let Some(ref mut module) = self.module {
-                            if let Some(arc_module) = Arc::get_mut(module) {
-                                if send_index < arc_module.send_pre_fader.len() {
-                                    arc_module.send_pre_fader[send_index] = pre_fader;
-                                }
-                            }
-                        }
                     }
                 }
             }

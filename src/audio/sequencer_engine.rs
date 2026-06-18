@@ -188,7 +188,7 @@ impl SequencerEngine {
             let samples_until_tick = (samples_per_tick - self.state.clock.sample_counter).ceil() as usize;
             if samples_until_tick == 0 {
                 self.process_tick();
-                self.state.clock.sample_counter = 0.0;
+                self.state.clock.sample_counter -= samples_per_tick;
                 continue;
             }
 
@@ -199,7 +199,7 @@ impl SequencerEngine {
 
             samples_remaining -= samples_until_tick;
             self.process_tick();
-            self.state.clock.sample_counter = 0.0;
+            self.state.clock.sample_counter -= samples_per_tick;
         }
     }
 

@@ -368,6 +368,37 @@ pub fn draw_pattern_grid(
     let first_ch = scroll_channel;
     let last_ch = (first_ch + visible_channels).min(num_channels);
 
+    // Precompute sample length backgrounds
+    let sample_len_cache: Vec<f32> = if sample_length_bg {
+        if let Some(m) = module {
+            let bpm = m.initial_bpm as f32;
+            let speed = m.initial_speed as f32;
+            m.samples.iter().map(|sample| {
+                if !sample.data.is_empty() && sample.sample_rate > 0 {
+                    let samples_per_row = (sample.sample_rate as f32 * 60.0 / bpm) / speed;
+                    let row_duration = sample.data.len() as f32 / samples_per_row;
+                    if row_duration < 1.0 {
+                        0.0
+                    } else if row_duration < 4.0 {
+                        theme.sample_len_shift * 0.3
+                    } else if row_duration < 16.0 {
+                        theme.sample_len_shift * 0.6
+                    } else if row_duration < 64.0 {
+                        theme.sample_len_shift * 0.9
+                    } else {
+                        theme.sample_len_shift
+                    }
+                } else {
+                    0.0
+                }
+            }).collect()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
     for row in first_row..last_row {
         let display_row = row - first_row;
         let y = rect.top() + display_row as f32 * metrics.row_height;
@@ -441,34 +472,14 @@ pub fn draw_pattern_grid(
                 if let Some(inst_idx) = cell.instrument {
                     if let Some(m) = module {
                         if let Some(instrument) = m.instruments.get(inst_idx as usize) {
-                            let sample_idx = instrument.sample_map[0];
-                            if let Some(sample) = m.samples.get(sample_idx as usize) {
-                                if !sample.data.is_empty() && sample.sample_rate > 0 {
-                                    let bpm = m.initial_bpm as f32;
-                                    let speed = m.initial_speed as f32;
-                                    let samples_per_row = (sample.sample_rate as f32 * 60.0 / bpm) / speed;
-                                    let row_duration = sample.data.len() as f32 / samples_per_row;
-
-                                    let shift = if row_duration < 1.0 {
-                                        0.0
-                                    } else if row_duration < 4.0 {
-                                        theme.sample_len_shift * 0.3
-                                    } else if row_duration < 16.0 {
-                                        theme.sample_len_shift * 0.6
-                                    } else if row_duration < 64.0 {
-                                        theme.sample_len_shift * 0.9
-                                    } else {
-                                        theme.sample_len_shift
-                                    };
-
-                                    if shift > 0.0 {
-                                        let shifted_bg = shift_color_saturation(bg, shift);
-                                        let cell_rect = Rect::from_min_max(
-                                            Pos2::new(x, y),
-                                            Pos2::new(x + metrics.channel_width - 2.0, y + metrics.row_height),
-                                        );
-                                        painter.rect_filled(cell_rect, 0.0, shifted_bg);
-                                    }
+                            let sample_idx = instrument.sample_map[0] as usize;
+                            if let Some(&shift) = sample_len_cache.get(sample_idx) {
+                                if shift > 0.0 {
+                                    let r = Rect::from_min_max(
+                                        Pos2::new(x + metrics.channel_width - shift, y),
+                                        Pos2::new(x + metrics.channel_width, y + metrics.row_height),
+                                    );
+                                    painter.rect_filled(r, 0.0, theme.bg_sample_len);
                                 }
                             }
                         }
