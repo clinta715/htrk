@@ -1025,48 +1025,4 @@ fn effect_tooltip_text(effect: &Effect) -> String {
     }
 }
 
-fn shift_color_saturation(color: egui::Color32, shift: f32) -> egui::Color32 {
-    let (r, g, b, a) = color.to_tuple();
-    let r = r as f32 / 255.0;
-    let g = g as f32 / 255.0;
-    let b = b as f32 / 255.0;
 
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let l = (max + min) / 2.0;
-
-    if max == min {
-        return color;
-    }
-
-    let d = max - min;
-    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
-
-    let new_s = (s + shift).clamp(0.0, 1.0);
-
-    let hue = if max == r {
-        ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
-    } else if max == g {
-        ((b - r) / d + 2.0) / 6.0
-    } else {
-        ((r - g) / d + 4.0) / 6.0
-    };
-
-    let q = if l < 0.5 { l * (1.0 + new_s) } else { l + s - l * s };
-    let p = 2.0 * l - q;
-
-    fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
-        if t < 0.0 { t += 1.0; }
-        if t > 1.0 { t -= 1.0; }
-        if t < 1.0 / 6.0 { return p + (q - p) * 6.0 * t; }
-        if t < 1.0 / 2.0 { return q; }
-        if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
-        p
-    }
-
-    let new_r = (hue_to_rgb(p, q, hue + 1.0 / 3.0) * 255.0).round() as u8;
-    let new_g = (hue_to_rgb(p, q, hue) * 255.0).round() as u8;
-    let new_b = (hue_to_rgb(p, q, hue - 1.0 / 3.0) * 255.0).round() as u8;
-
-    egui::Color32::from_rgba_premultiplied(new_r, new_g, new_b, a)
-}

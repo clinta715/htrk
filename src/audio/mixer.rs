@@ -10,16 +10,15 @@ pub fn mix_voices_per_channel(
     voices: &mut [Voice],
     output_left: &mut [f32],
     output_right: &mut [f32],
-    ch_left: &mut [Vec<f32>],
-    ch_right: &mut [Vec<f32>],
-    pre_ch_left: &mut [Vec<f32>],
-    pre_ch_right: &mut [Vec<f32>],
+    ch_mix: &mut [f32],        // flat: [ch0_L, ch0_R, ch1_L, ch1_R, ...] for each frame
+    pre_ch_mix: &mut [f32],    // flat: [ch0_L, ch0_R, ch1_L, ch1_R, ...] for each frame
     offset: usize,
     len: usize,
     master_volume: f32,
     interpolation: InterpolationType,
     muted_channels: &[bool],
     sample_rate: f32,
+    num_channels: usize,
 ) {
     #[cfg(feature = "audio_debug")]
     static VD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -67,17 +66,15 @@ pub fn mix_voices_per_channel(
                 let fr = s * right_gain;
                 output_left[i] += fl;
                 output_right[i] += fr;
-                if ch_idx < ch_left.len() {
-                    ch_left[ch_idx][offset + i] += fl;
-                    ch_right[ch_idx][offset + i] += fr;
-                }
-                if ch_idx < pre_ch_left.len() {
+                if ch_idx < num_channels {
+                    let base = ch_idx * 2 * len;
+                    ch_mix[base + offset + i] += fl;
+                    ch_mix[base + len + offset + i] += fr;
                     let pfl = s * (1.0 - pan);
                     let pfr = s * pan;
-                    pre_ch_left[ch_idx][offset + i] += pfl;
-                    pre_ch_right[ch_idx][offset + i] += pfr;
+                    pre_ch_mix[base + offset + i] += pfl;
+                    pre_ch_mix[base + len + offset + i] += pfr;
                 }
-                voice.ks_pos += 1;
             }
             continue;
         }
@@ -143,16 +140,15 @@ pub fn mix_voices_per_channel(
             output_left[i] += fl;
             output_right[i] += fr;
 
-            if ch_idx < ch_left.len() {
-                ch_left[ch_idx][offset + i] += fl;
-                ch_right[ch_idx][offset + i] += fr;
-            }
+            if ch_idx < num_channels {
+                let base = ch_idx * 2 * len;
+                ch_mix[base + offset + i] += fl;
+                ch_mix[base + len + offset + i] += fr;
 
-            if ch_idx < pre_ch_left.len() {
                 let pfl = led_filtered * (1.0 - pan);
                 let pfr = led_filtered * pan;
-                pre_ch_left[ch_idx][offset + i] += pfl;
-                pre_ch_right[ch_idx][offset + i] += pfr;
+                pre_ch_mix[base + offset + i] += pfl;
+                pre_ch_mix[base + len + offset + i] += pfr;
             }
 
             voice.position += voice.sample_delta * voice.direction;

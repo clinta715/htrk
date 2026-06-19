@@ -14,13 +14,18 @@ pub struct WavRenderer {
     limiter_gain: f32,
     master_volume: f32,
     stereo: bool,
+    muted_cache: Vec<bool>,
+    solo_cache: Vec<bool>,
+    effective_mute_cache: Vec<bool>,
+    ch_peak_cache: Vec<f32>,
 }
 
 impl WavRenderer {
     pub fn new(module: Arc<Module>, sample_rate: u32) -> Self {
         let mut sequencer = SequencerEngine::new(sample_rate as f64);
-        sequencer.load_module(module);
+        sequencer.load_module(module.clone());
         sequencer.play();
+        let num_ch = sequencer.state.channels.len();
         Self {
             sequencer,
             sample_rate,
@@ -29,6 +34,10 @@ impl WavRenderer {
             limiter_gain: 1.0,
             master_volume: 0.5,
             stereo: true,
+            muted_cache: vec![false; num_ch],
+            solo_cache: vec![false; num_ch],
+            effective_mute_cache: vec![false; num_ch],
+            ch_peak_cache: vec![0.0; num_ch],
         }
     }
 
@@ -88,6 +97,22 @@ impl WavRenderer {
             let frame_count = left.len();
             let mut samples_done = 0;
 
+            // Update mute/solo caches
+            let num_ch = self.sequencer.state.channels.len();
+            self.muted_cache.resize(num_ch, false);
+            self.solo_cache.resize(num_ch, false);
+            self.effective_mute_cache.resize(num_ch, false);
+            for (i, ch) in self.sequencer.state.channels.iter().enumerate() {
+                self.muted_cache[i] = ch.muted;
+                self.solo_cache[i] = ch.solo;
+            }
+            let has_solo = self.solo_cache.iter().any(|&s| s);
+            self.effective_mute_cache.clear();
+            self.effective_mute_cache.extend(
+                self.muted_cache.iter().zip(self.solo_cache.iter())
+                    .map(|(muted, solo)| *muted || (has_solo && !*solo))
+            );
+
             while samples_done < frame_count && self.sequencer.state.playing {
                 let samples_per_tick = self.sequencer.state.clock.samples_per_tick.max(1.0);
                 if self.sequencer.state.clock.sample_counter >= samples_per_tick {
@@ -104,15 +129,13 @@ impl WavRenderer {
 
                 if chunk == 0 { break; }
 
-                let muted: Vec<bool> = self.sequencer.state.channels.iter().map(|ch| ch.muted).collect();
-
                 mixer::mix_voices(
                     &mut self.sequencer.voice_pool.voices,
                     &mut left[samples_done..samples_done + chunk],
                     &mut right[samples_done..samples_done + chunk],
                     self.master_volume,
                     self.interpolation,
-                    &muted,
+                    &self.effective_mute_cache,
                     self.sample_rate as f32,
                 );
 

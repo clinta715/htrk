@@ -32,10 +32,8 @@ pub struct AudioEngine {
     output_channels: u16,
     mix_left: Vec<f32>,
     mix_right: Vec<f32>,
-    ch_mix_left: Vec<Vec<f32>>,
-    ch_mix_right: Vec<Vec<f32>>,
-    pre_ch_mix_left: Vec<Vec<f32>>,
-    pre_ch_mix_right: Vec<Vec<f32>>,
+    ch_mix: Vec<f32>,
+    pre_ch_mix: Vec<f32>,
     send_buses: Vec<SendBus>,
     muted_cache: Vec<bool>,
     solo_cache: Vec<bool>,
@@ -44,8 +42,7 @@ pub struct AudioEngine {
 }
 
 struct SendBus {
-    buffer_left: Vec<f32>,
-    buffer_right: Vec<f32>,
+    buffer: Vec<f32>, // stereo-interleaved: [L0, R0, L1, R1, ...]
     return_level: f32,
     pre_fader: bool,
     effect: Option<Box<dyn crate::audio::sendfx::SendEffect>>,
@@ -82,10 +79,8 @@ pub fn create_engine_and_sender(
         output_channels: channels.max(1),
         mix_left: vec![0.0; BUFFER_SIZE],
         mix_right: vec![0.0; BUFFER_SIZE],
-        ch_mix_left: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
-        ch_mix_right: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
-        pre_ch_mix_left: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
-        pre_ch_mix_right: vec![vec![0.0; BUFFER_SIZE]; DEFAULT_CHANNELS],
+        ch_mix: vec![0.0; DEFAULT_CHANNELS * BUFFER_SIZE * 2],
+        pre_ch_mix: vec![0.0; DEFAULT_CHANNELS * BUFFER_SIZE * 2],
         muted_cache: vec![false; DEFAULT_CHANNELS],
         solo_cache: vec![false; DEFAULT_CHANNELS],
         effective_mute_cache: vec![false; DEFAULT_CHANNELS],
@@ -96,8 +91,7 @@ pub fn create_engine_and_sender(
             let mut buses = Vec::with_capacity(NUM_SEND_BUSES);
             for (i, &effect_type) in configs.iter().enumerate() {
                 buses.push(SendBus {
-                    buffer_left: vec![0.0; BUFFER_SIZE],
-                    buffer_right: vec![0.0; BUFFER_SIZE],
+                    buffer: vec![0.0; BUFFER_SIZE * 2],
                     return_level: returns[i],
                     pre_fader: false,
                     effect: sendfx::create_send_effect(effect_type, sample_rate as f32),
@@ -132,31 +126,23 @@ impl AudioEngine {
         if self.mix_left.len() != frame_count {
             self.mix_left.resize(frame_count, 0.0);
             self.mix_right.resize(frame_count, 0.0);
-            for ch in 0..self.ch_mix_left.len() {
-                self.ch_mix_left[ch].resize(frame_count, 0.0);
-                self.ch_mix_right[ch].resize(frame_count, 0.0);
-                self.pre_ch_mix_left[ch].resize(frame_count, 0.0);
-                self.pre_ch_mix_right[ch].resize(frame_count, 0.0);
-            }
+            let num_ch = self.sequencer.state.channels.len();
+            let total_size = num_ch * frame_count * 2;
+            self.ch_mix.resize(total_size, 0.0);
+            self.pre_ch_mix.resize(total_size, 0.0);
             for bus in &mut self.send_buses {
-                bus.buffer_left.resize(frame_count, 0.0);
-                bus.buffer_right.resize(frame_count, 0.0);
+                bus.buffer.resize(frame_count * 2, 0.0);
             }
         }
 
         // Ensure ch_mix buffers match sequencer channel count
         let num_ch = self.sequencer.state.channels.len();
-        while self.ch_mix_left.len() < num_ch {
-            self.ch_mix_left.push(vec![0.0; frame_count]);
-            self.ch_mix_right.push(vec![0.0; frame_count]);
-            self.pre_ch_mix_left.push(vec![0.0; frame_count]);
-            self.pre_ch_mix_right.push(vec![0.0; frame_count]);
+        let total_size = num_ch * frame_count * 2;
+        if self.ch_mix.len() != total_size {
+            self.ch_mix.resize(total_size, 0.0);
         }
-        while self.ch_mix_left.len() > num_ch {
-            self.ch_mix_left.pop();
-            self.ch_mix_right.pop();
-            self.pre_ch_mix_left.pop();
-            self.pre_ch_mix_right.pop();
+        if self.pre_ch_mix.len() != total_size {
+            self.pre_ch_mix.resize(total_size, 0.0);
         }
 
         for s in self.mix_left.iter_mut() {
@@ -165,19 +151,11 @@ impl AudioEngine {
         for s in self.mix_right.iter_mut() {
             *s = 0.0;
         }
-        for ch in 0..num_ch {
-            for s in self.ch_mix_left[ch].iter_mut() {
-                *s = 0.0;
-            }
-            for s in self.ch_mix_right[ch].iter_mut() {
-                *s = 0.0;
-            }
-            for s in self.pre_ch_mix_left[ch].iter_mut() {
-                *s = 0.0;
-            }
-            for s in self.pre_ch_mix_right[ch].iter_mut() {
-                *s = 0.0;
-            }
+        for s in self.ch_mix.iter_mut() {
+            *s = 0.0;
+        }
+        for s in self.pre_ch_mix.iter_mut() {
+            *s = 0.0;
         }
 
         if self.sequencer.state.playing {
@@ -226,16 +204,15 @@ impl AudioEngine {
                     &mut self.sequencer.voice_pool.voices,
                     &mut self.mix_left[samples_done..samples_done + chunk],
                     &mut self.mix_right[samples_done..samples_done + chunk],
-                    &mut self.ch_mix_left,
-                    &mut self.ch_mix_right,
-                    &mut self.pre_ch_mix_left,
-                    &mut self.pre_ch_mix_right,
+                    &mut self.ch_mix,
+                    &mut self.pre_ch_mix,
                     samples_done,
                     chunk,
                     self.master_volume,
                     self.interpolation,
                     &self.effective_mute_cache,
                     self.output_sample_rate as f32,
+                    num_ch,
                 );
 
                 self.sequencer.state.clock.sample_counter += chunk as f64;
@@ -262,16 +239,15 @@ impl AudioEngine {
                 &mut self.sequencer.voice_pool.voices,
                 &mut self.mix_left[..frame_count],
                 &mut self.mix_right[..frame_count],
-                &mut self.ch_mix_left,
-                &mut self.ch_mix_right,
-                &mut self.pre_ch_mix_left,
-                &mut self.pre_ch_mix_right,
+                &mut self.ch_mix,
+                &mut self.pre_ch_mix,
                 0,
                 frame_count,
                 self.master_volume,
                 self.interpolation,
                 &self.effective_mute_cache,
                 self.output_sample_rate as f32,
+                num_ch,
             );
         }
         #[cfg(feature = "audio_debug")]
@@ -292,23 +268,25 @@ impl AudioEngine {
             let channels = &self.sequencer.state.channels;
 
             for bus in self.send_buses.iter_mut() {
-                bus.buffer_left[..frame_count].fill(0.0);
-                bus.buffer_right[..frame_count].fill(0.0);
+                bus.buffer[..frame_count * 2].fill(0.0);
             }
 
             // Tap channels into send buses
             for ch in 0..channels.len() {
-            for (si, bus) in self.send_buses.iter_mut().enumerate() {
+                for (si, bus) in self.send_buses.iter_mut().enumerate() {
                     let level = channels[ch].send_levels[si] * channels[ch].auto_send_factor[si];
                     if level <= 0.0 { continue; }
-                    let (src_left, src_right) = if bus.pre_fader {
-                        (&self.pre_ch_mix_left[ch], &self.pre_ch_mix_right[ch])
+                    let src = if bus.pre_fader {
+                        &self.pre_ch_mix
                     } else {
-                        (&self.ch_mix_left[ch], &self.ch_mix_right[ch])
+                        &self.ch_mix
                     };
+                    let base = ch * 2 * frame_count;
                     for i in 0..frame_count {
-                        bus.buffer_left[i] += src_left[i] * level;
-                        bus.buffer_right[i] += src_right[i] * level;
+                        let src_idx = base + i;
+                        let dst_idx = i * 2;
+                        bus.buffer[dst_idx] += src[src_idx] * level;
+                        bus.buffer[dst_idx + 1] += src[src_idx + frame_count] * level;
                     }
                 }
             }
@@ -316,13 +294,25 @@ impl AudioEngine {
             // Process each bus through its effect and mix back
             for bus in &mut self.send_buses {
                 if let Some(ref mut fx) = bus.effect {
-                    fx.process(&mut bus.buffer_left[..frame_count], &mut bus.buffer_right[..frame_count], bpm, sample_rate);
+                    // Convert flat interleaved buffer to separate L/R for effect processing
+                    let mut left = vec![0.0f32; frame_count];
+                    let mut right = vec![0.0f32; frame_count];
+                    for i in 0..frame_count {
+                        left[i] = bus.buffer[i * 2];
+                        right[i] = bus.buffer[i * 2 + 1];
+                    }
+                    fx.process(&mut left, &mut right, bpm, sample_rate);
+                    // Write back interleaved
+                    for i in 0..frame_count {
+                        bus.buffer[i * 2] = left[i];
+                        bus.buffer[i * 2 + 1] = right[i];
+                    }
                 }
                 if bus.return_level > 0.0 {
                     let rl = bus.return_level;
                     for i in 0..frame_count {
-                        self.mix_left[i] += bus.buffer_left[i] * rl;
-                        self.mix_right[i] += bus.buffer_right[i] * rl;
+                        self.mix_left[i] += bus.buffer[i * 2] * rl;
+                        self.mix_right[i] += bus.buffer[i * 2 + 1] * rl;
                     }
                 }
             }
@@ -407,10 +397,10 @@ impl AudioEngine {
                     self.module = Some(module.clone());
                     self.sequencer.load_module(module.clone());
                     // Rebuild send buses from module config
+                    let buf_size = self.mix_left.len().max(BUFFER_SIZE);
                     self.send_buses = module.send_bus_config.iter().enumerate().map(|(i, &effect_type)| {
                         let bus = SendBus {
-                            buffer_left: vec![0.0; self.mix_left.len().max(BUFFER_SIZE)],
-                            buffer_right: vec![0.0; self.mix_right.len().max(BUFFER_SIZE)],
+                            buffer: vec![0.0; buf_size * 2],
                             return_level: module.send_return_levels.get(i).copied().unwrap_or(0.0),
                             pre_fader: module.send_pre_fader.get(i).copied().unwrap_or(false),
                             effect: sendfx::create_send_effect(effect_type, self.output_sample_rate as f32),
@@ -623,10 +613,13 @@ impl AudioEngine {
         }
 
         for ch in 0..num_ch.min(crate::audio::playback_state::MAX_CHANNELS) {
+            let base = ch * 2 * frame_count;
+            let left = &self.ch_mix[base..base + frame_count];
+            let right = &self.ch_mix[base + frame_count..base + 2 * frame_count];
             self.playback_state.write_channel_scope(
                 ch,
-                &self.ch_mix_left[ch][..frame_count],
-                &self.ch_mix_right[ch][..frame_count],
+                left,
+                right,
             );
         }
         self.playback_state.finish_channel_scope_write(frame_count);

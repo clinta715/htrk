@@ -284,6 +284,7 @@ impl HtrkCore {
         self.selected_instrument = 1;
         self.sync_channel_fields();
         self.undo_manager.clear();
+        self.module_dirty = false;
     }
 
     pub fn new_song(&mut self) {
@@ -306,6 +307,7 @@ impl HtrkCore {
         self.selected_instrument = 1;
         self.sync_channel_fields();
         self.undo_manager.clear();
+        self.module_dirty = false;
     }
 
     pub fn save_file(&mut self, path: &str) -> bool {
