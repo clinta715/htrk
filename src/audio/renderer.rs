@@ -17,7 +17,6 @@ pub struct WavRenderer {
     muted_cache: Vec<bool>,
     solo_cache: Vec<bool>,
     effective_mute_cache: Vec<bool>,
-    ch_peak_cache: Vec<f32>,
 }
 
 impl WavRenderer {
@@ -37,7 +36,6 @@ impl WavRenderer {
             muted_cache: vec![false; num_ch],
             solo_cache: vec![false; num_ch],
             effective_mute_cache: vec![false; num_ch],
-            ch_peak_cache: vec![0.0; num_ch],
         }
     }
 

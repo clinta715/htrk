@@ -300,6 +300,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
         return;
     }
 
+    let mut tab_handled = false;
     ctx.input(|i| {
         for event in &i.events {
             if let egui::Event::Key { key, pressed: true, .. } = event {
@@ -380,7 +381,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             app.core.cursor.channel = app.core.cursor.channel.min(app.core.num_channels_checked() - 1);
                         }
                         app.ensure_cursor_visible();
-                        ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Key { key: egui::Key::Tab, pressed: true, .. })));
+                        tab_handled = true;
                     }
                     egui::Key::M if modifiers.alt => {
                         app.core.toggle_mute(app.core.cursor.channel);
@@ -579,6 +580,9 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
             }
         }
     });
+    if tab_handled {
+        ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Key { key: egui::Key::Tab, pressed: true, .. })));
+    }
 }
 
 /// Preview-only note playback (no cell editing). Called when a widget has focus

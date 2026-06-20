@@ -1,6 +1,8 @@
 pub mod automation;
 pub mod effect;
+pub mod envelope_generator;
 pub mod instrument;
+pub mod slice_detector;
 pub mod module;
 pub mod note;
 pub mod pattern;

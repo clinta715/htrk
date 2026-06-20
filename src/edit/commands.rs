@@ -1,6 +1,7 @@
 use crate::sequencer::instrument::{EnvelopeFlags, EnvelopePoint};
 use crate::sequencer::note::Note;
 use crate::sequencer::pattern::{Cell, Pattern};
+use crate::sequencer::Sample;
 use std::sync::Arc;
 
 fn ensure_pattern_by_index(module: &mut crate::sequencer::Module, pat_idx: usize) {
@@ -950,6 +951,45 @@ edit_cmd! {
         for (row, ch, cell) in &self.old_cells {
             module.patterns[pat_idx].data[*row][*ch] = *cell;
         }
+        Ok(())
+    }
+}
+
+edit_cmd! {
+    pub struct SliceToInstrumentCommand {
+        target_instrument: usize,
+        pre_sample_count: usize,
+        pre_instrument_name: String,
+        pre_sample_map: [u8; 120],
+        slice_samples: Vec<Sample>,
+        post_name: String,
+        post_base_note: u8,
+        post_slice_count: u8,
+    }
+    desc = "Slice to Instrument";
+    execute(self, module) {
+        if self.target_instrument >= module.instruments.len() {
+            return Err(EditError::NoSelection);
+        }
+        // Ensure we are at the pre-state before applying
+        module.samples.truncate(self.pre_sample_count);
+        module.samples.extend(self.slice_samples.clone());
+        module.instruments[self.target_instrument].name = self.post_name.clone();
+        for i in 0..self.post_slice_count as usize {
+            let note = self.post_base_note as usize + i;
+            if note < 120 {
+                module.instruments[self.target_instrument].sample_map[note] = (self.pre_sample_count + i) as u8;
+            }
+        }
+        Ok(())
+    }
+    undo(self, module) {
+        if self.target_instrument >= module.instruments.len() {
+            return Err(EditError::NoSelection);
+        }
+        module.samples.truncate(self.pre_sample_count);
+        module.instruments[self.target_instrument].sample_map = self.pre_sample_map;
+        module.instruments[self.target_instrument].name = self.pre_instrument_name.clone();
         Ok(())
     }
 }

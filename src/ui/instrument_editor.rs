@@ -710,162 +710,23 @@ fn draw_envelope_section(
     event
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum EnvGeneratorShape {
-    Sine,
-    Square,
-    Triangle,
-    SawUp,
-    SawDown,
-    Pulse,
-    Random,
-}
-
 fn generate_envelope_points(
-    shape: EnvGeneratorShape,
+    shape: crate::sequencer::envelope_generator::GeneratorShape,
     length: u16,
     cycles: f32,
     depth: u8,
     offset: u8,
     duty: f32,
 ) -> Vec<crate::sequencer::instrument::EnvelopePoint> {
-    use crate::sequencer::instrument::EnvelopePoint;
-    use std::f32::consts::TAU;
-
-    let length_f = length as f32;
-    let depth_f = depth as f32;
-    let offset_f = offset as f32;
-    let num_cycles = cycles.max(0.25);
-
-    if length < 2 {
-        return vec![EnvelopePoint { tick: 0, value: offset }];
-    }
-
-    let clamp_val = |v: f32| -> u8 { v.clamp(0.0, 64.0) as u8 };
-
-    match shape {
-        EnvGeneratorShape::Sine => {
-            let pts_per_cycle = 16usize;
-            let total_pts = (pts_per_cycle as f32 * num_cycles).ceil() as usize + 1;
-            let mut points = Vec::with_capacity(total_pts);
-            for i in 0..total_pts {
-                let t = (i as f32 / (total_pts - 1) as f32) * length_f;
-                let phase = num_cycles * TAU * t / length_f;
-                let v = offset_f + (depth_f / 2.0) * phase.sin();
-                points.push(EnvelopePoint {
-                    tick: t.round() as u16,
-                    value: clamp_val(v),
-                });
-            }
-            points
+    let depth_f = depth as f32 / 64.0;
+    let offset_f = offset as f32 / 64.0;
+    let pairs = crate::sequencer::envelope_generator::generate_values(shape, length, cycles, depth_f, offset_f, duty);
+    pairs.into_iter().map(|(_pos, val)| {
+        crate::sequencer::instrument::EnvelopePoint {
+            tick: _pos,
+            value: (val * 64.0).round() as u8,
         }
-        EnvGeneratorShape::Square => {
-            let pts_per_cycle = 4usize;
-            let total_pts = (pts_per_cycle as f32 * num_cycles).ceil() as usize;
-            let mut points = Vec::with_capacity(total_pts + 1);
-            let hi = offset_f + depth_f / 2.0;
-            let lo = offset_f - depth_f / 2.0;
-            for c in 0..(num_cycles.ceil() as usize) {
-                let cycle_start = (c as f32 / num_cycles) * length_f;
-                let cycle_end = ((c + 1) as f32 / num_cycles) * length_f;
-                let mid = (cycle_start + cycle_end) / 2.0;
-                points.push(EnvelopePoint { tick: cycle_start.round() as u16, value: clamp_val(hi) });
-                points.push(EnvelopePoint { tick: mid.round() as u16, value: clamp_val(hi) });
-                points.push(EnvelopePoint { tick: mid.round() as u16, value: clamp_val(lo) });
-                points.push(EnvelopePoint { tick: cycle_end.round() as u16, value: clamp_val(lo) });
-            }
-            points.sort_by_key(|p| p.tick);
-            // unique by tick
-            points.dedup_by_key(|p| p.tick);
-            points
-        }
-        EnvGeneratorShape::Triangle => {
-            let pts_per_cycle = 4usize;
-            let total_pts = (pts_per_cycle as f32 * num_cycles).ceil() as usize;
-            let mut points = Vec::with_capacity(total_pts + 1);
-            let hi = offset_f + depth_f / 2.0;
-            let lo = offset_f - depth_f / 2.0;
-            for c in 0..(num_cycles.ceil() as usize) {
-                let cycle_start = (c as f32 / num_cycles) * length_f;
-                let cycle_end = ((c + 1) as f32 / num_cycles) * length_f;
-                let mid = (cycle_start + cycle_end) / 2.0;
-                points.push(EnvelopePoint { tick: cycle_start.round() as u16, value: clamp_val(lo) });
-                points.push(EnvelopePoint { tick: mid.round() as u16, value: clamp_val(hi) });
-                points.push(EnvelopePoint { tick: cycle_end.round() as u16, value: clamp_val(lo) });
-            }
-            points.sort_by_key(|p| p.tick);
-            points.dedup_by_key(|p| p.tick);
-            points
-        }
-        EnvGeneratorShape::SawUp => {
-            let pts_per_cycle = 2usize;
-            let total_pts = (pts_per_cycle as f32 * num_cycles).ceil() as usize;
-            let mut points = Vec::with_capacity(total_pts + 2);
-            let hi = offset_f + depth_f / 2.0;
-            let lo = offset_f - depth_f / 2.0;
-            for c in 0..(num_cycles.ceil() as usize) {
-                let cycle_start = (c as f32 / num_cycles) * length_f;
-                let cycle_end = ((c + 1) as f32 / num_cycles) * length_f;
-                points.push(EnvelopePoint { tick: cycle_start.round() as u16, value: clamp_val(lo) });
-                points.push(EnvelopePoint { tick: cycle_end.round() as u16, value: clamp_val(hi) });
-            }
-            points.sort_by_key(|p| p.tick);
-            points.dedup_by_key(|p| p.tick);
-            points
-        }
-        EnvGeneratorShape::SawDown => {
-            let pts_per_cycle = 2usize;
-            let total_pts = (pts_per_cycle as f32 * num_cycles).ceil() as usize;
-            let mut points = Vec::with_capacity(total_pts + 2);
-            let hi = offset_f + depth_f / 2.0;
-            let lo = offset_f - depth_f / 2.0;
-            for c in 0..(num_cycles.ceil() as usize) {
-                let cycle_start = (c as f32 / num_cycles) * length_f;
-                let cycle_end = ((c + 1) as f32 / num_cycles) * length_f;
-                points.push(EnvelopePoint { tick: cycle_start.round() as u16, value: clamp_val(hi) });
-                points.push(EnvelopePoint { tick: cycle_end.round() as u16, value: clamp_val(lo) });
-            }
-            points.sort_by_key(|p| p.tick);
-            points.dedup_by_key(|p| p.tick);
-            points
-        }
-        EnvGeneratorShape::Pulse => {
-            let pts_per_cycle = 4usize;
-            let total_pts = (pts_per_cycle as f32 * num_cycles).ceil() as usize;
-            let mut points = Vec::with_capacity(total_pts + 1);
-            let hi = offset_f + depth_f / 2.0;
-            let lo = offset_f - depth_f / 2.0;
-            let duty_f = duty / 100.0;
-            for c in 0..(num_cycles.ceil() as usize) {
-                let cycle_start = (c as f32 / num_cycles) * length_f;
-                let cycle_end = ((c + 1) as f32 / num_cycles) * length_f;
-                let transition = cycle_start + (cycle_end - cycle_start) * duty_f;
-                points.push(EnvelopePoint { tick: cycle_start.round() as u16, value: clamp_val(hi) });
-                points.push(EnvelopePoint { tick: transition.round() as u16, value: clamp_val(hi) });
-                points.push(EnvelopePoint { tick: transition.round() as u16, value: clamp_val(lo) });
-                points.push(EnvelopePoint { tick: cycle_end.round() as u16, value: clamp_val(lo) });
-            }
-            points.sort_by_key(|p| p.tick);
-            points.dedup_by_key(|p| p.tick);
-            points
-        }
-        EnvGeneratorShape::Random => {
-            let step = (length_f / (num_cycles * 8.0)).max(1.0).round() as u16;
-            let num_pts = (length as u16 / step).max(2) as usize;
-            let mut points = Vec::with_capacity(num_pts);
-            let mut cur = offset_f;
-            let half_depth = depth_f / 2.0;
-            let mut seed: u32 = (length as u32) ^ (cycles as u32).wrapping_mul(12345) ^ (depth as u32) * 6789;
-            for i in 0..num_pts {
-                let t = ((i as f32 / (num_pts - 1) as f32) * length_f).round() as u16;
-                points.push(EnvelopePoint { tick: t, value: clamp_val(cur) });
-                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
-                let delta = ((seed as f32) / (u32::MAX as f32) - 0.5) * half_depth * 0.5;
-                cur = (cur + delta).clamp(offset_f - half_depth, offset_f + half_depth);
-            }
-            points
-        }
-    }
+    }).collect()
 }
 
 fn draw_envelope_generator_popup(
@@ -962,13 +823,13 @@ fn draw_envelope_generator_popup(
             }
 
             let shape = match shape_idx {
-                0 => EnvGeneratorShape::Sine,
-                1 => EnvGeneratorShape::Square,
-                2 => EnvGeneratorShape::Triangle,
-                3 => EnvGeneratorShape::SawUp,
-                4 => EnvGeneratorShape::SawDown,
-                5 => EnvGeneratorShape::Pulse,
-                _ => EnvGeneratorShape::Random,
+                0 => crate::sequencer::envelope_generator::GeneratorShape::Sine,
+                1 => crate::sequencer::envelope_generator::GeneratorShape::Square,
+                2 => crate::sequencer::envelope_generator::GeneratorShape::Triangle,
+                3 => crate::sequencer::envelope_generator::GeneratorShape::SawUp,
+                4 => crate::sequencer::envelope_generator::GeneratorShape::SawDown,
+                5 => crate::sequencer::envelope_generator::GeneratorShape::Pulse,
+                _ => crate::sequencer::envelope_generator::GeneratorShape::Random,
             };
 
             // preview

@@ -221,6 +221,11 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> O
             );
             return None;
         }
+        SampleEditEvent::SliceToInstrument => {
+            app.slice_config.source_sample = sample_idx;
+            app.slice_dialog_open = true;
+            return None;
+        }
         SampleEditEvent::FadeIn(s, e) => {
             let s = s.min(e);
             let e = s.max(e);

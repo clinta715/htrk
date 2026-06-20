@@ -18,6 +18,7 @@ pub struct AutomationEditorState {
     pub drag: LaneDragState,
     pub selected_order: u16,
     pub add_channel: usize,
+    pub generator_open: bool,
 }
 
 impl Default for AutomationEditorState {
@@ -28,6 +29,7 @@ impl Default for AutomationEditorState {
             drag: LaneDragState::None,
             selected_order: 0,
             add_channel: 0,
+            generator_open: false,
         }
     }
 }
@@ -39,6 +41,7 @@ pub struct AutomationEditorResponse {
     pub point_changed: Option<(u32, AutomationPoint)>,
     pub point_removed: Option<(u32, u16, u16)>,
     pub interp_changed: Option<(u32, InterpolationMode)>,
+    pub generator_points: Option<(u32, Vec<AutomationPoint>)>,
 }
 
 pub fn draw_automation_editor(
@@ -54,6 +57,7 @@ pub fn draw_automation_editor(
         point_changed: None,
         point_removed: None,
         interp_changed: None,
+        generator_points: None,
     };
 
     let sidebar_width = 200.0;
@@ -218,6 +222,10 @@ fn draw_lane_editor(
                 resp.interp_changed = Some((track.id, mode));
             }
         }
+        ui.add_space(16.0);
+        if ui.button("Generate").clicked() {
+            state.generator_open = true;
+        }
     });
 
     let num_rows = module.patterns.first().map_or(64, |p| p.num_rows);
@@ -374,4 +382,188 @@ fn draw_lane_editor(
     if ui.input(|i| i.pointer.any_released()) {
         state.drag = LaneDragState::None;
     }
+
+    if state.generator_open {
+        let num_rows = module.patterns.first().map_or(64, |p| p.num_rows) as u16;
+        if let Some(points) = draw_automation_generator_popup(
+            ui.ctx(),
+            &track.label(),
+            num_rows,
+            track.default_interp,
+            &mut state.generator_open,
+            theme,
+        ) {
+            resp.generator_points = Some((track.id, points));
+        }
+    }
+}
+
+fn draw_automation_generator_popup(
+    ctx: &egui::Context,
+    track_label: &str,
+    num_rows: u16,
+    default_interp: InterpolationMode,
+    open: &mut bool,
+    theme: &TrackerTheme,
+) -> Option<Vec<AutomationPoint>> {
+    let mut result = None;
+    let mut should_close = false;
+
+    egui::Window::new("Generate Automation Points")
+        .id(egui::Id::new("auto_generator"))
+        .open(open)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Track:").color(theme.fg_dim));
+                ui.strong(egui::RichText::new(track_label).color(theme.fg_text));
+            });
+
+            ui.add_space(4.0);
+
+            let shape_id = ui.make_persistent_id("auto_gen_shape");
+            let mut shape_idx = ui.data(|d| d.get_temp::<usize>(shape_id).unwrap_or(0));
+            let length_id = ui.make_persistent_id("auto_gen_length");
+            let mut length = ui.data(|d| d.get_temp::<u16>(length_id).unwrap_or(64));
+            let cycles_id = ui.make_persistent_id("auto_gen_cycles");
+            let mut cycles = ui.data(|d| d.get_temp::<f32>(cycles_id).unwrap_or(1.0));
+            let depth_id = ui.make_persistent_id("auto_gen_depth");
+            let mut depth = ui.data(|d| d.get_temp::<f32>(depth_id).unwrap_or(0.75));
+            let offset_id = ui.make_persistent_id("auto_gen_offset");
+            let mut offset = ui.data(|d| d.get_temp::<f32>(offset_id).unwrap_or(0.5));
+            let duty_id = ui.make_persistent_id("auto_gen_duty");
+            let mut duty = ui.data(|d| d.get_temp::<f32>(duty_id).unwrap_or(50.0));
+
+            ui.label(egui::RichText::new("Shape").size(13.0).strong().color(egui::Color32::from_rgb(100, 200, 255)));
+            let shapes = ["Sine", "Square", "Triangle", "Saw Up", "Saw Down", "Pulse", "Random"];
+            egui::ComboBox::from_id_salt("auto_gen_shape_combo")
+                .selected_text(shapes[shape_idx])
+                .show_ui(ui, |ui| {
+                    for (i, name) in shapes.iter().enumerate() {
+                        if ui.selectable_label(shape_idx == i, *name).clicked() {
+                            shape_idx = i;
+                        }
+                    }
+                });
+
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Parameters").size(13.0).strong().color(egui::Color32::from_rgb(100, 200, 255)));
+            ui.add_space(2.0);
+            egui::Grid::new("auto_gen_grid").show(ui, |ui| {
+                ui.label(egui::RichText::new("Rows:").color(theme.fg_dim));
+                ui.add(egui::Slider::new(&mut length, 8..=256));
+                ui.end_row();
+
+                ui.label(egui::RichText::new("Cycles:").color(theme.fg_dim));
+                ui.add(egui::Slider::new(&mut cycles, 0.25..=64.0).step_by(0.25));
+                ui.end_row();
+
+                ui.label(egui::RichText::new("Depth:").color(theme.fg_dim));
+                ui.add(egui::Slider::new(&mut depth, 0.0..=0.5));
+                ui.end_row();
+
+                ui.label(egui::RichText::new("Offset:").color(theme.fg_dim));
+                ui.add(egui::Slider::new(&mut offset, 0.0..=1.0));
+                ui.end_row();
+
+                if shape_idx == 5 {
+                    ui.label(egui::RichText::new("Duty %:").color(theme.fg_dim));
+                    ui.add(egui::Slider::new(&mut duty, 5.0..=95.0).step_by(1.0));
+                    ui.end_row();
+                }
+            });
+
+            let half_depth = depth / 2.0;
+            if offset - half_depth < 0.0 {
+                offset = half_depth;
+            }
+            if offset + half_depth > 1.0 {
+                offset = 1.0 - half_depth;
+            }
+
+            let shape = match shape_idx {
+                0 => crate::sequencer::envelope_generator::GeneratorShape::Sine,
+                1 => crate::sequencer::envelope_generator::GeneratorShape::Square,
+                2 => crate::sequencer::envelope_generator::GeneratorShape::Triangle,
+                3 => crate::sequencer::envelope_generator::GeneratorShape::SawUp,
+                4 => crate::sequencer::envelope_generator::GeneratorShape::SawDown,
+                5 => crate::sequencer::envelope_generator::GeneratorShape::Pulse,
+                _ => crate::sequencer::envelope_generator::GeneratorShape::Random,
+            };
+
+            let raw = crate::sequencer::envelope_generator::generate_values(shape, length, cycles, depth, offset, duty);
+
+            // preview
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Preview").size(13.0).strong().color(egui::Color32::from_rgb(100, 200, 255)));
+            ui.add_space(2.0);
+            let (preview_rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width().min(400.0), 80.0),
+                egui::Sense::hover(),
+            );
+            if !raw.is_empty() {
+                let max_pos = raw.last().map(|p| p.0).unwrap_or(64) as f32;
+                let painter = ui.painter_at(preview_rect);
+                let to_screen = |(pos, val): &(u16, f32)| {
+                    let x = preview_rect.left() + (*pos as f32 / max_pos) * preview_rect.width();
+                    let y = preview_rect.bottom() - val * preview_rect.height();
+                    egui::pos2(x, y)
+                };
+                let mut fill_points: Vec<egui::Pos2> = Vec::new();
+                fill_points.push(egui::pos2(preview_rect.left(), preview_rect.bottom()));
+                for p in &raw {
+                    fill_points.push(to_screen(p));
+                }
+                fill_points.push(egui::pos2(preview_rect.right(), preview_rect.bottom()));
+                painter.add(egui::Shape::convex_polygon(
+                    fill_points,
+                    theme.bg_highlight.gamma_multiply(0.3),
+                    egui::Stroke::NONE,
+                ));
+                if raw.len() > 1 {
+                    let line_pts: Vec<egui::Pos2> = raw.iter().map(to_screen).collect();
+                    painter.add(egui::Shape::line(line_pts, egui::Stroke::new(1.5, theme.fg_instrument)));
+                }
+                for p in &raw {
+                    painter.circle_filled(to_screen(p), 2.0, theme.fg_instrument);
+                }
+            }
+
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Apply").clicked() {
+                    let points: Vec<AutomationPoint> = raw.into_iter().map(|(pos, val)| {
+                        AutomationPoint {
+                            order: 0,
+                            row: pos.min(num_rows.saturating_sub(1)),
+                            value: val,
+                            interp_to_next: default_interp,
+                        }
+                    }).collect();
+                    if !points.is_empty() {
+                        result = Some(points);
+                    }
+                    should_close = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    should_close = true;
+                }
+            });
+
+            ui.data_mut(|d| {
+                d.insert_temp(shape_id, shape_idx);
+                d.insert_temp(length_id, length);
+                d.insert_temp(cycles_id, cycles);
+                d.insert_temp(depth_id, depth);
+                d.insert_temp(offset_id, offset);
+                d.insert_temp(duty_id, duty);
+            });
+        });
+
+    if should_close {
+        *open = false;
+    }
+
+    result
 }

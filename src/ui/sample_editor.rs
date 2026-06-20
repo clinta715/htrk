@@ -29,6 +29,7 @@ pub enum SampleEditEvent {
     ImportSample,
     FadeIn(usize, usize),
     FadeOut(usize, usize),
+    SliceToInstrument,
 }
 
 pub fn draw_sample_editor(
@@ -628,6 +629,9 @@ pub fn draw_sample_editor(
                                 }
                                 if ui.dev_button("sample.process.reverse", "Reverse").clicked() {
                                     event = Some(SampleEditEvent::Reverse);
+                                }
+                                if !sample.data.is_empty() && ui.dev_button("sample.process.slice", "Slice to Instrument...").clicked() {
+                                    event = Some(SampleEditEvent::SliceToInstrument);
                                 }
                             });
                         });
