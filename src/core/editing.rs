@@ -192,6 +192,25 @@ impl HtrkCore {
         self.selection = Some(sel);
     }
 
+    pub fn select_column(&mut self) {
+        let pattern = self.current_pattern_or_default();
+        let channel = self.cursor.channel.min(self.num_channels().saturating_sub(1));
+        let sel = Selection {
+            start: CursorPosition {
+                row: 0,
+                channel,
+                sub_column: SubColumn::Note,
+            },
+            end: CursorPosition {
+                row: pattern.num_rows - 1,
+                channel,
+                sub_column: SubColumn::EffectParamLow,
+            },
+        };
+        self.selection = Some(sel);
+        self.selection_anchor = Some(self.cursor);
+    }
+
     pub fn transpose_selection(&mut self, delta: i8) {
         let sel = match &self.selection {
             Some(s) => s.clone(),

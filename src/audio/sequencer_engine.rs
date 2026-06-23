@@ -313,7 +313,7 @@ impl SequencerEngine {
                 self.advance_row();
                 return;
             }
-            let mut result = Vec::new();
+            let mut result = Vec::with_capacity(64);
             for ch in 0..64 {
                 if ch >= pattern.data[row].len() {
                     break;
@@ -1122,11 +1122,10 @@ impl SequencerEngine {
 
             let offset = ((vibrato_val * (depth as i32)) >> 3) as u16;
             if (ch.vib_pos as i8) < 0 {
-                ch.real_period = ch.real_period.saturating_sub(offset).max(1);
+                ch.out_period = ch.real_period.saturating_sub(offset).max(1);
             } else {
-                ch.real_period = ch.real_period.saturating_add(offset).min(31999);
+                ch.out_period = ch.real_period.saturating_add(offset).min(31999);
             }
-            ch.out_period = ch.real_period;
             ch.vib_pos = ch.vib_pos.wrapping_add(speed as u8);
 
             self.update_voices_from_period(channel, false);

@@ -113,11 +113,12 @@ pub fn draw_order_list(
                     }
 
                     if egui::DragAndDrop::has_payload_of_type::<u32>(ui.ctx()) && response.hovered() {
+                        let hi = theme.fg_instrument;
                         ui.painter().rect(
                             response.rect,
                             egui::CornerRadius::default(),
-                            egui::Color32::from_rgba_premultiplied(100, 150, 255, 80),
-                            egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 150, 255)),
+                            egui::Color32::from_rgba_premultiplied(hi.r(), hi.g(), hi.b(), 80),
+                            egui::Stroke::new(2.0, hi),
                             egui::StrokeKind::Outside,
                         );
                     }

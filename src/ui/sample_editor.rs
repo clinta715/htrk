@@ -1,6 +1,7 @@
 use eframe::egui;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::Module;
+use crate::ui::style::{FONT_CAPTION, FONT_TITLE};
 use crate::ui::TrackerTheme;
 use eguidev::DevUiExt;
 
@@ -30,6 +31,7 @@ pub enum SampleEditEvent {
     FadeIn(usize, usize),
     FadeOut(usize, usize),
     SliceToInstrument,
+    DeleteSamples(Vec<usize>),
 }
 
 pub fn draw_sample_editor(
@@ -62,6 +64,21 @@ pub fn draw_sample_editor(
         .show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Samples");
+                let any_selected = !sample_editor.selected_samples.is_empty();
+                if any_selected {
+                    let count = sample_editor.selected_samples.len();
+                    if ui.dev_button("sample.delete", format!("Del {}...", count)).clicked() {
+                        let mut to_delete: Vec<usize> = sample_editor.selected_samples.iter()
+                            .copied()
+                            .filter(|&i| i > 0 && i < module.samples.len())
+                            .collect();
+                        to_delete.sort();
+                        to_delete.dedup();
+                        if !to_delete.is_empty() {
+                            event = Some(SampleEditEvent::DeleteSamples(to_delete));
+                        }
+                    }
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.dev_button("sample.import", "Open...").clicked() {
                         event = Some(SampleEditEvent::ImportSample);
@@ -69,6 +86,9 @@ pub fn draw_sample_editor(
                 });
             });
             ui.separator();
+
+            let ctrl_down = ui.input(|i| i.modifiers.ctrl);
+            let shift_down = ui.input(|i| i.modifiers.shift);
 
             egui::ScrollArea::vertical()
                 .id_salt("sample_list_scroll")
@@ -81,6 +101,7 @@ pub fn draw_sample_editor(
                         let row_h = 18.0_f32;
                         let mono_font = egui::FontId::monospace(11.0);
                         for i in 1..num_samples {
+                            let in_selection = sample_editor.selected_samples.contains(&i);
                             let is_selected = i == *selected_sample;
                             let sample = &module.samples[i];
                             let has_data = !sample.data.is_empty();
@@ -113,7 +134,9 @@ pub fn draw_sample_editor(
                             let positions = playback_state.sample_positions_for(i);
                             let is_playing = !positions.is_empty();
 
-                            let bg = if is_selected {
+                            let bg = if in_selection && !is_selected {
+                                theme.bg_highlight
+                            } else if is_selected {
                                 theme.bg_selected
                             } else if is_playing {
                                 theme.bg_playback
@@ -199,8 +222,33 @@ pub fn draw_sample_editor(
                             }
 
                             if response.clicked() {
-                                *selected_sample = i;
-                                *selection = None;
+                                if ctrl_down {
+                                    // Toggle multi-select
+                                    if let Some(pos) = sample_editor.selected_samples.iter().position(|&x| x == i) {
+                                        sample_editor.selected_samples.remove(pos);
+                                    } else {
+                                        sample_editor.selected_samples.push(i);
+                                    }
+                                    *selected_sample = i;
+                                    *selection = None;
+                                } else if shift_down {
+                                    // Select range from current selected to clicked
+                                    let range_start = (*selected_sample).min(i);
+                                    let range_end = (*selected_sample).max(i);
+                                    sample_editor.selected_samples.clear();
+                                    for idx in range_start..=range_end {
+                                        if idx > 0 && idx < num_samples {
+                                            sample_editor.selected_samples.push(idx);
+                                        }
+                                    }
+                                    *selected_sample = i;
+                                    *selection = None;
+                                } else {
+                                    sample_editor.selected_samples.clear();
+                                    sample_editor.selected_samples.push(i);
+                                    *selected_sample = i;
+                                    *selection = None;
+                                }
                             }
                             if has_data {
                                 response.context_menu(|ui| {
@@ -347,7 +395,7 @@ pub fn draw_sample_editor(
                         ui.horizontal(|ui| {
                             if let Some(idx) = sample_editor.cursor_pos {
                                 let time_ms = idx as f64 / sample.sample_rate as f64 * 1000.0;
-                                ui.label(egui::RichText::new(format!("Pos:{} ({:.1}ms)", idx, time_ms)).size(10.0).monospace());
+                                ui.label(egui::RichText::new(format!("Pos:{} ({:.1}ms)", idx, time_ms)).size(FONT_CAPTION).monospace());
                             }
                             if let Some((s, e)) = *selection {
                                 let sel_len = e.saturating_sub(s);
@@ -364,11 +412,11 @@ pub fn draw_sample_editor(
                                 let rms = (sum_sq / sel_len.max(1) as f64).sqrt() as f32;
                                 let peak_db = if peak > 0.0 { 20.0 * peak.log10() } else { -f32::INFINITY };
                                 let rms_db = if rms > 0.0 { 20.0 * rms.log10() } else { -f32::INFINITY };
-                                ui.label(egui::RichText::new(format!("Sel:{}-{} ({}smp, {:.1}ms)", s, e, sel_len, sel_ms)).size(10.0).monospace());
-                                ui.label(egui::RichText::new(format!("Peak:{:.1}dB", peak_db)).size(10.0).monospace());
-                                ui.label(egui::RichText::new(format!("RMS:{:.1}dB", rms_db)).size(10.0).monospace());
+                                ui.label(egui::RichText::new(format!("Sel:{}-{} ({}smp, {:.1}ms)", s, e, sel_len, sel_ms)).size(FONT_CAPTION).monospace());
+                                ui.label(egui::RichText::new(format!("Peak:{:.1}dB", peak_db)).size(FONT_CAPTION).monospace());
+                                ui.label(egui::RichText::new(format!("RMS:{:.1}dB", rms_db)).size(FONT_CAPTION).monospace());
                             }
-                            ui.label(egui::RichText::new(format!("{}Hz|{}smp", sample.sample_rate, sample.data.len())).size(10.0).monospace());
+                            ui.label(egui::RichText::new(format!("{}Hz|{}smp", sample.sample_rate, sample.data.len())).size(FONT_CAPTION).monospace());
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let zoom_pct = if sample_editor.zoom <= 0.0 || sample_editor.zoom >= sample.data.len() as f32 {
@@ -376,7 +424,7 @@ pub fn draw_sample_editor(
                                 } else {
                                     (sample.data.len() as f32 / sample_editor.zoom) * 100.0
                                 };
-                                ui.label(egui::RichText::new(format!("Zoom:{:.0}%", zoom_pct)).size(10.0).monospace());
+                                ui.label(egui::RichText::new(format!("Zoom:{:.0}%", zoom_pct)).size(FONT_CAPTION).monospace());
                                 if ui.dev_button("waveform.zoom_sel", "Sel").clicked() {
                                     if let Some((s, e)) = *selection {
                                         let start = s.min(e);
@@ -405,7 +453,7 @@ pub fn draw_sample_editor(
         .show_inside(ui, |ui| {
             if let Some(sample) = module.samples.get(*selected_sample) {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!("SAMPLE {:02X}", *selected_sample)).strong().size(16.0));
+                    ui.label(egui::RichText::new(format!("SAMPLE {:02X}", *selected_sample)).strong().size(FONT_TITLE));
                     let mut name = sample.name.clone();
                     if ui.dev_text_edit("sample.header.name", &mut name).changed() {
                         event = Some(SampleEditEvent::NameChanged(name));

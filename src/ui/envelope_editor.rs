@@ -92,21 +92,56 @@ pub fn draw_envelope_editor(
         (tick, val)
     };
 
-    // Draw grid (subtle)
+    // Draw grid — horizontal value reference lines with hex labels
     let grid_col = theme.grid_line.gamma_multiply(0.6);
     let grid_minor_col = theme.grid_line_minor.gamma_multiply(0.6);
     for i in 0..=4 {
-        let y = inner.bottom() - (i as f32 / 4.0) * inner.height();
+        let val = i as f32 / 4.0; // 0.0, 0.25, 0.5, 0.75, 1.0
+        let y = inner.bottom() - val * inner.height();
         painter.line_segment(
             [egui::pos2(inner.left(), y), egui::pos2(inner.right(), y)],
             egui::Stroke::new(1.0, grid_col),
         );
+        // Hex value label on left
+        let hex_val = ((1.0 - val) * 64.0).round() as u8;
+        painter.text(
+            egui::pos2(inner.left() + 2.0, y),
+            egui::Align2::LEFT_CENTER,
+            format!("{:02X}", hex_val),
+            egui::FontId::monospace(7.0),
+            theme.fg_dim,
+        );
     }
-    for i in 0..=5 {
-        let x = inner.left() + (i as f32 / 5.0) * inner.width();
+
+    // Vertical tick-aligned grid lines with tick number labels
+    let tick_step = if max_tick <= 64 { 8 }
+        else if max_tick <= 128 { 16 }
+        else if max_tick <= 256 { 32 }
+        else if max_tick <= 512 { 64 }
+        else { 128 };
+    let label_step = if max_tick <= 128 { tick_step } else { tick_step * 2 };
+    for tick in (0..=max_tick).step_by(tick_step as usize) {
+        let x = inner.left() + (tick as f32 / max_tick as f32) * inner.width();
+        let is_major = tick % (tick_step * 4) == 0 || tick == 0 || tick == max_tick;
+        let stroke = if is_major {
+            egui::Stroke::new(0.8, grid_col)
+        } else {
+            egui::Stroke::new(0.4, grid_minor_col)
+        };
         painter.line_segment(
             [egui::pos2(x, inner.top()), egui::pos2(x, inner.bottom())],
-            egui::Stroke::new(1.0, grid_minor_col),
+            stroke,
+        );
+    }
+    // Tick labels along top edge
+    for tick in (0..=max_tick).step_by(label_step as usize) {
+        let x = inner.left() + (tick as f32 / max_tick as f32) * inner.width();
+        painter.text(
+            egui::pos2(x, inner.top() + 1.0),
+            egui::Align2::CENTER_TOP,
+            format!("{}", tick),
+            egui::FontId::monospace(7.0),
+            theme.fg_dim,
         );
     }
 

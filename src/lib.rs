@@ -7,6 +7,7 @@ pub mod debug_log;
 pub mod edit;
 pub mod errors;
 pub mod formats;
+pub mod mcp;
 pub mod sequencer;
 pub mod tools;
 pub mod ui;

@@ -194,9 +194,9 @@ pub fn draw_transport(
             ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("L").font(egui::FontId::monospace(9.0)).color(theme.transport_fg));
-                draw_vu_bar(ui, peak_l, meter_width, meter_height);
+                draw_vu_bar(ui, peak_l, meter_width, meter_height, theme);
                 ui.label(egui::RichText::new("R").font(egui::FontId::monospace(9.0)).color(theme.transport_fg));
-                draw_vu_bar(ui, peak_r, meter_width, meter_height);
+                draw_vu_bar(ui, peak_r, meter_width, meter_height, theme);
             });
         });
     });
@@ -204,11 +204,11 @@ pub fn draw_transport(
     resp
 }
 
-fn draw_vu_bar(ui: &mut egui::Ui, level: f32, width: f32, height: f32) {
+fn draw_vu_bar(ui: &mut egui::Ui, level: f32, width: f32, height: f32, theme: &TrackerTheme) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 1.0, egui::Color32::from_rgb(20, 20, 20));
-    painter.rect_stroke(rect, 1.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 60)), egui::StrokeKind::Outside);
+    painter.rect_filled(rect, 1.0, theme.meter_bg);
+    painter.rect_stroke(rect, 1.0, egui::Stroke::new(1.0, theme.splitter_border), egui::StrokeKind::Outside);
 
     let fill_width = (level.clamp(0.0, 1.0) * width).min(width);
     if fill_width > 0.0 {
@@ -217,11 +217,11 @@ fn draw_vu_bar(ui: &mut egui::Ui, level: f32, width: f32, height: f32) {
             egui::pos2(rect.left() + fill_width, rect.bottom()),
         );
         let color = if level < 0.6 {
-            egui::Color32::from_rgb(0, 180, 0)
+            theme.vu_green
         } else if level < 0.85 {
-            egui::Color32::from_rgb(200, 200, 0)
+            theme.vu_yellow
         } else {
-            egui::Color32::from_rgb(220, 40, 40)
+            theme.vu_red
         };
         painter.rect_filled(fill_rect, 1.0, color);
     }

@@ -115,7 +115,7 @@ impl VoicePool {
 
             if let Some(ch_idx) = voice.channel {
                 if let Some(ch) = state.channels.get(ch_idx) {
-                    voice.filter_cutoff *= ch.auto_filter_cutoff;
+                    voice.auto_cutoff_mult = ch.auto_filter_cutoff;
                     voice.filter_resonance = (voice.filter_resonance + ch.auto_filter_resonance).clamp(0.0, 1.0);
                 }
             }

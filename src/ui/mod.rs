@@ -27,6 +27,7 @@ pub mod sample_palette;
 pub mod sendfx_editor;
 pub mod settings_window;
 pub mod status_bar;
+pub mod style;
 pub mod theme;
 pub mod transport;
 pub mod waveform;
@@ -41,7 +42,7 @@ pub fn draw_group(ui: &mut egui::Ui, label: &str, theme: &TrackerTheme, content:
         .inner_margin(egui::Margin::symmetric(6, 4))
         .fill(theme.bg_highlight.gamma_multiply(0.5))
         .show(ui, |ui| {
-            ui.label(egui::RichText::new(label).color(theme.fg_dim).strong().size(11.0));
+            ui.label(egui::RichText::new(label).color(theme.fg_dim).strong().size(crate::ui::style::FONT_BODY));
             ui.add_space(2.0);
             content(ui);
         });

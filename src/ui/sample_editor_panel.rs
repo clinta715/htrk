@@ -16,6 +16,7 @@ pub struct SampleEditor {
     pub zoom: f32,
     pub scroll_offset: f32,
     pub last_sample_index: usize,
+    pub selected_samples: Vec<usize>,
 }
 
 impl Default for SampleEditor {
@@ -31,6 +32,7 @@ impl Default for SampleEditor {
             zoom: 0.0,
             scroll_offset: 0.0,
             last_sample_index: 0,
+            selected_samples: Vec::new(),
         }
     }
 }

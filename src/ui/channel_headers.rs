@@ -116,7 +116,8 @@ pub fn draw_channel_headers(
         let mute_id = ui.id().with("mute").with(ch);
         let mute_resp = ui.interact(mute_rect, mute_id, egui::Sense::click());
         let mute_fill = if muted || mute_resp.hovered() {
-            egui::Color32::from_rgb(60, 30, 30)
+            let mc = theme.channel_muted;
+            egui::Color32::from_rgba_premultiplied(mc.r(), mc.g(), mc.b(), 40)
         } else {
             theme.status_bg
         };
@@ -141,7 +142,8 @@ pub fn draw_channel_headers(
         let solo_id = ui.id().with("solo").with(ch);
         let solo_resp = ui.interact(solo_rect, solo_id, egui::Sense::click());
         let solo_fill = if solo || solo_resp.hovered() {
-            egui::Color32::from_rgb(30, 60, 30)
+            let sc = theme.channel_solo;
+            egui::Color32::from_rgba_premultiplied(sc.r(), sc.g(), sc.b(), 40)
         } else {
             theme.status_bg
         };
@@ -304,7 +306,8 @@ pub fn draw_channel_headers(
         let auto_id = ui.id().with("auto").with(ch);
         let auto_resp = ui.interact(auto_rect, auto_id, egui::Sense::click());
         let auto_fill = if current_auto.is_some() {
-            egui::Color32::from_rgb(40, 50, 70)
+            let ai = theme.fg_instrument;
+            egui::Color32::from_rgba_premultiplied(ai.r(), ai.g(), ai.b(), 30)
         } else if auto_resp.hovered() {
             theme.status_bg
         } else {

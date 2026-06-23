@@ -101,7 +101,7 @@ When the sequencer processes a universal effect that needs format-specific behav
 ## 11. Keyboard Focus Gate and Note-Preview Path
 
 ### The Problem
-When any egui widget has keyboard focus, the `handle_keyboard_input` function in `src/actions/keyboard.rs` must still allow `Event::Text` to reach note preview (for qwerty keyboard preview), while blocking cursor/editing keys (arrows, backspace, delete, insert, space, etc.) that would corrupt the widget's own editing state.
+When any egui widget has keyboard focus, or when any dialog is open, the `handle_keyboard_input` function in `src/actions/keyboard.rs` must still allow `Event::Text` to reach note preview (for qwerty keyboard preview), while blocking cursor/editing keys (arrows, backspace, delete, insert, space, etc.) that would corrupt the widget's own editing state or edit cells underneath a visible dialog.
 
 ### The Fix (commit `51604c8`)
 - **Scope `any_dialog_open` at function level**, before the `ctx.input()` closure, so all branches (including `Event::Text` and Ctrl+Shift modifiers) see the same value.
@@ -112,7 +112,13 @@ When any egui widget has keyboard focus, the `handle_keyboard_input` function in
 
 ### Rule for Future Changes
 - `Event::Text` must always be handled **before** the focus gate, because it carries both widget text input AND note-preview keystrokes.
+- When `any_dialog_open` is true, `Event::Text` must call `note_key_preview_only()` (not `handle_text_input()`) to prevent cell editing underneath a visible dialog.
 - Never compute `any_dialog_open` inside `ctx.input()` — compute it outside so all branches agree on the same dialog-state snapshot.
+- `any_dialog_open` MUST include every dialog in the app: `file_browser.show`, `settings_state.open`, `wav_export_state.open`, `sample_export_dialog.is_some()`, `show_about`, `show_shortcuts`, `show_exit_confirm`, `show_phrase_generator`, `slice_dialog_open`. When adding a new dialog, add it to this list.
+- All pattern-editing keys (Ctrl+Z/Y/C/X/V/A, Alt+ editing combos, Delete, Backspace, Insert, arrows, Tab, Home/End, PageUp/Down) MUST be gated on `!any_dialog_open`.
+- View-switching keys (F2/F3/F4) MUST be gated on `!any_dialog_open`; playback keys (F5-F9) are NOT gated (useful during dialogs).
+- Octave (`[`/`]`), pattern navigation (`-`/`=`/`+`), Alt+Num cursor_skip, Alt+M/S/N channel controls MUST be gated on `!any_dialog_open`.
+- Escape closes the topmost open dialog (in priority order) when `any_dialog_open`; only toggles `edit_mode` when no dialog is open.
 - When adding a new keyboard shortcut that should work regardless of widget focus, add it to a pre-gate `ctx.input()` pass, not the main match block.
 
 ## 12. Save-on-Exit Confirmation
@@ -210,3 +216,66 @@ All phrase generator parameters persist via `egui::Id` temp storage (`ui.data()`
 - `SampleEditor.cursor_pos: Option<usize>` tracks the sample index under the mouse cursor.
 - Reset to `None` when the waveform panel is hidden.
 - The info bar displays cursor position in both sample index and milliseconds.
+
+## 17. MCP Server Architecture (Phases 1-2)
+
+### Transport
+- TCP localhost on configurable port (default 18763).
+- JSON-RPC 2.0 over newline-delimited TCP streams.
+- Single server thread (`htrk-mcp`) polls for new connections and reads via non-blocking `read_line`.
+
+### Thread Model
+- **Server thread** (`src/mcp/server.rs`): Accepts connections, parses JSON-RPC, dispatches to tools/resources.
+- **Read-only path**: Tools listed in `tools::call_tool` execute immediately on the MCP thread from `Arc<RwLock<>>` snapshots of module/playback/channel state. No main-thread involvement.
+- **Mutation path**: When `tools::call_tool` returns `"Requires mutation dispatch"`, the server thread creates an `McpCommand { method, params, response_tx }` and sends it via `mpsc::Sender<McpCommand>` to the main thread. It then blocks on `response_rx.recv()` waiting for the result.
+- **Main thread** (`HtrkApp::draw_preamble`): Drains `server.command_rx.try_recv()` in a loop, calling `crate::mcp::mutations::execute_mutation(&mut self.core, &cmd.method, &cmd.params)` for each pending command. Result is sent back via `cmd.response_tx.send()`.
+
+### Mutation Tool Implementation (`src/mcp/mutations.rs`)
+- `execute_mutation()` dispatches by `method` string to per-tool handler functions.
+- Each handler follows the pattern:
+  1. `core.ensure_module_ownership()`
+  2. `if let Some(arc_module) = Arc::get_mut(module)` for direct mutations
+  3. Or use `UndoManager::execute(Box::new(command), arc_module)` for undoable edits
+  4. `core.sync_module_to_audio()` after mutation
+- `MUTATION_TOOLS` constant in `tools.rs` lists all tools requiring main-thread dispatch.
+- `mcp_enabled` and `mcp_port` fields in `AppConfig` control server lifecycle.
+- Server started in `HtrkApp::default()` if `mcp_enabled == true`; stopped in `on_exit()`.
+
+### Note Parsing
+- `parse_note(s)` in `mutations.rs` accepts IT/XM note names (`C-5`, `D#4`, `---`, `===`, `^^^`, `~~~`) and bare MIDI key numbers (`60`).
+- Effect hex strings like `"C02"`, `"A04"`, `"H83"` parsed via `parse_hex_effect()` into `Effect` enum variants.
+
+### Snapshots
+- Built per egui frame in `draw_preamble()` after playback state is read.
+- `ModuleSnapshot` stores module-level JSON plus pattern/instrument/sample entries (skipping sample PCM data).
+- `PlaybackSnapshot` and `ChannelsSnapshot` store lightweight playback state.
+- Read by MCP thread under `RwLock::read()` — never blocks main thread.
+
+## 18. UI Style Conventions
+
+### Design Tokens (`src/ui/style.rs`)
+Use the FONT_* constants instead of inline `.size(N)`:
+- `FONT_TITLE` (16.0) — view titles ("INSTRUMENT 0A", "SAMPLE 01")
+- `FONT_SECTION` (13.0) — section headers (use `style::section_header()`)
+- `FONT_BODY` (11.0) — labels, status bar, dialog body
+- `FONT_DATA` (12.0) — pattern cell text
+- `FONT_CAPTION` (10.0) — tooltips, hints, info-bar metrics
+- `FONT_DETAIL` (9.0) — file meta, axis labels
+- `FONT_MICRO` (7.0) — oscilloscope axis marks
+
+Use the SP_* constants instead of inline `.add_space()`:
+- `SP_XS` (2.0), `SP_SM` (4.0), `SP_MD` (8.0), `SP_LG` (12.0)
+
+### UI Helpers
+- Use `style::section_header(ui, text, theme)` for section headers.
+- Use `style::dialog(title, id)` for centered, non-collapsible dialogs.
+- Reference the full color token list in `STYLE.md`.
+
+### Hardcoded Colors
+- Prefer `theme.*` field access over `Color32::from_rgb(N, N, N)` literals.
+- The only exceptions: computed/dynamic colors (HSV oscilloscope, interpolated peaks) and theme definition files.
+
+### Rule for Changes
+- When adding a new `.size(N)` call, use the corresponding FONT_* constant.
+- When adding a new `section_header`-like label, use `style::section_header()`.
+- When adding a colored label outside standard widgets, check if an existing `theme.*` token fits before creating a new literal.

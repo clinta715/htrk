@@ -52,6 +52,7 @@ pub struct Voice {
 
     pub filter_type: FilterType,
     pub filter_cutoff: f32,
+    pub auto_cutoff_mult: f32,
     pub filter_resonance: f32,
     pub envelope_filter_cutoff: f32,
     pub svf: StateVariableFilter,
@@ -159,6 +160,7 @@ impl Voice {
         self.filter_env = None;
 self.filter_type = FilterType::LowPass;
         self.filter_cutoff = 0xFFFF as f32;
+        self.auto_cutoff_mult = 1.0;
         self.filter_resonance = 0.0;
         self.envelope_filter_cutoff = 1.0;
         self.svf = StateVariableFilter::default();
@@ -238,6 +240,7 @@ impl Default for Voice {
             filter_env: None,
             filter_type: FilterType::LowPass,
             filter_cutoff: 0xFFFF as f32,
+            auto_cutoff_mult: 1.0,
             filter_resonance: 0.0,
             envelope_filter_cutoff: 1.0,
             svf: StateVariableFilter::default(),

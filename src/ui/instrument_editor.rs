@@ -3,6 +3,7 @@ use crate::audio::playback_state::AtomicPlaybackState;
 use crate::edit::EnvelopeType;
 use crate::sequencer::instrument::{EnvelopeFlags, EnvelopePoint, Instrument};
 use crate::sequencer::Module;
+use crate::ui::style::FONT_TITLE;
 use crate::ui::TrackerTheme;
 use eguidev::DevUiExt;
 
@@ -171,7 +172,7 @@ pub fn draw_instrument_editor(
             if let Some(inst) = module.instruments.get(*selected_instrument) {
                 // Header
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!("INSTRUMENT {:02X}", *selected_instrument)).strong().size(16.0));
+                    ui.label(egui::RichText::new(format!("INSTRUMENT {:02X}", *selected_instrument)).strong().size(FONT_TITLE));
                     let mut name = inst.name.clone();
                     if ui.dev_text_edit("inst.header.name", &mut name).changed() {
                         event = Some(InstrumentEditEvent::NameChanged(name));
@@ -480,7 +481,7 @@ fn draw_maps_row(
             ui.add_space(4.0);
             crate::ui::sample_palette::draw_inline_sample_palette(ui, module, paint_sample_idx, playback_state, theme);
             if let Some(map_event) = crate::ui::sample_map::draw_sample_map(
-                ui, &inst.sample_map, *paint_sample_idx, module, config.sample_map_cell_size,
+                ui, &inst.sample_map, *paint_sample_idx, module, config.sample_map_cell_size, theme,
             ) {
                 match map_event {
                     crate::ui::sample_map::SampleMapEvent::NoteClicked(note) |
@@ -492,6 +493,11 @@ fn draw_maps_row(
                     crate::ui::sample_map::SampleMapEvent::NoteCleared(note) => {
                         if inst.sample_map[note as usize] != 0 {
                             event = Some(InstrumentEditEvent::SampleMapChanged(note, 0));
+                        }
+                    }
+                    crate::ui::sample_map::SampleMapEvent::NoteDropped(note, sample) => {
+                        if inst.sample_map[note as usize] != sample {
+                            event = Some(InstrumentEditEvent::SampleMapChanged(note, sample));
                         }
                     }
                 }
@@ -760,7 +766,7 @@ fn draw_envelope_generator_popup(
             });
 
             ui.add_space(4.0);
-            section_header(ui, "Shape");
+            section_header(ui, "Shape", theme);
 
             let shape_id = ui.make_persistent_id("gen_shape");
             let mut shape_idx = ui.data(|d| d.get_temp::<usize>(shape_id).unwrap_or(0));
@@ -787,7 +793,7 @@ fn draw_envelope_generator_popup(
                 });
 
             ui.add_space(4.0);
-            section_header(ui, "Parameters");
+            section_header(ui, "Parameters", theme);
             ui.add_space(2.0);
             egui::Grid::new("gen_grid").show(ui, |ui| {
                 ui.label(egui::RichText::new("Length:").color(theme.fg_dim));
@@ -835,7 +841,7 @@ fn draw_envelope_generator_popup(
             // preview
             let preview_points = generate_envelope_points(shape, length, cycles, depth, offset, duty);
             ui.add_space(4.0);
-            section_header(ui, "Preview");
+            section_header(ui, "Preview", theme);
             ui.add_space(2.0);
             let (preview_rect, _) = ui.allocate_exact_size(
                 egui::vec2(ui.available_width().min(400.0), 80.0),
@@ -908,8 +914,6 @@ fn draw_envelope_generator_popup(
     result
 }
 
-fn section_header(ui: &mut egui::Ui, text: &str) {
-    ui.add(egui::Label::new(
-        egui::RichText::new(text).size(13.0).strong().color(egui::Color32::from_rgb(100, 200, 255)),
-    ));
+fn section_header(ui: &mut egui::Ui, text: &str, theme: &TrackerTheme) {
+    super::style::section_header(ui, text, theme);
 }

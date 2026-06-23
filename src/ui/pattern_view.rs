@@ -6,6 +6,7 @@ use crate::core::HtrkCore;
 use crate::ui::panel_event::PanelEvent;
 use crate::ui::pattern_grid::{ColumnVisibility, GridMetrics, Selection};
 use crate::ui::channel_headers::ChannelRenameState;
+use crate::ui::style::FONT_CAPTION;
 use crate::ui::theme::TrackerTheme;
 
 pub struct PatternView {
@@ -207,7 +208,7 @@ impl PatternView {
                     events.push(PanelEvent::ToggleSampleLengthBg);
                 }
                 if let Some(tooltip) = grid_resp.effect_tooltip {
-                    ui.label(egui::RichText::new(&tooltip).size(10.0).color(egui::Color32::GRAY));
+                    ui.label(egui::RichText::new(&tooltip).size(FONT_CAPTION).color(theme.fg_dim));
                 }
             }
         }

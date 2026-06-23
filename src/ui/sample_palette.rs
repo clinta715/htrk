@@ -1,6 +1,7 @@
 use eframe::egui;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::Module;
+use crate::ui::style::FONT_BODY;
 use crate::ui::TrackerTheme;
 
 const INLINE_PALETTE_HEIGHT: f32 = 120.0;
@@ -31,11 +32,11 @@ pub fn draw_inline_sample_palette(
                     let has_data = !sample.data.is_empty();
 
                     let bg = if is_selected {
-                        egui::Color32::from_rgb(40, 70, 40)
+                        theme.bg_playback
                     } else if has_data {
-                        egui::Color32::from_rgb(30, 30, 35)
+                        theme.panel_border
                     } else {
-                        egui::Color32::from_rgb(18, 18, 20)
+                        theme.panel_bg
                     };
 
                     let label_text = if sample.name.is_empty() && !has_data {
@@ -47,7 +48,7 @@ pub fn draw_inline_sample_palette(
                     let response = ui.horizontal(|ui| {
                         let (rect, resp) = ui.allocate_exact_size(
                             egui::vec2(ui.available_width(), 16.0),
-                            egui::Sense::click(),
+                            egui::Sense::click_and_drag(),
                         );
                         let painter = ui.painter_at(rect);
                         painter.rect_filled(rect, 2.0, bg);
@@ -76,9 +77,9 @@ pub fn draw_inline_sample_palette(
                         let text_color = if is_selected {
                             egui::Color32::WHITE
                         } else if has_data {
-                            egui::Color32::from_rgb(170, 170, 180)
+                            theme.fg_text
                         } else {
-                            egui::Color32::from_rgb(80, 80, 85)
+                            theme.fg_dim
                         };
 
                         painter.text(
@@ -96,7 +97,7 @@ pub fn draw_inline_sample_palette(
                                     egui::pos2(rect.left() + 2.0, rect.bottom()),
                                 ),
                                 0.0,
-                                egui::Color32::from_rgb(100, 220, 100),
+                                theme.fg_volume,
                             );
                         }
 
@@ -111,6 +112,11 @@ pub fn draw_inline_sample_palette(
                                 ..Default::default()
                             },
                         );
+
+                        // Drag source for sample-map drop target
+                        if resp.drag_started() {
+                            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("sample_drag_payload"), i as u8));
+                        }
 
                         resp
                     });
@@ -140,11 +146,11 @@ pub(crate) fn draw_waveform_thumbnail(
 
     let is_playing = !playback_positions.is_empty();
     let color = if is_playing {
-        egui::Color32::from_rgb(160, 255, 180)
+        theme.sample_thumb_playing
     } else if is_selected {
-        egui::Color32::from_rgb(100, 200, 120)
+        theme.sample_thumb_selected
     } else {
-        egui::Color32::from_rgb(60, 100, 70)
+        theme.sample_thumb_default
     };
 
     let len = data.len();
@@ -215,7 +221,7 @@ pub fn draw_sample_browser_popup(
             let mut filter = ui.data(|d| d.get_temp::<String>(filter_id).unwrap_or_default());
 
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Search:").size(11.0).color(theme.fg_dim));
+                ui.label(egui::RichText::new("Search:").size(FONT_BODY).color(theme.fg_dim));
                 let resp = ui.add(egui::TextEdit::singleline(&mut filter).desired_width(ui.available_width()));
                 if resp.changed() {
                     ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
@@ -289,7 +295,7 @@ pub fn draw_sample_browser_popup(
                                 egui::pos2(rect.right() - 64.0, rect.top() + 2.0),
                                 egui::pos2(rect.right() - 4.0, rect.bottom() - 2.0),
                             );
-                            painter.rect_filled(thumb_rect, 1.0, egui::Color32::from_black_alpha(100));
+                            painter.rect_filled(thumb_rect, 1.0, theme.meter_bg);
                             draw_waveform_thumbnail_browser(&painter, thumb_rect, &sample.data, is_selected, &playback_state.sample_positions_for(i), theme);
                         }
 
@@ -342,11 +348,11 @@ fn draw_waveform_thumbnail_browser(
 
     let is_playing = !playback_positions.is_empty();
     let color = if is_playing {
-        egui::Color32::from_rgb(140, 230, 160)
+        theme.sample_thumb_playing
     } else if is_selected {
-        egui::Color32::from_rgb(90, 190, 110)
+        theme.sample_thumb_selected
     } else {
-        egui::Color32::from_rgb(50, 90, 60)
+        theme.sample_thumb_default
     };
 
     let len = data.len();

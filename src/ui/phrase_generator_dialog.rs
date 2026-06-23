@@ -2,6 +2,7 @@ use eframe::egui;
 
 use crate::tools::phrase_generator::{self, ChordType, GenMode, PhraseParams, Progression};
 use crate::tools::scale::{Scale, ROOT_NAMES};
+use super::style::FONT_BODY;
 use super::theme::TrackerTheme;
 
 pub fn draw_phrase_generator(
@@ -63,7 +64,7 @@ pub fn draw_phrase_generator(
 
             let mut drum_warning = String::new();
 
-            section_header(ui, "Mode");
+            section_header(ui, "Mode", theme);
             let modes = GenMode::all();
             egui::ComboBox::from_id_salt("phr_mode_combo")
                 .selected_text(modes[mode_idx].name())
@@ -76,7 +77,7 @@ pub fn draw_phrase_generator(
                 });
 
             ui.add_space(4.0);
-            section_header(ui, "Scale");
+            section_header(ui, "Scale", theme);
             ui.add_space(2.0);
             egui::ComboBox::from_id_salt("phr_scale_combo")
                 .selected_text(scale.name())
@@ -110,7 +111,7 @@ pub fn draw_phrase_generator(
             }
 
             ui.add_space(4.0);
-            section_header(ui, "Rhythm");
+            section_header(ui, "Rhythm", theme);
 
             match mode {
                 GenMode::Melodic => {
@@ -191,7 +192,7 @@ pub fn draw_phrase_generator(
             }
 
             ui.add_space(4.0);
-            section_header(ui, "Output");
+            section_header(ui, "Output", theme);
             ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.label("Instrument:");
@@ -228,11 +229,11 @@ pub fn draw_phrase_generator(
 
             if !drum_warning.is_empty() {
                 ui.add_space(2.0);
-                ui.label(egui::RichText::new(&drum_warning).color(egui::Color32::from_rgb(255, 180, 60)).size(11.0));
+                ui.label(egui::RichText::new(&drum_warning).color(theme.fg_effect).size(FONT_BODY));
             }
 
             ui.add_space(4.0);
-            section_header(ui, "Preview");
+            section_header(ui, "Preview", theme);
 
             let chord_types = ChordType::all();
             let chord_type = chord_types.get(chord_type_idx).copied().unwrap_or(ChordType::Triad);
@@ -368,11 +369,6 @@ pub fn draw_phrase_generator(
     result
 }
 
-fn section_header(ui: &mut egui::Ui, text: &str) {
-    ui.label(
-        egui::RichText::new(text)
-            .size(13.0)
-            .strong()
-            .color(egui::Color32::from_rgb(100, 200, 255)),
-    );
+fn section_header(ui: &mut egui::Ui, text: &str, theme: &super::theme::TrackerTheme) {
+    super::style::section_header(ui, text, theme);
 }

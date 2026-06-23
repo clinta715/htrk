@@ -94,11 +94,11 @@ pub fn dispatch_shared_effect(
 
         Effect::SetSendBusParam { bus, param, .. } => {
             let bus = *bus as usize;
-            let param_idx = (*param as u32) % 4;
-            let mem_idx = bus * 4 + (*param as usize) % 4;
-            let value = engine.state.channels[channel].last_send_param_value[mem_idx];
-            let actual_value = (value as f32) / 255.0;
             if bus < NUM_SEND_BUSES {
+                let param_idx = (*param as u32) % 4;
+                let mem_idx = bus * 4 + param_idx as usize;
+                let value = engine.state.channels[channel].last_send_param_value[mem_idx];
+                let actual_value = (value as f32) / 255.0;
                 engine.pending_send_fx_params.push((bus, param_idx, actual_value));
             }
             true

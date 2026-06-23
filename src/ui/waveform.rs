@@ -53,7 +53,7 @@ pub fn draw_waveform(
     }
 
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+    painter.rect_filled(rect, 0.0, theme.meter_bg);
 
     let len = data.len();
     let width = rect.width();
@@ -116,7 +116,7 @@ pub fn draw_waveform(
     // Draw center line
     painter.line_segment(
         [egui::pos2(rect.left(), middle_y), egui::pos2(rect.right(), middle_y)],
-        egui::Stroke::new(1.0, egui::Color32::from_gray(60)),
+        egui::Stroke::new(1.0, theme.grid_line),
     );
 
     // Draw selection highlight
@@ -134,7 +134,7 @@ pub fn draw_waveform(
                     egui::pos2(sel_right, rect.bottom()),
                 ),
                 0.0,
-                egui::Color32::from_rgba_premultiplied(40, 80, 200, 60),
+                egui::Color32::from_rgba_premultiplied(theme.fg_instrument.r(), theme.fg_instrument.g(), theme.fg_instrument.b(), 60),
             );
         }
     }
@@ -163,7 +163,7 @@ pub fn draw_waveform(
                 egui::pos2(x_pos, middle_y - max * (height / 2.0)),
                 egui::pos2(x_pos, middle_y - min * (height / 2.0)),
             ],
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 200, 0)),
+            egui::Stroke::new(1.0, theme.fg_volume),
         );
     }
 
@@ -243,16 +243,16 @@ pub fn draw_waveform(
         if loop_start >= start_sample && loop_start <= end_sample {
             painter.line_segment(
                 [egui::pos2(start_x, rect.top()), egui::pos2(start_x, rect.bottom())],
-                egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 255, 0)),
+                egui::Stroke::new(2.0, theme.cursor_outline),
             );
-            painter.circle_filled(egui::pos2(start_x, rect.top() + 10.0), 5.0, egui::Color32::YELLOW);
+            painter.circle_filled(egui::pos2(start_x, rect.top() + 10.0), 5.0, theme.cursor_outline);
         }
         if loop_end >= start_sample && loop_end <= end_sample {
             painter.line_segment(
                 [egui::pos2(end_x, rect.top()), egui::pos2(end_x, rect.bottom())],
-                egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 255, 0)),
+                egui::Stroke::new(2.0, theme.cursor_outline),
             );
-            painter.circle_filled(egui::pos2(end_x, rect.bottom() - 10.0), 5.0, egui::Color32::YELLOW);
+            painter.circle_filled(egui::pos2(end_x, rect.bottom() - 10.0), 5.0, theme.cursor_outline);
         }
     } else {
         let sel_id = ui.make_persistent_id(format!("waveform_sel_drag_{}", sample_index));

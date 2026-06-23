@@ -14,6 +14,7 @@ pub fn mix_voices_per_channel(
     pre_ch_mix: &mut [f32],    // flat: [ch0_L, ch0_R, ch1_L, ch1_R, ...] for each frame
     offset: usize,
     len: usize,
+    stride: usize,             // total buffer size per channel pair (frame_count)
     master_volume: f32,
     interpolation: InterpolationType,
     muted_channels: &[bool],
@@ -50,6 +51,8 @@ pub fn mix_voices_per_channel(
             let pan = voice.final_panning;
             let left_gain = vol * (1.0 - pan);
             let right_gain = vol * pan;
+            let pre_left_gain = left_gain;
+            let pre_right_gain = right_gain;
             let ch_idx = voice.channel.unwrap_or(MAX_CHANNELS);
             for i in 0..len {
                 if voice.ks_pos >= delay_len {
@@ -67,13 +70,13 @@ pub fn mix_voices_per_channel(
                 output_left[i] += fl;
                 output_right[i] += fr;
                 if ch_idx < num_channels {
-                    let base = ch_idx * 2 * len;
+                    let base = ch_idx * 2 * stride;
                     ch_mix[base + offset + i] += fl;
-                    ch_mix[base + len + offset + i] += fr;
-                    let pfl = s * (1.0 - pan);
-                    let pfr = s * pan;
+                    ch_mix[base + stride + offset + i] += fr;
+                    let pfl = s * pre_left_gain;
+                    let pfr = s * pre_right_gain;
                     pre_ch_mix[base + offset + i] += pfl;
-                    pre_ch_mix[base + len + offset + i] += pfr;
+                    pre_ch_mix[base + stride + offset + i] += pfr;
                 }
             }
             continue;
@@ -101,7 +104,19 @@ pub fn mix_voices_per_channel(
             && (voice.filter_env.is_some() || voice.svf.filter_type != FilterType::LowPass)
             && voice.filter_enabled;
 
+        let cutoff_hz = if has_filter {
+            let base_cutoff = voice.filter_cutoff * voice.auto_cutoff_mult;
+            let env_mod = voice.envelope_filter_cutoff;
+            let cutoff_frac = (base_cutoff / 65535.0).clamp(0.0, 1.0);
+            let env_cutoff_frac = cutoff_frac * env_mod;
+            20.0 * (1000.0_f32).powf(env_cutoff_frac)
+        } else {
+            0.0
+        };
+
         let ch_idx = voice.channel.unwrap_or(MAX_CHANNELS);
+        let pre_left_gain = vol * (1.0 - pan);
+        let pre_right_gain = vol * pan;
 
         for i in 0..len {
             if voice.position < 0.0 || voice.position as usize >= sample_data.len() {
@@ -119,11 +134,6 @@ pub fn mix_voices_per_channel(
             );
 
             let filtered = if has_filter {
-                let base_cutoff = voice.filter_cutoff;
-                let env_mod = voice.envelope_filter_cutoff;
-                let cutoff_frac = (base_cutoff / 65535.0).clamp(0.0, 1.0);
-                let env_cutoff_frac = cutoff_frac * env_mod;
-                let cutoff_hz = 20.0 * (1000.0_f32).powf(env_cutoff_frac);
                 voice.svf.process(s, cutoff_hz, voice.filter_resonance, sample_rate)
             } else {
                 s
@@ -141,14 +151,14 @@ pub fn mix_voices_per_channel(
             output_right[i] += fr;
 
             if ch_idx < num_channels {
-                let base = ch_idx * 2 * len;
+                let base = ch_idx * 2 * stride;
                 ch_mix[base + offset + i] += fl;
-                ch_mix[base + len + offset + i] += fr;
+                ch_mix[base + stride + offset + i] += fr;
 
-                let pfl = led_filtered * (1.0 - pan);
-                let pfr = led_filtered * pan;
+                let pfl = led_filtered * pre_left_gain;
+                let pfr = led_filtered * pre_right_gain;
                 pre_ch_mix[base + offset + i] += pfl;
-                pre_ch_mix[base + len + offset + i] += pfr;
+                pre_ch_mix[base + stride + offset + i] += pfr;
             }
 
             voice.position += voice.sample_delta * voice.direction;
@@ -290,6 +300,16 @@ pub fn mix_voices(
             && (voice.filter_env.is_some() || voice.svf.filter_type != FilterType::LowPass)
             && voice.filter_enabled;
 
+        let cutoff_hz = if has_filter {
+            let base_cutoff = voice.filter_cutoff * voice.auto_cutoff_mult;
+            let env_mod = voice.envelope_filter_cutoff;
+            let cutoff_frac = (base_cutoff / 65535.0).clamp(0.0, 1.0);
+            let env_cutoff_frac = cutoff_frac * env_mod;
+            20.0 * (1000.0_f32).powf(env_cutoff_frac)
+        } else {
+            0.0
+        };
+
         for i in 0..output_left.len() {
             if voice.position < 0.0 || voice.position as usize >= sample_data.len() {
                 voice.active = false;
@@ -306,11 +326,6 @@ pub fn mix_voices(
             );
 
             let filtered = if has_filter {
-                let base_cutoff = voice.filter_cutoff;
-                let env_mod = voice.envelope_filter_cutoff;
-                let cutoff_frac = (base_cutoff / 65535.0).clamp(0.0, 1.0);
-                let env_cutoff_frac = cutoff_frac * env_mod;
-                let cutoff_hz = 20.0 * (1000.0_f32).powf(env_cutoff_frac);
                 voice.svf.process(s, cutoff_hz, voice.filter_resonance, sample_rate)
             } else {
                 s

@@ -168,6 +168,17 @@ pub struct AppConfig {
 
     #[serde(default = "default_true")]
     pub confirm_on_exit: bool,
+    #[serde(default)]
+    pub recent_files: Vec<String>,
+
+    #[serde(default)]
+    pub mcp_enabled: bool,
+    #[serde(default = "default_mcp_port")]
+    pub mcp_port: u16,
+    #[serde(default)]
+    pub mcp_http_enabled: bool,
+    #[serde(default = "default_mcp_http_port")]
+    pub mcp_http_port: u16,
 }
 
 fn default_col_vis() -> bool { true }
@@ -190,6 +201,8 @@ fn default_limiter() -> String { "HardClip".to_string() }
 fn default_sample_length_bg() -> bool { false }
 
 fn default_grid_cell_size() -> f32 { 28.0 }
+fn default_mcp_port() -> u16 { 18763 }
+fn default_mcp_http_port() -> u16 { 18764 }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -253,6 +266,11 @@ impl Default for AppConfig {
             sample_map_cell_size: default_grid_cell_size(),
             note_map_cell_size: default_grid_cell_size(),
             confirm_on_exit: true,
+            recent_files: Vec::new(),
+            mcp_enabled: false,
+            mcp_port: default_mcp_port(),
+            mcp_http_enabled: false,
+            mcp_http_port: default_mcp_http_port(),
         }
     }
 }

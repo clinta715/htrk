@@ -55,15 +55,18 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
         || app.wav_export_state.open
         || app.sample_export_dialog.is_some()
         || app.show_about
-        || app.show_shortcuts;
+        || app.show_shortcuts
+        || app.show_exit_confirm
+        || app.show_phrase_generator
+        || app.slice_dialog_open;
 
     // Text events: processed unconditionally so note preview works even during dialog input.
-    // When a widget has focus, only play audio; skip cell editing.
+    // When a widget has focus or a dialog is open, only play audio; skip cell editing.
     ctx.input(|i| {
         for event in &i.events {
             if let egui::Event::Text(text) = event {
                 for ch in text.chars() {
-                    if has_focus {
+                    if has_focus || any_dialog_open {
                         note_key_preview_only(app, ch);
                     } else {
                         handle_text_input(app, ch);
@@ -72,6 +75,65 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
             }
         }
     });
+
+    // Tab interception: in the pattern editor, Tab always changes columns — it must never
+    // escape to egui's focus-navigation. Handle it before the focus gate.
+    //
+    // Two interrelated egui bugs to work around:
+    //
+    // 1. Focus::begin_pass() sets self.focus_direction = Next/Previous from raw Tab events
+    //    *before* our handler runs. We surrender focus, but end_pass() then uses the stale
+    //    focus_direction to move focus to another widget. Fix: call move_focus(None) after
+    //    surrendering.
+    //
+    // 2. consume_key() uses matches_logically() which ignores extra modifiers, so
+    //    Shift+Tab matches the plain-Tab branch. Fix: inspect raw events directly,
+    //    matching !modifiers.any() vs modifiers.shift_only() (same semantics begin_pass
+    //    uses internally).
+    if is_pattern && !any_dialog_open {
+        let mut tab_pressed = false;
+        let mut shift_pressed = false;
+        ctx.input_mut(|i| {
+            let mut tab_idx = None;
+            let mut shift_tab_idx = None;
+            for (idx, event) in i.events.iter().enumerate() {
+                if let egui::Event::Key { key: egui::Key::Tab, pressed: true, modifiers, .. } = event {
+                    if !modifiers.any() {
+                        tab_idx = Some(idx);
+                        break;
+                    } else if modifiers.shift_only() {
+                        shift_tab_idx = Some(idx);
+                        break;
+                    }
+                }
+            }
+            if let Some(idx) = tab_idx {
+                tab_pressed = true;
+                shift_pressed = false;
+                i.events.remove(idx);
+            } else if let Some(idx) = shift_tab_idx {
+                tab_pressed = true;
+                shift_pressed = true;
+                i.events.remove(idx);
+            }
+        });
+        if tab_pressed {
+            ctx.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+                m.move_focus(egui::FocusDirection::None);
+            });
+            app.core.selection = None;
+            if shift_pressed {
+                app.core.cursor.channel = app.core.cursor.channel.saturating_sub(1);
+            } else {
+                app.core.cursor.channel += 1;
+                app.core.cursor.channel = app.core.cursor.channel.min(app.core.num_channels_checked() - 1);
+            }
+            app.ensure_cursor_visible();
+        }
+    }
 
     // Focus gate: if a widget has focus, skip all key events.
     if has_focus {
@@ -84,7 +146,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
             for event in &i.events {
                 if let egui::Event::Key { key, pressed: true, .. } = event {
                     match key {
-                        egui::Key::Z if app.edit_mode => {
+                        egui::Key::Z if app.edit_mode && !any_dialog_open => {
                             app.core.ensure_module_ownership();
                             if let Some(ref mut module) = app.core.module {
                                 if let Some(arc_module) = Arc::get_mut(module) {
@@ -94,7 +156,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             app.core.sync_module_to_audio();
                             handled = true;
                         }
-                        egui::Key::Y if app.edit_mode => {
+                        egui::Key::Y if app.edit_mode && !any_dialog_open => {
                             app.core.ensure_module_ownership();
                             if let Some(ref mut module) = app.core.module {
                                 if let Some(arc_module) = Arc::get_mut(module) {
@@ -104,11 +166,11 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             app.core.sync_module_to_audio();
                             handled = true;
                         }
-                        egui::Key::C if is_pattern => {
+                        egui::Key::C if is_pattern && !any_dialog_open => {
                             app.core.copy_selection();
                             handled = true;
                         }
-                        egui::Key::C if is_sample => {
+                        egui::Key::C if is_sample && !any_dialog_open => {
                             if let Some((s, e)) = app.sample_editor.selection {
                                 let start = s.min(e);
                                 let end = s.max(e);
@@ -116,12 +178,12 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             }
                             handled = true;
                         }
-                        egui::Key::X if app.edit_mode && is_pattern => {
+                        egui::Key::X if app.edit_mode && is_pattern && !any_dialog_open => {
                             app.core.copy_selection();
                             app.core.delete_selection();
                             handled = true;
                         }
-                        egui::Key::X if is_sample => {
+                        egui::Key::X if is_sample && !any_dialog_open => {
                             if let Some((s, e)) = app.sample_editor.selection {
                                 let start = s.min(e);
                                 let end = s.max(e);
@@ -129,11 +191,11 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             }
                             handled = true;
                         }
-                        egui::Key::V if app.edit_mode && is_pattern => {
+                        egui::Key::V if app.edit_mode && is_pattern && !any_dialog_open => {
                             app.core.paste_at_cursor();
                             handled = true;
                         }
-                        egui::Key::V if is_sample => {
+                        egui::Key::V if is_sample && !any_dialog_open => {
                             if app.sample_editor.clipboard.is_some() {
                                 if let Some(pos) = app.sample_editor.cursor_pos {
                                     crate::actions::sample_edit::handle_sample_edit(app, SampleEditEvent::PasteRegion(pos));
@@ -141,11 +203,11 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             }
                             handled = true;
                         }
-                        egui::Key::A if is_pattern => {
+                        egui::Key::A if is_pattern && !any_dialog_open => {
                             app.core.select_all();
                             handled = true;
                         }
-                        egui::Key::A if is_sample => {
+                        egui::Key::A if is_sample && !any_dialog_open => {
                             if let Some(ref module) = app.core.module {
                                 let idx = app.core.selected_sample;
                                 if let Some(sample) = module.samples.get(idx) {
@@ -182,11 +244,11 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             }
                             handled = true;
                         }
-                        egui::Key::ArrowRight if is_pattern => {
+                        egui::Key::ArrowRight if is_pattern && !any_dialog_open => {
                             app.step_sub_column_forward();
                             handled = true;
                         }
-                        egui::Key::ArrowLeft if is_pattern => {
+                        egui::Key::ArrowLeft if is_pattern && !any_dialog_open => {
                             app.step_sub_column_backward();
                             handled = true;
                         }
@@ -300,7 +362,6 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
         return;
     }
 
-    let mut tab_handled = false;
     ctx.input(|i| {
         for event in &i.events {
             if let egui::Event::Key { key, pressed: true, .. } = event {
@@ -372,24 +433,13 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             }
                         }
                     }
-                    egui::Key::Tab if is_pattern && !any_dialog_open => {
-                        app.core.selection = None;
-                        if modifiers.shift {
-                            app.core.cursor.channel = app.core.cursor.channel.saturating_sub(1);
-                        } else {
-                            app.core.cursor.channel += 1;
-                            app.core.cursor.channel = app.core.cursor.channel.min(app.core.num_channels_checked() - 1);
-                        }
-                        app.ensure_cursor_visible();
-                        tab_handled = true;
-                    }
-                    egui::Key::M if modifiers.alt => {
+                    egui::Key::M if modifiers.alt && !any_dialog_open => {
                         app.core.toggle_mute(app.core.cursor.channel);
                     }
-                    egui::Key::S if modifiers.alt => {
+                    egui::Key::S if modifiers.alt && !any_dialog_open => {
                         app.core.toggle_solo(app.core.cursor.channel);
                     }
-                    egui::Key::N if modifiers.alt => {
+                    egui::Key::N if modifiers.alt && !any_dialog_open => {
                         let ch = app.core.cursor.channel;
                         if ch < app.multichannel_channels.len() {
                             app.multichannel_channels[ch] = !app.multichannel_channels[ch];
@@ -471,13 +521,13 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     egui::Key::F1 => {
                         app.show_shortcuts = !app.show_shortcuts;
                     }
-                    egui::Key::F2 => {
+                    egui::Key::F2 if !any_dialog_open => {
                         app.current_view = AppView::Pattern;
                     }
-                    egui::Key::F3 => {
+                    egui::Key::F3 if !any_dialog_open => {
                         app.current_view = AppView::Sample;
                     }
-                    egui::Key::F4 => {
+                    egui::Key::F4 if !any_dialog_open => {
                         app.current_view = AppView::Instrument;
                     }
                     egui::Key::F5 if modifiers.shift => {
@@ -512,65 +562,76 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         }
                     }
                     egui::Key::Escape => {
-                        app.edit_mode = !app.edit_mode;
-                    }
-                    egui::Key::OpenBracket => {
-                        if app.current_octave > 0 { app.current_octave -= 1; }
-                    }
-                    egui::Key::CloseBracket => {
-                        if app.current_octave < 9 { app.current_octave += 1; }
-                    }
-                    egui::Key::Num0 if modifiers.alt => { app.cursor_skip = 0; }
-                    egui::Key::Num1 if modifiers.alt => { app.cursor_skip = 1; }
-                    egui::Key::Num2 if modifiers.alt => { app.cursor_skip = 2; }
-                    egui::Key::Num3 if modifiers.alt => { app.cursor_skip = 3; }
-                    egui::Key::Num4 if modifiers.alt => { app.cursor_skip = 4; }
-                    egui::Key::Num5 if modifiers.alt => { app.cursor_skip = 5; }
-                    egui::Key::Num6 if modifiers.alt => { app.cursor_skip = 6; }
-                    egui::Key::Num7 if modifiers.alt => { app.cursor_skip = 7; }
-                    egui::Key::Num8 if modifiers.alt => { app.cursor_skip = 8; }
-                    egui::Key::Num9 if modifiers.alt => { app.cursor_skip = 9; }
-                    egui::Key::Minus if is_pattern && !modifiers.alt => { app.core.skip_to_prev_pattern(); }
-                    egui::Key::Equals if is_pattern && !modifiers.alt => { app.core.skip_to_next_pattern(); }
-                    egui::Key::Plus if is_pattern => { app.core.skip_to_next_pattern(); }
-                    egui::Key::C if modifiers.alt && app.edit_mode && is_pattern => { app.core.copy_selection(); }
-                    egui::Key::P if modifiers.alt && app.edit_mode && is_pattern => { app.core.paste_at_cursor(); }
-                    egui::Key::V if modifiers.alt && app.edit_mode && is_pattern => { app.core.paste_at_cursor(); }
-                    egui::Key::X if modifiers.alt && app.edit_mode && is_pattern => { app.cut_selection(); }
-                    egui::Key::B if modifiers.alt && is_pattern => { app.mark_block_begin(); }
-                    egui::Key::E if modifiers.alt && is_pattern => { app.mark_block_end(); }
-                    egui::Key::L if modifiers.alt && is_pattern => {
-                        let now = std::time::Instant::now();
-                        let within = app.alt_l_last.map_or(false, |t| now.duration_since(t) < std::time::Duration::from_millis(600));
-                        app.alt_l_count = if within { app.alt_l_count % 3 + 1 } else { 1 };
-                        app.alt_l_last = Some(now);
-                        match app.alt_l_count {
-                            2 => app.select_line(),
-                            3 => app.core.select_all(),
-                            _ => app.select_current_cell(),
+                        if any_dialog_open {
+                            if app.show_exit_confirm { app.show_exit_confirm = false; }
+                            else if app.show_shortcuts { app.show_shortcuts = false; }
+                            else if app.show_about { app.show_about = false; }
+                            else if app.settings_state.open { app.settings_state.open = false; }
+                            else if app.show_phrase_generator { app.show_phrase_generator = false; }
+                            else if app.slice_dialog_open { app.slice_dialog_open = false; }
+                            else if app.file_browser.show { app.file_browser.show = false; }
+                            else if app.wav_export_state.open { app.wav_export_state.open = false; }
+                            else if app.sample_export_dialog.is_some() { app.sample_export_dialog = None; }
+                        } else {
+                            app.edit_mode = !app.edit_mode;
                         }
                     }
-                    egui::Key::Z if modifiers.alt && app.edit_mode && is_pattern => {
+                    egui::Key::OpenBracket if !any_dialog_open => {
+                        if app.current_octave > 0 { app.current_octave -= 1; }
+                    }
+                    egui::Key::CloseBracket if !any_dialog_open => {
+                        if app.current_octave < 9 { app.current_octave += 1; }
+                    }
+                    egui::Key::Num0 if modifiers.alt && !any_dialog_open => { app.cursor_skip = 0; }
+                    egui::Key::Num1 if modifiers.alt && !any_dialog_open => { app.cursor_skip = 1; }
+                    egui::Key::Num2 if modifiers.alt && !any_dialog_open => { app.cursor_skip = 2; }
+                    egui::Key::Num3 if modifiers.alt && !any_dialog_open => { app.cursor_skip = 3; }
+                    egui::Key::Num4 if modifiers.alt && !any_dialog_open => { app.cursor_skip = 4; }
+                    egui::Key::Num5 if modifiers.alt && !any_dialog_open => { app.cursor_skip = 5; }
+                    egui::Key::Num6 if modifiers.alt && !any_dialog_open => { app.cursor_skip = 6; }
+                    egui::Key::Num7 if modifiers.alt && !any_dialog_open => { app.cursor_skip = 7; }
+                    egui::Key::Num8 if modifiers.alt && !any_dialog_open => { app.cursor_skip = 8; }
+                    egui::Key::Num9 if modifiers.alt && !any_dialog_open => { app.cursor_skip = 9; }
+                    egui::Key::Minus if is_pattern && !modifiers.alt && !any_dialog_open => { app.core.skip_to_prev_pattern(); }
+                    egui::Key::Equals if is_pattern && !modifiers.alt && !any_dialog_open => { app.core.skip_to_next_pattern(); }
+                    egui::Key::Plus if is_pattern && !any_dialog_open => { app.core.skip_to_next_pattern(); }
+                    egui::Key::C if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => { app.core.copy_selection(); }
+                    egui::Key::P if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => { app.core.paste_at_cursor(); }
+                    egui::Key::V if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => { app.core.paste_at_cursor(); }
+                    egui::Key::X if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => { app.cut_selection(); }
+                    egui::Key::B if modifiers.alt && is_pattern && !any_dialog_open => { app.mark_block_begin(); }
+                    egui::Key::E if modifiers.alt && is_pattern && !any_dialog_open => { app.mark_block_end(); }
+                    egui::Key::L if modifiers.alt && is_pattern && !any_dialog_open => {
+                        let now = std::time::Instant::now();
+                        let within = app.alt_l_last.map_or(false, |t| now.duration_since(t) < std::time::Duration::from_millis(600));
+                        app.alt_l_count = if within { 2 } else { 1 };
+                        app.alt_l_last = Some(now);
+                        match app.alt_l_count {
+                            2 => app.core.select_all(),
+                            _ => app.core.select_column(),
+                        }
+                    }
+                    egui::Key::Z if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => {
                         if app.core.selection.is_some() {
                             app.handle_context_menu_action(ContextMenuAction::Reverse);
                         }
                     }
-                    egui::Key::F if modifiers.alt && app.edit_mode && is_pattern => {
+                    egui::Key::F if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => {
                         if app.core.selection.is_some() {
                             app.handle_context_menu_action(ContextMenuAction::FillInstrument);
                         }
                     }
-                    egui::Key::I if modifiers.alt && app.edit_mode && is_pattern => {
+                    egui::Key::I if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => {
                         if app.core.selection.is_some() {
                             app.handle_context_menu_action(ContextMenuAction::InterpolateVolume);
                         }
                     }
-                    egui::Key::K if modifiers.alt && app.edit_mode && is_pattern => {
+                    egui::Key::K if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => {
                         if app.core.selection.is_some() {
                             app.handle_context_menu_action(ContextMenuAction::InterpolateEffect);
                         }
                     }
-                    egui::Key::R if modifiers.alt && app.edit_mode && is_pattern => {
+                    egui::Key::R if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => {
                         if app.core.selection.is_some() {
                             app.handle_context_menu_action(ContextMenuAction::Randomize);
                         }
@@ -580,9 +641,6 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
             }
         }
     });
-    if tab_handled {
-        ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Key { key: egui::Key::Tab, pressed: true, .. })));
-    }
 }
 
 /// Preview-only note playback (no cell editing). Called when a widget has focus

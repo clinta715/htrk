@@ -1,4 +1,5 @@
 use eframe::egui;
+use crate::ui::style::{FONT_BODY, FONT_CAPTION};
 use crate::sequencer::note::Note;
 
 fn note_name(key: u8) -> String {
@@ -21,8 +22,8 @@ pub fn draw_note_map(
 
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Note Transpose Map:").size(11.0).color(ui.visuals().text_color().gamma_multiply(0.7)));
-            ui.label(egui::RichText::new("Left-click drag to transpose, Right-click to reset").size(10.0).color(theme.fg_dim));
+            ui.label(egui::RichText::new("Note Transpose Map:").size(FONT_BODY).color(ui.visuals().text_color().gamma_multiply(0.7)));
+            ui.label(egui::RichText::new("Left-click drag to transpose, Right-click to reset").size(FONT_CAPTION).color(theme.fg_dim));
         });
         ui.add_space(2.0);
 
@@ -96,7 +97,7 @@ pub fn draw_note_map(
                     egui::Align2::CENTER_CENTER,
                     dest_text,
                     egui::FontId::monospace(cell_size * 0.4),
-                    if is_identity { ui.visuals().text_color() } else { egui::Color32::WHITE }
+                    if is_identity { ui.visuals().text_color() } else { theme.fg_note }
                 );
             }
         }

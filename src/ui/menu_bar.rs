@@ -34,6 +34,7 @@ pub struct MenuResponse {
     pub show_about: bool,
     pub show_settings: bool,
     pub quit: bool,
+    pub open_recent: Option<String>,
 }
 
 impl Default for MenuResponse {
@@ -67,6 +68,7 @@ impl Default for MenuResponse {
             show_about: false,
             show_settings: false,
             quit: false,
+            open_recent: None,
         }
     }
 }
@@ -83,6 +85,7 @@ pub fn draw_menu_bar(
     sample_rate: u32,
     sample_format: &str,
     col_vis: &mut ColumnVisibility,
+    recent_files: &[String],
 ) -> MenuResponse {
     let mut resp = MenuResponse::default();
 
@@ -95,6 +98,20 @@ pub fn draw_menu_bar(
             if ui.dev_button("menu.file.open", "Open...     Ctrl+O").clicked() {
                 resp.open_file = true;
                 ui.close();
+            }
+            if !recent_files.is_empty() {
+                ui.dev_menu_button("menu.file.open_recent", "Open Recent", |ui| {
+                    for path in recent_files {
+                        let label = std::path::Path::new(path)
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(path);
+                        if ui.selectable_label(false, label).clicked() {
+                            resp.open_recent = Some(path.clone());
+                            ui.close();
+                        }
+                    }
+                });
             }
             if ui.dev_button("menu.file.import_sample", "Import Sample...    Ctrl+I").clicked() {
                 resp.import_sample = true;
@@ -279,7 +296,7 @@ pub fn draw_menu_bar(
                 resp.show_shortcuts = true;
                 ui.close();
             }
-            if ui.dev_button("menu.help.about", "About htrk").clicked() {
+            if ui.dev_button("menu.help.about", "About Holofonic Tracker").clicked() {
                 resp.show_about = true;
                 ui.close();
             }

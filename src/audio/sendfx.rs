@@ -153,8 +153,8 @@ pub struct ReverbEffect {
     damping: f32,
     size: f32,
     stereo_width: f32,
-    prev_l: f32,
-    prev_r: f32,
+    prev_l: [f32; 4],
+    prev_r: [f32; 4],
     sample_rate: f32,
 }
 
@@ -176,8 +176,8 @@ impl ReverbEffect {
             damping: 0.5,
             size: 0.6,
             stereo_width: 0.5,
-            prev_l: 0.0,
-            prev_r: 0.0,
+            prev_l: [0.0; 4],
+            prev_r: [0.0; 4],
             sample_rate: sr,
         }
     }
@@ -248,6 +248,25 @@ impl SendEffect for ReverbEffect {
         let damp = self.damping;
         let width = self.stereo_width;
 
+        // Precompute comb/allpass lengths (constant for entire buffer)
+        let cl: [usize; 4] = [
+            (((self.comb_len[0] as f32) * scale) as usize + 0).min(max_comb).max(1),
+            (((self.comb_len[1] as f32) * scale) as usize + 100).min(max_comb).max(1),
+            (((self.comb_len[2] as f32) * scale) as usize + 0).min(max_comb).max(1),
+            (((self.comb_len[3] as f32) * scale) as usize + 100).min(max_comb).max(1),
+        ];
+        let cr_off = (width * 200.0) as usize;
+        let cr: [usize; 4] = [
+            (cl[0] + cr_off).min(max_comb).max(1),
+            (cl[1] + cr_off).min(max_comb).max(1),
+            (cl[2] + cr_off).min(max_comb).max(1),
+            (cl[3] + cr_off).min(max_comb).max(1),
+        ];
+        let al: [usize; 2] = [
+            (((self.allpass_len[0] as f32) * scale) as usize).max(1),
+            (((self.allpass_len[1] as f32) * scale) as usize).max(1),
+        ];
+
         for i in 0..left.len().min(right.len()) {
             let input_l = left[i];
             let input_r = right[i];
@@ -256,27 +275,21 @@ impl SendEffect for ReverbEffect {
             let mut out_r = 0.0;
 
             for c in 0..4 {
-                let offset = if c % 2 == 0 { 0 } else { 100 };
-                let cl = ((self.comb_len[c] as f32) * scale) as usize + offset;
-                let cr = cl + (width * 200.0) as usize;
-                let cl = cl.min(max_comb).max(1);
-                let cr = cr.min(max_comb).max(1);
                 out_l += Self::comb_process(
-                    &mut self.comb_buf_l[c], &mut self.comb_pos_l[c], cl,
-                    input_l, feedback, damp, &mut self.prev_l,
+                    &mut self.comb_buf_l[c], &mut self.comb_pos_l[c], cl[c],
+                    input_l, feedback, damp, &mut self.prev_l[c],
                 );
                 out_r += Self::comb_process(
-                    &mut self.comb_buf_r[c], &mut self.comb_pos_r[c], cr,
-                    input_r, feedback, damp, &mut self.prev_r,
+                    &mut self.comb_buf_r[c], &mut self.comb_pos_r[c], cr[c],
+                    input_r, feedback, damp, &mut self.prev_r[c],
                 );
             }
             out_l *= 0.25;
             out_r *= 0.25;
 
             for a in 0..2 {
-                let al = ((self.allpass_len[a] as f32) * scale) as usize;
-                out_l = Self::allpass_process(&mut self.allpass_buf_l[a], &mut self.allpass_pos_l[a], al.max(1), out_l, 0.5);
-                out_r = Self::allpass_process(&mut self.allpass_buf_r[a], &mut self.allpass_pos_r[a], al.max(1), out_r, 0.5);
+                out_l = Self::allpass_process(&mut self.allpass_buf_l[a], &mut self.allpass_pos_l[a], al[a], out_l, 0.5);
+                out_r = Self::allpass_process(&mut self.allpass_buf_r[a], &mut self.allpass_pos_r[a], al[a], out_r, 0.5);
             }
 
             left[i] = out_l;

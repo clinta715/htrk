@@ -39,6 +39,8 @@ pub struct AudioEngine {
     solo_cache: Vec<bool>,
     effective_mute_cache: Vec<bool>,
     ch_peak_cache: Vec<f32>,
+    send_fx_left: Vec<f32>,
+    send_fx_right: Vec<f32>,
 }
 
 struct SendBus {
@@ -85,6 +87,8 @@ pub fn create_engine_and_sender(
         solo_cache: vec![false; DEFAULT_CHANNELS],
         effective_mute_cache: vec![false; DEFAULT_CHANNELS],
         ch_peak_cache: vec![0.0; DEFAULT_CHANNELS],
+        send_fx_left: vec![0.0; BUFFER_SIZE],
+        send_fx_right: vec![0.0; BUFFER_SIZE],
         send_buses: {
             let configs = [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None];
             let returns = [0.5, 0.0, 0.0, 0.0];
@@ -126,6 +130,8 @@ impl AudioEngine {
         if self.mix_left.len() != frame_count {
             self.mix_left.resize(frame_count, 0.0);
             self.mix_right.resize(frame_count, 0.0);
+            self.send_fx_left.resize(frame_count, 0.0);
+            self.send_fx_right.resize(frame_count, 0.0);
             let num_ch = self.sequencer.state.channels.len();
             let total_size = num_ch * frame_count * 2;
             self.ch_mix.resize(total_size, 0.0);
@@ -158,6 +164,20 @@ impl AudioEngine {
             *s = 0.0;
         }
 
+        // Compute mute/solo state once per callback (cannot change mid-buffer)
+        let num_ch = self.sequencer.state.channels.len();
+        self.muted_cache.resize(num_ch, false);
+        self.solo_cache.resize(num_ch, false);
+        self.effective_mute_cache.resize(num_ch, false);
+        for (i, ch) in self.sequencer.state.channels.iter().enumerate() {
+            self.muted_cache[i] = ch.muted;
+            self.solo_cache[i] = ch.solo;
+        }
+        let has_solo = self.solo_cache.iter().any(|&s| s);
+        for (i, (&muted, &solo)) in self.muted_cache.iter().zip(self.solo_cache.iter()).enumerate() {
+            self.effective_mute_cache[i] = muted || (has_solo && !solo);
+        }
+
         if self.sequencer.state.playing {
             let mut samples_done = 0;
             while samples_done < frame_count && self.sequencer.state.playing {
@@ -181,24 +201,8 @@ impl AudioEngine {
                 let chunk = chunk.min(frame_count - samples_done);
 
                 if chunk == 0 {
-                    // Safety break to prevent infinite loops if chunk is somehow 0
                     break;
                 }
-
-                let num_ch = self.sequencer.state.channels.len();
-                self.muted_cache.resize(num_ch, false);
-                self.solo_cache.resize(num_ch, false);
-                self.effective_mute_cache.resize(num_ch, false);
-                for (i, ch) in self.sequencer.state.channels.iter().enumerate() {
-                    self.muted_cache[i] = ch.muted;
-                    self.solo_cache[i] = ch.solo;
-                }
-                let has_solo = self.solo_cache.iter().any(|&s| s);
-                self.effective_mute_cache.clear();
-                self.effective_mute_cache.extend(
-                    self.muted_cache.iter().zip(self.solo_cache.iter())
-                        .map(|(muted, solo)| *muted || (has_solo && !*solo))
-                );
 
                 mixer::mix_voices_per_channel(
                     &mut self.sequencer.voice_pool.voices,
@@ -208,6 +212,7 @@ impl AudioEngine {
                     &mut self.pre_ch_mix,
                     samples_done,
                     chunk,
+                    frame_count,
                     self.master_volume,
                     self.interpolation,
                     &self.effective_mute_cache,
@@ -221,20 +226,6 @@ impl AudioEngine {
         } else {
             // Sequencer is stopped, but still render any active voices so that
             // preview/jam notes (and release tails) are audible.
-            let num_ch = self.sequencer.state.channels.len();
-            self.muted_cache.resize(num_ch, false);
-            self.solo_cache.resize(num_ch, false);
-            self.effective_mute_cache.resize(num_ch, false);
-            for (i, ch) in self.sequencer.state.channels.iter().enumerate() {
-                self.muted_cache[i] = ch.muted;
-                self.solo_cache[i] = ch.solo;
-            }
-            let has_solo = self.solo_cache.iter().any(|&s| s);
-            self.effective_mute_cache.clear();
-            self.effective_mute_cache.extend(
-                self.muted_cache.iter().zip(self.solo_cache.iter())
-                    .map(|(muted, solo)| *muted || (has_solo && !*solo))
-            );
             mixer::mix_voices_per_channel(
                 &mut self.sequencer.voice_pool.voices,
                 &mut self.mix_left[..frame_count],
@@ -242,6 +233,7 @@ impl AudioEngine {
                 &mut self.ch_mix,
                 &mut self.pre_ch_mix,
                 0,
+                frame_count,
                 frame_count,
                 self.master_volume,
                 self.interpolation,
@@ -294,15 +286,13 @@ impl AudioEngine {
             // Process each bus through its effect and mix back
             for bus in &mut self.send_buses {
                 if let Some(ref mut fx) = bus.effect {
-                    // Convert flat interleaved buffer to separate L/R for effect processing
-                    let mut left = vec![0.0f32; frame_count];
-                    let mut right = vec![0.0f32; frame_count];
+                    let left = &mut self.send_fx_left[..frame_count];
+                    let right = &mut self.send_fx_right[..frame_count];
                     for i in 0..frame_count {
                         left[i] = bus.buffer[i * 2];
                         right[i] = bus.buffer[i * 2 + 1];
                     }
-                    fx.process(&mut left, &mut right, bpm, sample_rate);
-                    // Write back interleaved
+                    fx.process(left, right, bpm, sample_rate);
                     for i in 0..frame_count {
                         bus.buffer[i * 2] = left[i];
                         bus.buffer[i * 2 + 1] = right[i];

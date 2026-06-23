@@ -163,66 +163,56 @@ impl WavRenderer {
             match bit_depth {
                 BitDepth::Bits8 => {
                     for i in 0..frame_count {
-                        let mono = if self.stereo {
-                            (left[i] + right[i]) / 2.0
-                        } else {
-                            left[i]
-                        };
-                        writer.write_sample((mono.clamp(-1.0, 1.0) * 127.0) as i8)?;
                         if self.stereo {
+                            writer.write_sample((left[i].clamp(-1.0, 1.0) * 127.0) as i8)?;
                             writer.write_sample((right[i].clamp(-1.0, 1.0) * 127.0) as i8)?;
+                        } else {
+                            let mono = (left[i] + right[i]) * 0.5;
+                            writer.write_sample((mono.clamp(-1.0, 1.0) * 127.0) as i8)?;
                         }
                     }
                 }
                 BitDepth::Bits16 => {
                     for i in 0..frame_count {
-                        let mono = if self.stereo {
-                            (left[i] + right[i]) / 2.0
-                        } else {
-                            left[i]
-                        };
-                        writer.write_sample((mono.clamp(-1.0, 1.0) * 32767.0) as i16)?;
                         if self.stereo {
+                            writer.write_sample((left[i].clamp(-1.0, 1.0) * 32767.0) as i16)?;
                             writer.write_sample((right[i].clamp(-1.0, 1.0) * 32767.0) as i16)?;
+                        } else {
+                            let mono = (left[i] + right[i]) * 0.5;
+                            writer.write_sample((mono.clamp(-1.0, 1.0) * 32767.0) as i16)?;
                         }
                     }
                 }
                 BitDepth::Bits24 => {
                     for i in 0..frame_count {
-                        let mono = if self.stereo {
-                            (left[i] + right[i]) / 2.0
-                        } else {
-                            left[i]
-                        };
-                        writer.write_sample((mono.clamp(-1.0, 1.0) * 8388607.0) as i32)?;
                         if self.stereo {
+                            writer.write_sample((left[i].clamp(-1.0, 1.0) * 8388607.0) as i32)?;
                             writer.write_sample((right[i].clamp(-1.0, 1.0) * 8388607.0) as i32)?;
+                        } else {
+                            let mono = (left[i] + right[i]) * 0.5;
+                            writer.write_sample((mono.clamp(-1.0, 1.0) * 8388607.0) as i32)?;
                         }
                     }
                 }
                 BitDepth::Bits32 => {
                     for i in 0..frame_count {
-                        let mono = if self.stereo {
-                            (left[i] + right[i]) / 2.0
-                        } else {
-                            left[i]
-                        };
-                        writer.write_sample((mono.clamp(-1.0, 1.0) * 2147483647.0) as i32)?;
                         if self.stereo {
+                            writer.write_sample((left[i].clamp(-1.0, 1.0) * 2147483647.0) as i32)?;
                             writer.write_sample((right[i].clamp(-1.0, 1.0) * 2147483647.0) as i32)?;
+                        } else {
+                            let mono = (left[i] + right[i]) * 0.5;
+                            writer.write_sample((mono.clamp(-1.0, 1.0) * 2147483647.0) as i32)?;
                         }
                     }
                 }
                 BitDepth::Bits32Float => {
                     for i in 0..frame_count {
-                        let mono = if self.stereo {
-                            (left[i] + right[i]) / 2.0
-                        } else {
-                            left[i]
-                        };
-                        writer.write_sample(mono.clamp(-1.0, 1.0))?;
                         if self.stereo {
+                            writer.write_sample(left[i].clamp(-1.0, 1.0))?;
                             writer.write_sample(right[i].clamp(-1.0, 1.0))?;
+                        } else {
+                            let mono = (left[i] + right[i]) * 0.5;
+                            writer.write_sample(mono.clamp(-1.0, 1.0))?;
                         }
                     }
                 }

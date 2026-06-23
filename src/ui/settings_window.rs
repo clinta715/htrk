@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use crate::app_config::{AppConfig, SpacingMode};
-use crate::ui::theme::ThemePreset;
+use crate::ui::style::FONT_BODY;
+use crate::ui::theme::{ThemePreset, TrackerTheme};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SettingsTab {
@@ -163,6 +164,7 @@ pub fn draw_settings_window(
     state: &mut SettingsState,
     output_device_names: &[String],
     selected_device_name: Option<&str>,
+    theme: &TrackerTheme,
 ) -> SettingsAction {
     state.output_device_names = output_device_names.to_vec();
     state.selected_device_name = selected_device_name.map(|s| s.to_string());
@@ -201,12 +203,12 @@ pub fn draw_settings_window(
             egui::ScrollArea::vertical()
                 .max_height(360.0)
                 .show(ui, |ui| match state.tab {
-                    SettingsTab::Paths => draw_paths_tab(ui, state),
-                    SettingsTab::Editor => draw_editor_tab(ui, state),
-                    SettingsTab::Audio => draw_audio_tab(ui, state),
-                    SettingsTab::Backup => draw_backup_tab(ui, state),
-                    SettingsTab::Theme => draw_theme_tab(ui, state),
-                    SettingsTab::Advanced => draw_advanced_tab(ui, state),
+                    SettingsTab::Paths => draw_paths_tab(ui, state, theme),
+                    SettingsTab::Editor => draw_editor_tab(ui, state, theme),
+                    SettingsTab::Audio => draw_audio_tab(ui, state, theme),
+                    SettingsTab::Backup => draw_backup_tab(ui, state, theme),
+                    SettingsTab::Theme => draw_theme_tab(ui, state, theme),
+                    SettingsTab::Advanced => draw_advanced_tab(ui, state, theme),
                 });
 
             ui.separator();
@@ -232,15 +234,15 @@ pub fn draw_settings_window(
     action
 }
 
-fn draw_paths_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
+fn draw_paths_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerTheme) {
     ui.add_space(4.0);
-    section_header(ui, "Default Sample Directories");
+    super::style::section_header(ui, "Default Sample Directories", theme);
     ui.add_space(2.0);
 
     let mut remove_idx = None;
     for (i, path) in state.default_sample_paths.iter_mut().enumerate() {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(format!("{:>2}.", i + 1)).monospace().size(11.0));
+            ui.label(egui::RichText::new(format!("{:>2}.", i + 1)).monospace().size(FONT_BODY));
             let resp = ui.add_sized(
                 [ui.available_width() - 90.0, 20.0],
                 egui::TextEdit::singleline(path).font(egui::FontId::monospace(11.0)),
@@ -282,7 +284,7 @@ fn draw_paths_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
     });
 
     ui.add_space(12.0);
-    section_header(ui, "Default Directories");
+    super::style::section_header(ui, "Default Directories", theme);
     ui.add_space(2.0);
 
     path_row(ui, "Module Path", &mut state.default_mod_path);
@@ -314,9 +316,9 @@ fn path_row(ui: &mut egui::Ui, label: &str, value: &mut Option<String>) {
     }
 }
 
-fn draw_editor_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
+fn draw_editor_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerTheme) {
     ui.add_space(4.0);
-    section_header(ui, "Pattern Editor");
+    super::style::section_header(ui, "Pattern Editor", theme);
     ui.add_space(4.0);
 
     ui.horizontal(|ui| {
@@ -380,7 +382,7 @@ fn draw_editor_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
     ui.checkbox(&mut state.follow_playback_default, "Follow Playback (default)");
 
     ui.add_space(8.0);
-    section_header(ui, "General");
+    super::style::section_header(ui, "General", theme);
     ui.add_space(4.0);
     ui.checkbox(&mut state.confirm_on_exit, "Confirm before exiting with unsaved changes");
 
@@ -396,9 +398,9 @@ fn draw_editor_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
     });
 }
 
-fn draw_audio_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
+fn draw_audio_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerTheme) {
     ui.add_space(4.0);
-    section_header(ui, "Audio Defaults");
+    super::style::section_header(ui, "Audio Defaults", theme);
     ui.add_space(4.0);
 
     ui.horizontal(|ui| {
@@ -407,7 +409,7 @@ fn draw_audio_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
     });
 
     ui.add_space(8.0);
-    section_header(ui, "Output Device");
+    super::style::section_header(ui, "Output Device", theme);
     ui.add_space(4.0);
 
     let current_device = state.selected_device_name.clone().unwrap_or_default();
@@ -426,7 +428,7 @@ fn draw_audio_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
     }
 
     ui.add_space(8.0);
-    section_header(ui, "Default Interpolation");
+    super::style::section_header(ui, "Default Interpolation", theme);
     ui.add_space(4.0);
 
     let interp_options = ["Nearest", "Linear", "Cubic"];
@@ -442,7 +444,7 @@ fn draw_audio_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
         });
 
     ui.add_space(8.0);
-    section_header(ui, "Limiter Mode");
+    super::style::section_header(ui, "Limiter Mode", theme);
     ui.add_space(4.0);
 
     let limiter_options = ["HardClip", "SoftKnee", "SoftKneeSmooth"];
@@ -458,7 +460,7 @@ fn draw_audio_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
         });
 
     ui.add_space(8.0);
-    section_header(ui, "Preferred Sample Rate");
+    super::style::section_header(ui, "Preferred Sample Rate", theme);
     ui.add_space(4.0);
 
     let rate_options = [
@@ -484,9 +486,9 @@ fn draw_audio_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
         });
 }
 
-fn draw_backup_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
+fn draw_backup_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerTheme) {
     ui.add_space(4.0);
-    section_header(ui, "Auto-Backup");
+    super::style::section_header(ui, "Auto-Backup", theme);
     ui.add_space(4.0);
 
     ui.horizontal(|ui| {
@@ -529,14 +531,14 @@ fn draw_backup_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
     };
     ui.label(
         egui::RichText::new(format!("Backups will be saved to: {}", backup_dir.to_string_lossy()))
-            .size(11.0)
-            .color(egui::Color32::GRAY),
+            .size(FONT_BODY)
+            .color(theme.fg_dim),
     );
 }
 
-fn draw_theme_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
+fn draw_theme_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerTheme) {
     ui.add_space(4.0);
-    section_header(ui, "Theme");
+    super::style::section_header(ui, "Theme", theme);
     ui.add_space(4.0);
 
     for preset in ThemePreset::all() {
@@ -547,28 +549,19 @@ fn draw_theme_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
     }
 }
 
-fn draw_advanced_tab(ui: &mut egui::Ui, state: &mut SettingsState) {
+fn draw_advanced_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerTheme) {
     ui.add_space(4.0);
-    section_header(ui, "Debugging");
+    super::style::section_header(ui, "Debugging", theme);
     ui.add_space(4.0);
 
     ui.checkbox(&mut state.debug_enabled, "Enable debug logging (performance impact)");
     if state.debug_enabled {
         ui.label(
             egui::RichText::new("Debug logs are written to the config directory. May cause audio stuttering.")
-                .size(11.0)
+                .size(FONT_BODY)
                 .color(egui::Color32::GRAY),
         );
     }
-}
-
-fn section_header(ui: &mut egui::Ui, text: &str) {
-    ui.label(
-        egui::RichText::new(text)
-            .size(13.0)
-            .strong()
-            .color(egui::Color32::from_rgb(100, 200, 255)),
-    );
 }
 
 fn pick_folder() -> Option<PathBuf> {

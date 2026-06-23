@@ -3,6 +3,7 @@ use eframe::egui;
 use crate::audio::playback_state::AtomicPlaybackState;
 
 use super::pattern_grid::{self, CursorPosition, SubColumn};
+use super::style::FONT_CAPTION;
 use super::theme::TrackerTheme;
 
 const MIN_BLOCK_W: f32 = 95.0;
@@ -115,22 +116,22 @@ pub fn draw_playback_view(
 
         block_ui.label(
             egui::RichText::new(format!("Ch {:02}", ch + 1))
-                .size(10.0)
-                .color(theme.bg_highlight),
+            .size(FONT_CAPTION)
+            .color(theme.bg_highlight),
         );
         let note_str = playback_state.channel_note_str(ch);
         let instr_str = playback_state.channel_instrument_str(ch);
         block_ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(note_str)
-                    .size(10.0)
+                    .size(FONT_CAPTION)
                     .monospace()
                     .color(theme.fg_note),
             );
             ui.label(" ");
             ui.label(
                 egui::RichText::new(instr_str)
-                    .size(10.0)
+                    .size(FONT_CAPTION)
                     .monospace()
                     .color(theme.fg_instrument),
             );
@@ -169,19 +170,19 @@ fn draw_zoom_toolbar(ui: &mut egui::Ui, theme: &TrackerTheme, zoom: &mut u8) {
     ui.horizontal(|ui| {
         if ui.add_sized(
             egui::vec2(20.0, 16.0),
-            egui::Button::new(egui::RichText::new("–").size(10.0).color(theme.transport_fg)),
+            egui::Button::new(egui::RichText::new("–").size(FONT_CAPTION).color(theme.transport_fg)),
         ).clicked() {
             *zoom = zoom.saturating_sub(2).max(8);
         }
         ui.label(
             egui::RichText::new(format!("{}", zoom))
-                .size(10.0)
+                .size(FONT_CAPTION)
                 .monospace()
                 .color(theme.transport_fg),
         );
         if ui.add_sized(
             egui::vec2(20.0, 16.0),
-            egui::Button::new(egui::RichText::new("+").size(10.0).color(theme.transport_fg)),
+            egui::Button::new(egui::RichText::new("+").size(FONT_CAPTION).color(theme.transport_fg)),
         ).clicked() {
             *zoom = (*zoom + 2).min(24);
         }

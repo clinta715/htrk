@@ -12,6 +12,12 @@ pub(crate) enum SelectionUpdate {
 }
 
 pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> Option<SelectionUpdate> {
+    // Handle events that don't need the current sample
+    if let SampleEditEvent::DeleteSamples(indices) = event {
+        handle_delete_samples(app, indices);
+        return None;
+    }
+
     let sample_idx = app.core.selected_sample;
     let module = match &app.core.module {
         Some(m) => m,
@@ -258,8 +264,52 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> O
                 new_data: Arc::new(data),
             })
         }
+        SampleEditEvent::DeleteSamples(_) => unreachable!(), // handled above
     };
 
     app.core.execute_edit_command(cmd);
     None
+}
+
+fn handle_delete_samples(app: &mut HtrkApp, indices: Vec<usize>) {
+    app.core.ensure_module_ownership();
+    if let Some(ref mut module) = app.core.module {
+        if let Some(arc_module) = Arc::get_mut(module) {
+            let mut sorted = indices.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            sorted.retain(|&i| i > 0 && i < arc_module.samples.len());
+            if sorted.is_empty() { return; }
+
+            for inst in arc_module.instruments.iter_mut() {
+                for map_entry in inst.sample_map.iter_mut() {
+                    let old = *map_entry as usize;
+                    if old == 0 { continue; }
+                    let shift = sorted.iter().filter(|&&d| d < old).count();
+                    if sorted.contains(&old) {
+                        *map_entry = 0;
+                    } else {
+                        *map_entry = (old - shift) as u8;
+                    }
+                }
+            }
+
+            for &idx in sorted.iter().rev() {
+                if idx < arc_module.samples.len() {
+                    arc_module.samples.remove(idx);
+                }
+            }
+
+            if !sorted.contains(&app.core.selected_sample) {
+                let shift = sorted.iter().filter(|&&d| d < app.core.selected_sample).count();
+                app.core.selected_sample = app.core.selected_sample.saturating_sub(shift);
+            } else {
+                app.core.selected_sample = app.core.selected_sample.min(arc_module.samples.len().saturating_sub(1));
+            }
+
+            app.sample_editor.selected_samples.clear();
+            app.core.sync_module_to_audio();
+            app.core.set_module_dirty(true);
+        }
+    }
 }

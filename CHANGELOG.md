@@ -2,6 +2,42 @@
 
 All notable changes to htrk will be documented in this file.
 
+## [0.17.0] - 2026-06-23
+
+### Added
+
+- **Design Token System**: Complete `TrackerTheme` color token set with 80+ semantic tokens replacing all hardcoded UI colors. `STYLE.md` documents all tokens, color contributions, and naming conventions.
+- **MCP Server (Phases 1-2)**: JSON-RPC 2.0 over TCP (port 18763) with read-only snapshots (module/playback/channels), mutation dispatch via main-thread command queue, and 20+ tools for querying and editing module state.
+- **Sample Editor**: Selection model (cut/copy/paste/crop/silence), zoom with scroll support, loop marker manipulation, Fade In/Out processing, waveform context menu with Normalize/Reverse/TrimSilence. All operations undoable.
+- **Slice-to-Instrument**: Slice samples to create multi-sampled instruments, with per-slice mapping to note ranges.
+- **Envelope Generator**: Automation curve generator for envelope points with configurable shapes.
+
+### Changed
+
+- **Version**: 0.16.0 → 0.17.0
+- **Help screen rewritten**: Full reference for all keyboard shortcuts, effect commands, and navigation, organized into collapsible sections with theme-aware colors.
+- **Playback tab layout**: Pattern grid now always rendered (fallback to editing pattern when stopped), preventing channel blocks from jumping on playback start/stop.
+- **Save-on-exit confirmation**: Intercepts close requests and Ctrl+Q when module is dirty with Save/Don't Save/Cancel dialog.
+- **File browser columns**: Fixed-width truncation cells prevent overlapping text. Column resize drag handles with persisted widths.
+- **Window size persistence**: Viewport dimensions saved to `AppConfig` every frame and restored on launch.
+- **Instrument editor persistence**: `list_width` and `envelope_height` panel sizes saved to/from `AppConfig`.
+- **Phrase Generator**: Chord mode with configurable chord types, progressions, and per-channel placement.
+
+### Fixed
+
+- **Exit deadlock**: Audio stream dropped in `on_exit` before egui teardown, preventing freeze on close.
+- **Sample preview in edit mode**: File browser preview notes play correctly even when edit mode is enabled.
+- **Deadlock in module mutation**: Removed bare `.unwrap()` calls on `self.module`/`engine.module` with safe match guards throughout sequencer engine, XM loader, and legacy format paths.
+- **Channel header contrast**: Mute/solo/auto fills use `rgba_premultiplied` instead of `gamma_multiply` for correct semi-transparency across all themes.
+- **Various pattern/layout/playback regressions**: Tab navigation in dialogs, playback row highlighting in Playback tab, order list drop-target highlight.
+
+### Performance
+
+- **Mixing buffer flattening**: Pre-allocated `Vec<f32>` mixing buffers replaced with flat `[f32; 2]` per voice, eliminating per-sample allocations in the hot path. `WavRenderer::render_full_song` reuses buffers across chunk iterations.
+- **Precomputed `sample_length_bg` cache**: Background length indicator computed once per cell outside the inner loop in pattern grid rendering.
+- **Real-time thread allocation elimination**: Muted/solo/effective-mute masks and per-channel peak caches pre-allocated on `AudioEngine` init instead of per-callback allocations.
+- **`u16` widening**: `current_row`, `current_pattern`, `pattern_break_row`, `position_jump_order`, `pattern_loop_start` widened from `u8` to `u16` for patterns >255 rows.
+
 ## [0.14.1] - 2026-06-16
 
 ### Added

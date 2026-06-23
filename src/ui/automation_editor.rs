@@ -67,7 +67,7 @@ pub fn draw_automation_editor(
             ui.set_min_width(sidebar_width);
             ui.set_max_width(sidebar_width);
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new("Automation Tracks").strong().size(13.0));
+                super::style::section_header(ui, "Automation Tracks", theme);
                 ui.add_space(4.0);
 
                 let track_ids: Vec<u32> = module.automation_tracks.iter().map(|t| t.id).collect();
@@ -147,10 +147,10 @@ pub fn draw_automation_editor(
                 }
 
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new("+ Add Track").size(11.0).color(theme.fg_instrument));
+                ui.label(egui::RichText::new("+ Add Track").size(super::style::FONT_BODY).color(theme.fg_instrument));
 
                 ui.add_space(4.0);
-                ui.label(egui::RichText::new("Per-Channel:").size(10.0).color(theme.fg_dim));
+                ui.label(egui::RichText::new("Per-Channel:").size(super::style::FONT_CAPTION).color(theme.fg_dim));
                 ui.horizontal(|ui| {
                     ui.label("Ch:");
                     let max_ch = if module.channel_volume.is_empty() { 0 } else { module.channel_volume.len().saturating_sub(1) };
@@ -162,7 +162,7 @@ pub fn draw_automation_editor(
                     }
                 }
                 ui.add_space(4.0);
-                ui.label(egui::RichText::new("Global:").size(10.0).color(theme.fg_dim));
+                ui.label(egui::RichText::new("Global:").size(super::style::FONT_CAPTION).color(theme.fg_dim));
                 for target in AutomationTarget::all_global() {
                     if ui.small_button(target.label()).clicked() {
                         resp.track_added = Some((target, None));
@@ -229,8 +229,6 @@ fn draw_lane_editor(
     });
 
     let num_rows = module.patterns.first().map_or(64, |p| p.num_rows);
-    let row_height = 1.0;
-    let total_height = num_rows as f32 * row_height;
     let lane_width = ui.available_width().max(200.0);
 
     let (rect, response) = ui.allocate_exact_size(
@@ -241,11 +239,52 @@ fn draw_lane_editor(
 
     painter.rect_filled(rect, 0.0, theme.bg_default);
 
+    // Vertical grid lines for row alignment (X axis = rows)
+    let row_step = if num_rows <= 64 { 1 } else if num_rows <= 128 { 2 } else { 4 };
+    for row_idx in (0..num_rows).step_by(row_step) {
+        let x = rect.left() + (row_idx as f32 / num_rows as f32) * rect.width();
+        let is_beat_divider = row_idx % 16 == 0;
+        let is_beat = row_idx % 4 == 0;
+        let stroke = if is_beat_divider {
+            egui::Stroke::new(0.8, theme.grid_line)
+        } else if is_beat {
+            egui::Stroke::new(0.5, theme.grid_line)
+        } else {
+            egui::Stroke::new(0.15, theme.grid_line_minor)
+        };
+        painter.line_segment(
+            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+            stroke,
+        );
+    }
+
+    // Row number labels along top edge
     for row_idx in (0..num_rows).step_by(4) {
-        let y = rect.top() + row_idx as f32 * row_height * (300.0 / total_height.max(1.0));
+        let x = rect.left() + (row_idx as f32 / num_rows as f32) * rect.width();
+        painter.text(
+            egui::pos2(x, rect.top() + 1.0),
+            egui::Align2::CENTER_TOP,
+            format!("{}", row_idx),
+            egui::FontId::monospace(7.0),
+            theme.fg_dim,
+        );
+    }
+
+    // Horizontal value reference lines
+    for val_pct in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        let y = rect.bottom() - val_pct * rect.height();
         painter.line_segment(
             [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-            egui::Stroke::new(0.5, theme.grid_line),
+            egui::Stroke::new(0.3, theme.grid_line_minor),
+        );
+        // Hex value label on left
+        let hex_val = (val_pct * 255.0).round() as u8;
+        painter.text(
+            egui::pos2(rect.left() + 2.0, y),
+            egui::Align2::LEFT_CENTER,
+            format!("{:02X}", hex_val),
+            egui::FontId::monospace(7.0),
+            theme.fg_dim,
         );
     }
 
@@ -319,8 +358,8 @@ fn draw_lane_editor(
                 }
             }
 
-            painter.circle_filled(egui::pos2(px, py), point_radius, egui::Color32::WHITE);
-            painter.circle_stroke(egui::pos2(px, py), point_radius, egui::Stroke::new(1.0, egui::Color32::BLACK));
+                        painter.circle_filled(egui::pos2(px, py), point_radius, theme.automation_point);
+                        painter.circle_stroke(egui::pos2(px, py), point_radius, egui::Stroke::new(1.0, theme.panel_border));
 
             let hex_val = (pt.value * 255.0).round() as u8;
             painter.text(
@@ -435,7 +474,7 @@ fn draw_automation_generator_popup(
             let duty_id = ui.make_persistent_id("auto_gen_duty");
             let mut duty = ui.data(|d| d.get_temp::<f32>(duty_id).unwrap_or(50.0));
 
-            ui.label(egui::RichText::new("Shape").size(13.0).strong().color(egui::Color32::from_rgb(100, 200, 255)));
+            super::style::section_header(ui, "Shape", theme);
             let shapes = ["Sine", "Square", "Triangle", "Saw Up", "Saw Down", "Pulse", "Random"];
             egui::ComboBox::from_id_salt("auto_gen_shape_combo")
                 .selected_text(shapes[shape_idx])
@@ -448,7 +487,7 @@ fn draw_automation_generator_popup(
                 });
 
             ui.add_space(4.0);
-            ui.label(egui::RichText::new("Parameters").size(13.0).strong().color(egui::Color32::from_rgb(100, 200, 255)));
+            super::style::section_header(ui, "Parameters", theme);
             ui.add_space(2.0);
             egui::Grid::new("auto_gen_grid").show(ui, |ui| {
                 ui.label(egui::RichText::new("Rows:").color(theme.fg_dim));
@@ -496,7 +535,7 @@ fn draw_automation_generator_popup(
 
             // preview
             ui.add_space(4.0);
-            ui.label(egui::RichText::new("Preview").size(13.0).strong().color(egui::Color32::from_rgb(100, 200, 255)));
+            super::style::section_header(ui, "Preview", theme);
             ui.add_space(2.0);
             let (preview_rect, _) = ui.allocate_exact_size(
                 egui::vec2(ui.available_width().min(400.0), 80.0),

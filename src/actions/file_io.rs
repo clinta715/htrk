@@ -34,11 +34,21 @@ pub(crate) fn load_file(app: &mut HtrkApp, path: &str) {
             app.pattern_view.scroll_channel = 0;
             app.core.sync_channel_fields();
             app.sync_send_bus_state();
+
+            add_recent_file(app, path);
         }
         Err(e) => {
             eprintln!("Failed to load module: {}", e);
         }
     }
+}
+
+fn add_recent_file(app: &mut HtrkApp, path: &str) {
+    let path_str = path.to_string();
+    app.config.recent_files.retain(|p| p != &path_str);
+    app.config.recent_files.insert(0, path_str);
+    app.config.recent_files.truncate(10);
+    app.config.save();
 }
 
 pub(crate) fn import_wav(app: &mut HtrkApp, path: &str) {
@@ -279,6 +289,10 @@ pub(crate) fn save_config(app: &mut HtrkApp) {
     }
     app.config.favorites = app.file_browser.save_favorites();
     app.file_browser.sync_widths_to_config(&mut app.config);
+    app.config.instrument_list_width = Some(app.instrument_editor.list_width);
+    app.config.instrument_envelope_height = Some(app.instrument_editor.envelope_height);
+    app.config.sample_list_width = Some(app.sample_editor.list_width);
+    app.config.sample_waveform_height = Some(app.sample_editor.waveform_height);
     app.config.save();
 }
 

@@ -1,6 +1,9 @@
 use eframe::egui;
 
-pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
+use super::style::FONT_BODY;
+use super::theme::TrackerTheme;
+
+pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool, theme: &TrackerTheme) {
     egui::Window::new("Help & Keyboard Shortcuts")
         .open(open)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -12,221 +15,214 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool) {
                 .show(ui, |ui| {
                     ui.label(
                         egui::RichText::new("F3 — Close this window")
-                            .size(11.0)
-                            .color(egui::Color32::GRAY),
-                    );
-                    ui.separator();
+                    .size(FONT_BODY)
+                    .color(theme.fg_dim),
+                );
+                ui.separator();
                     ui.add_space(4.0);
 
                     ui.columns(2, |columns| {
                         columns[0].vertical(|ui| {
-                            section_header(ui, "NAVIGATION");
-                            shortcut_row(ui, "Up/Down", "Move cursor between rows");
-                            shortcut_row(ui, "Left/Right", "Move cursor between channels");
-                            shortcut_row(ui, "Ctrl+Left/Right", "Step through sub-columns");
-                            shortcut_row(ui, "Shift+Up/Down", "Extend selection vertically");
-                            shortcut_row(ui, "Shift+Left/Right", "Extend selection by channel");
-                            shortcut_row(ui, "Alt+Up/Down", "Transpose ±1 semitone");
-                            shortcut_row(ui, "Tab / Shift+Tab", "Next / prev channel");
-                            shortcut_row(ui, "- / =  (Numpad -/+)", "Prev / next pattern");
-                            shortcut_row(ui, "[ / ]", "Decrement / increment octave");
-                            shortcut_row(ui, "PgUp / PgDn", "Scroll 16 rows");
-                            shortcut_row(ui, "Home", "Top of column; again = leftmost");
-                            shortcut_row(ui, "End", "Bottom of column");
+                            super::style::section_header(ui, "NAVIGATION", theme);
+                            shortcut_row(ui, "Up/Down", "Move cursor between rows", theme);
+                            shortcut_row(ui, "Left/Right", "Move cursor between channels", theme);
+                            shortcut_row(ui, "Ctrl+Left/Right", "Step through sub-columns", theme);
+                            shortcut_row(ui, "Shift+Up/Down", "Extend selection vertically", theme);
+                            shortcut_row(ui, "Shift+Left/Right", "Extend selection by channel", theme);
+                            shortcut_row(ui, "Alt+Up/Down", "Transpose ±1 semitone", theme);
+                            shortcut_row(ui, "Tab / Shift+Tab", "Next / prev channel", theme);
+                            shortcut_row(ui, "- / =  (Numpad -/+)", "Prev / next pattern", theme);
+                            shortcut_row(ui, "[ / ]", "Decrement / increment octave", theme);
+                            shortcut_row(ui, "PgUp / PgDn", "Scroll 16 rows", theme);
+                            shortcut_row(ui, "Home", "Top of column; again = leftmost", theme);
+                            shortcut_row(ui, "End", "Bottom of column", theme);
                             ui.add_space(8.0);
 
-                            section_header(ui, "PATTERN EDITING");
-                            shortcut_row(ui, "Ctrl+X / C / V", "Block Cut / Copy / Paste");
-                            shortcut_row(ui, "Shift+F3 / F4 / F5", "Track Cut / Copy / Paste");
-                            shortcut_row(ui, "Alt+F3 / F4 / F5", "Column Cut / Copy / Paste");
-                            shortcut_row(ui, "Shift+Delete", "Clear entire track");
-                            shortcut_row(ui, "Backspace", "Clear cell");
-                            shortcut_row(ui, "Delete", "Clear + advance");
-                            shortcut_row(ui, "Insert", "Insert empty row");
-                            shortcut_row(ui, "Alt+Delete", "Delete row");
+                            super::style::section_header(ui, "PATTERN EDITING", theme);
+                            shortcut_row(ui, "Ctrl+X / C / V", "Block Cut / Copy / Paste", theme);
+                            shortcut_row(ui, "Shift+F3 / F4 / F5", "Track Cut / Copy / Paste", theme);
+                            shortcut_row(ui, "Alt+F3 / F4 / F5", "Column Cut / Copy / Paste", theme);
+                            shortcut_row(ui, "Shift+Delete", "Clear entire track", theme);
+                            shortcut_row(ui, "Backspace", "Clear cell", theme);
+                            shortcut_row(ui, "Delete", "Clear + advance", theme);
+                            shortcut_row(ui, "Insert", "Insert empty row", theme);
+                            shortcut_row(ui, "Alt+Delete", "Delete row", theme);
                             ui.add_space(8.0);
 
-                            section_header(ui, "FILE");
-                            shortcut_row(ui, "Ctrl+N", "New song");
-                            shortcut_row(ui, "Ctrl+O", "Open module...");
-                            shortcut_row(ui, "Ctrl+I", "Import sample...");
-                            shortcut_row(ui, "Ctrl+Shift+I", "Import instrument...");
-                            shortcut_row(ui, "Ctrl+S", "Save");
-                            shortcut_row(ui, "Ctrl+Shift+S", "Save As...");
+                            super::style::section_header(ui, "FILE", theme);
+                            shortcut_row(ui, "Ctrl+N", "New song", theme);
+                            shortcut_row(ui, "Ctrl+O", "Open module...", theme);
+                            shortcut_row(ui, "Ctrl+I", "Import sample...", theme);
+                            shortcut_row(ui, "Ctrl+Shift+I", "Import instrument...", theme);
+                            shortcut_row(ui, "Ctrl+S", "Save", theme);
+                            shortcut_row(ui, "Ctrl+Shift+S", "Save As...", theme);
                             ui.add_space(8.0);
 
-                            section_header(ui, "EDITING");
-                            shortcut_row(ui, "Ctrl+Z / Y", "Undo / Redo");
-                            shortcut_row(ui, "Ctrl+A", "Select all");
+                            super::style::section_header(ui, "EDITING", theme);
+                            shortcut_row(ui, "Ctrl+Z / Y", "Undo / Redo", theme);
+                            shortcut_row(ui, "Ctrl+A", "Select all", theme);
                             ui.add_space(8.0);
 
-                            section_header(ui, "TRANSPORT");
-                            shortcut_row(ui, "F6", "Play pattern");
-                            shortcut_row(ui, "F7", "Play through order");
-                            shortcut_row(ui, "F8", "Stop all");
-                            shortcut_row(ui, "F9", "Play from current pos");
-                            shortcut_row(ui, "Space", "Repeat last entry / Stop");
+                            super::style::section_header(ui, "TRANSPORT", theme);
+                            shortcut_row(ui, "F6", "Play pattern", theme);
+                            shortcut_row(ui, "F7", "Play through order", theme);
+                            shortcut_row(ui, "F8", "Stop all", theme);
+                            shortcut_row(ui, "F9", "Play from current pos", theme);
+                            shortcut_row(ui, "Space", "Repeat last entry / Stop", theme);
                             ui.add_space(8.0);
 
-                            section_header(ui, "VIEW SWITCHING (IT-style)");
-                            shortcut_row(ui, "F1", "Help / Shortcuts");
-                            shortcut_row(ui, "F2", "Pattern editor");
-                            shortcut_row(ui, "F3", "Sample tab");
-                            shortcut_row(ui, "F4", "Instrument tab");
-                            shortcut_row(ui, "F5", "Play from start");
-                            shortcut_row(ui, "Shift+F5", "Playback tab + Play from start");
+                            super::style::section_header(ui, "VIEW SWITCHING (IT-style)", theme);
+                            shortcut_row(ui, "F1", "Help / Shortcuts", theme);
+                            shortcut_row(ui, "F2", "Pattern editor", theme);
+                            shortcut_row(ui, "F3", "Sample tab", theme);
+                            shortcut_row(ui, "F4", "Instrument tab", theme);
+                            shortcut_row(ui, "F5", "Play from start", theme);
+                            shortcut_row(ui, "Shift+F5", "Playback tab + Play from start", theme);
                             ui.add_space(8.0);
 
-                            section_header(ui, "CHANNEL");
-                            shortcut_row(ui, "Esc", "Toggle edit mode (EDT / VIEW)");
-                            shortcut_row(ui, "Alt+M", "Toggle mute channel");
-                            shortcut_row(ui, "Alt+S", "Toggle solo channel");
+                            super::style::section_header(ui, "CHANNEL", theme);
+                            shortcut_row(ui, "Esc", "Toggle edit mode (EDT / VIEW)", theme);
+                            shortcut_row(ui, "Alt+M", "Toggle mute channel", theme);
+                            shortcut_row(ui, "Alt+S", "Toggle solo channel", theme);
                             ui.add_space(8.0);
 
-                            section_header(ui, "VIEW");
-                            shortcut_row(ui, "Ctrl+Shift+Space", "Cycle spacing mode");
-                            shortcut_row(ui, "Ctrl+Shift+L", "Toggle sample length background");
-                            shortcut_row(ui, "Ctrl+1", "Toggle Note column");
-                            shortcut_row(ui, "Ctrl+2", "Toggle Instrument column");
-                            shortcut_row(ui, "Ctrl+3", "Toggle Volume column");
-                            shortcut_row(ui, "Ctrl+4", "Toggle Effect column");
+                            super::style::section_header(ui, "VIEW", theme);
+                            shortcut_row(ui, "Ctrl+Shift+Space", "Cycle spacing mode", theme);
+                            shortcut_row(ui, "Ctrl+Shift+L", "Toggle sample length background", theme);
+                            shortcut_row(ui, "Ctrl+1", "Toggle Note column", theme);
+                            shortcut_row(ui, "Ctrl+2", "Toggle Instrument column", theme);
+                            shortcut_row(ui, "Ctrl+3", "Toggle Volume column", theme);
+                            shortcut_row(ui, "Ctrl+4", "Toggle Effect column", theme);
                             ui.add_space(8.0);
 
-                            section_header(ui, "IT-STYLE FEATURES");
-                            shortcut_row(ui, "Alt+0..9", "Set cursor skip value");
-                            shortcut_row(ui, ", / .", "Prev / next sample (inst col: inst)");
-                            shortcut_row(ui, ". (note col)", "Note Off (edit mode)");
-                            shortcut_row(ui, "Ctrl+Shift+Left/Right", "Prev / next sample");
-                            shortcut_row(ui, "Space (stopped)", "Repeat last cell");
-                            shortcut_row(ui, "Alt+N", "Toggle multichannel edit");
-                            shortcut_row(ui, "Ctrl+Shift+Up/Dn", "Increase / Decrease octave");
+                            super::style::section_header(ui, "IT-STYLE FEATURES", theme);
+                            shortcut_row(ui, "Alt+0..9", "Set cursor skip value", theme);
+                            shortcut_row(ui, ", / .", "Prev / next sample (inst col: inst)", theme);
+                            shortcut_row(ui, ". (note col)", "Note Off (edit mode)", theme);
+                            shortcut_row(ui, "Ctrl+Shift+Left/Right", "Prev / next sample", theme);
+                            shortcut_row(ui, "Space (stopped)", "Repeat last cell", theme);
+                            shortcut_row(ui, "Alt+N", "Toggle multichannel edit", theme);
+                            shortcut_row(ui, "Ctrl+Shift+Up/Dn", "Increase / Decrease octave", theme);
                             ui.add_space(4.0);
-                            section_header(ui, "BLOCK OPERATIONS");
-                            shortcut_row(ui, "Alt+B / Alt+E", "Mark block begin / end");
-                            shortcut_row(ui, "Alt+L (x2 / x3)", "Select line / whole pattern");
-                            shortcut_row(ui, "Alt+C / X / V", "Copy / Cut / Paste block");
-                            shortcut_row(ui, "Alt+Z", "Reverse block");
-                            shortcut_row(ui, "Alt+F", "Fill instrument");
-                            shortcut_row(ui, "Alt+I", "Interpolate volume");
-                            shortcut_row(ui, "Alt+K", "Interpolate effect");
-                            shortcut_row(ui, "Alt+R", "Randomize notes/volume");
+                            super::style::section_header(ui, "BLOCK OPERATIONS", theme);
+                            shortcut_row(ui, "Alt+B / Alt+E", "Mark block begin / end", theme);
+                            shortcut_row(ui, "Alt+L (x2)", "Select column / whole pattern", theme);
+                            shortcut_row(ui, "Alt+C / X / V", "Copy / Cut / Paste block", theme);
+                            shortcut_row(ui, "Alt+Z", "Reverse block", theme);
+                            shortcut_row(ui, "Alt+F", "Fill instrument", theme);
+                            shortcut_row(ui, "Alt+I", "Interpolate volume", theme);
+                            shortcut_row(ui, "Alt+K", "Interpolate effect", theme);
+                            shortcut_row(ui, "Alt+R", "Randomize notes/volume", theme);
                             ui.add_space(4.0);
-                            section_header(ui, "PATTERN");
-                            shortcut_row(ui, "- / =  (Numpad -/+)", "Prev / next pattern");
+                            super::style::section_header(ui, "PATTERN", theme);
+                            shortcut_row(ui, "- / =  (Numpad -/+)", "Prev / next pattern", theme);
                         });
 
                         columns[1].vertical(|ui| {
-                            section_header(ui, "NOTE ENTRY");
-                            shortcut_row(ui, "Z S X D...", "Lower octave (C–B)");
-                            shortcut_row(ui, "Q 2 W 3...", "Upper octave (C–U)");
-                            shortcut_row(ui, "Ctrl+Up/Down", "Decrease / Increase octave");
-                            shortcut_row(ui, ". (period)", "Note Off on Note col");
-                            shortcut_row(ui, "0-9 on Instr/Vol", "Decimal entry");
-                            shortcut_row(ui, "0-9 A-F on Fx", "Hex entry");
+                            super::style::section_header(ui, "NOTE ENTRY", theme);
+                            shortcut_row(ui, "Z S X D...", "Lower octave (C–B)", theme);
+                            shortcut_row(ui, "Q 2 W 3...", "Upper octave (C–U)", theme);
+                            shortcut_row(ui, "Ctrl+Up/Down", "Decrease / Increase octave", theme);
+                            shortcut_row(ui, ". (period)", "Note Off on Note col", theme);
+                            shortcut_row(ui, "0-9 on Instr/Vol", "Decimal entry", theme);
+                            shortcut_row(ui, "0-9 A-F on Fx", "Hex entry", theme);
                             ui.add_space(4.0);
-                            section_header(ui, "AUDIO PREVIEW");
-                            shortcut_row(ui, "Z S X... / Q 2 W...", "Jam: play sample / preview browser file");
-                            shortcut_row(ui, "Ctrl+Shift+Left/Right", "Prev / next sample");
-                            shortcut_row(ui, "▶ Preview (file browser)", "Preview selected WAV at middle C");
+                            super::style::section_header(ui, "AUDIO PREVIEW", theme);
+                            shortcut_row(ui, "Z S X... / Q 2 W...", "Jam: play sample / preview browser file", theme);
+                            shortcut_row(ui, "Ctrl+Shift+Left/Right", "Prev / next sample", theme);
+                            shortcut_row(ui, "▶ Preview (file browser)", "Preview selected WAV at middle C", theme);
                             ui.add_space(8.0);
 
-                            section_header(ui, "SAMPLE EDITOR");
-                            shortcut_row(ui, "Ctrl+C", "Copy selection");
-                            shortcut_row(ui, "Ctrl+X", "Cut selection");
-                            shortcut_row(ui, "Ctrl+V", "Paste at cursor");
-                            shortcut_row(ui, "Ctrl+A", "Select all");
-                            shortcut_row(ui, "Delete", "Silence selection");
-                            shortcut_row(ui, "Right-click", "Context menu (Cut/Crop/Fade...)");
-                            shortcut_row(ui, "Mouse wheel", "Zoom waveform");
-                            shortcut_row(ui, "Fit / Sel", "Zoom fit / zoom to selection");
+                            super::style::section_header(ui, "SAMPLE EDITOR", theme);
+                            shortcut_row(ui, "Ctrl+C", "Copy selection", theme);
+                            shortcut_row(ui, "Ctrl+X", "Cut selection", theme);
+                            shortcut_row(ui, "Ctrl+V", "Paste at cursor", theme);
+                            shortcut_row(ui, "Ctrl+A", "Select all", theme);
+                            shortcut_row(ui, "Delete", "Silence selection", theme);
+                            shortcut_row(ui, "Right-click", "Context menu (Cut/Crop/Fade...)", theme);
+                            shortcut_row(ui, "Mouse wheel", "Zoom waveform", theme);
+                            shortcut_row(ui, "Fit / Sel", "Zoom fit / zoom to selection", theme);
                             ui.add_space(8.0);
 
-                            section_header(ui, "SETTINGS (F10)");
-                            shortcut_row(ui, "Paths", "Default sample/directory paths");
-                            shortcut_row(ui, "Editor", "Font, zoom, highlights, etc.");
-                            shortcut_row(ui, "Audio", "Device, interpolation, limiter, sample rate");
-                            shortcut_row(ui, "Backup", "Auto-backup interval & directory");
-                            shortcut_row(ui, "Theme", "Visual theme selection");
-                            shortcut_row(ui, "Advanced", "Debug logging toggle");
+                            super::style::section_header(ui, "SETTINGS (F10)", theme);
+                            shortcut_row(ui, "Paths", "Default sample/directory paths", theme);
+                            shortcut_row(ui, "Editor", "Font, zoom, highlights, etc.", theme);
+                            shortcut_row(ui, "Audio", "Device, interpolation, limiter, sample rate", theme);
+                            shortcut_row(ui, "Backup", "Auto-backup interval & directory", theme);
+                            shortcut_row(ui, "Theme", "Visual theme selection", theme);
+                            shortcut_row(ui, "Advanced", "Debug logging toggle", theme);
                             ui.add_space(8.0);
 
-                            section_header(ui, "EFFECT COMMANDS");
-                            effect_row(ui, "0", "Arpeggio (XY: x,y notes)");
-                            effect_row(ui, "1", "Portamento Up (XX: speed)");
-                            effect_row(ui, "2", "Portamento Down (XX: speed)");
-                            effect_row(ui, "3", "Tone Portamento (XX: speed)");
-                            effect_row(ui, "4", "Vibrato (XY: speed, depth)");
-                            effect_row(ui, "5", "Tone Porta + Vol Slide (XY)");
-                            effect_row(ui, "6", "Vibrato + Vol Slide (XY)");
-                            effect_row(ui, "7", "Tremolo (XY: speed, depth)");
-                            effect_row(ui, "8", "Set Panning (XX: 00-FF)");
-                            effect_row(ui, "9", "Set Offset (XX: high byte)");
-                            effect_row(ui, "A", "Volume Slide (XY: up, down)");
-                            effect_row(ui, "B", "Position Jump (XX: order)");
-                            effect_row(ui, "C", "Set Volume (XX: 00-40)");
-                            effect_row(ui, "D", "Pattern Break (XX: row)");
-                            effect_row(ui, "E", "Extended Effects (E1, E2...)");
-                            effect_row(ui, "F", "Set Speed (XX < 20) / Tempo");
-                            effect_row(ui, "G", "Global Volume (XX)");
-                            effect_row(ui, "H", "Global Vol Slide (XY)");
-                            effect_row(ui, "I", "Tremor (XY: on, off)");
-                            effect_row(ui, "K", "Key Off (XM)");
-                            effect_row(ui, "L", "Envelope Position (XX)");
-                            effect_row(ui, "P", "Panning Slide (XX)");
-                            effect_row(ui, "R", "Filter Resonance (XX)");
-                            effect_row(ui, "S", "Set Send Level (XY: bus, level)");
-                            effect_row(ui, "X", "Filter Type (XX)");
-                            effect_row(ui, "Y", "Panbrello (XY)");
-                            effect_row(ui, "Z", "Filter Cutoff (XX)");
+                            super::style::section_header(ui, "EFFECT COMMANDS", theme);
+                            effect_row(ui, "0", "Arpeggio (XY: x,y notes)", theme);
+                            effect_row(ui, "1", "Portamento Up (XX: speed)", theme);
+                            effect_row(ui, "2", "Portamento Down (XX: speed)", theme);
+                            effect_row(ui, "3", "Tone Portamento (XX: speed)", theme);
+                            effect_row(ui, "4", "Vibrato (XY: speed, depth)", theme);
+                            effect_row(ui, "5", "Tone Porta + Vol Slide (XY)", theme);
+                            effect_row(ui, "6", "Vibrato + Vol Slide (XY)", theme);
+                            effect_row(ui, "7", "Tremolo (XY: speed, depth)", theme);
+                            effect_row(ui, "8", "Set Panning (XX: 00-FF)", theme);
+                            effect_row(ui, "9", "Set Offset (XX: high byte)", theme);
+                            effect_row(ui, "A", "Volume Slide (XY: up, down)", theme);
+                            effect_row(ui, "B", "Position Jump (XX: order)", theme);
+                            effect_row(ui, "C", "Set Volume (XX: 00-40)", theme);
+                            effect_row(ui, "D", "Pattern Break (XX: row)", theme);
+                            effect_row(ui, "E", "Extended Effects (E1, E2...)", theme);
+                            effect_row(ui, "F", "Set Speed (XX < 20) / Tempo", theme);
+                            effect_row(ui, "G", "Global Volume (XX)", theme);
+                            effect_row(ui, "H", "Global Vol Slide (XY)", theme);
+                            effect_row(ui, "I", "Tremor (XY: on, off)", theme);
+                            effect_row(ui, "K", "Key Off (XM)", theme);
+                            effect_row(ui, "L", "Envelope Position (XX)", theme);
+                            effect_row(ui, "P", "Panning Slide (XX)", theme);
+                            effect_row(ui, "R", "Filter Resonance (XX)", theme);
+                            effect_row(ui, "S", "Set Send Level (XY: bus, level)", theme);
+                            effect_row(ui, "X", "Filter Type (XX)", theme);
+                            effect_row(ui, "Y", "Panbrello (XY)", theme);
+                            effect_row(ui, "Z", "Filter Cutoff (XX)", theme);
                         });
                     });
 
                     ui.add_space(10.0);
                     ui.separator();
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new(concat!("htrk v", env!("CARGO_PKG_VERSION"), " — A Modern Music Tracker")).italics().color(egui::Color32::GRAY));
+                    ui.label(egui::RichText::new(concat!("Holofonic Tracker v", env!("CARGO_PKG_VERSION"), " — A Modern Music Tracker")).italics().color(theme.fg_dim));
                 });
         });
 }
 
-fn section_header(ui: &mut egui::Ui, text: &str) {
-    ui.label(
-        egui::RichText::new(text)
-            .size(13.0)
-            .strong()
-            .color(egui::Color32::from_rgb(100, 200, 255)),
-    );
-}
 
-fn shortcut_row(ui: &mut egui::Ui, keys: &str, action: &str) {
+
+fn shortcut_row(ui: &mut egui::Ui, keys: &str, action: &str, theme: &TrackerTheme) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("{: <16}", keys))
                 .monospace()
-                .size(11.0)
-                .color(egui::Color32::from_rgb(255, 200, 100)),
+                .size(FONT_BODY)
+                .color(theme.fg_effect),
         );
         ui.label(
             egui::RichText::new(action)
-                .size(11.0)
-                .color(egui::Color32::from_rgb(200, 200, 220)),
+                .size(FONT_BODY)
+                .color(theme.fg_text),
         );
     });
 }
 
-fn effect_row(ui: &mut egui::Ui, code: &str, description: &str) {
+fn effect_row(ui: &mut egui::Ui, code: &str, description: &str, theme: &TrackerTheme) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("{: >2} ", code))
                 .monospace()
                 .strong()
-                .size(11.0)
-                .color(egui::Color32::from_rgb(150, 255, 150)),
+                .size(FONT_BODY)
+                .color(theme.fg_volume),
         );
         ui.label(
             egui::RichText::new(description)
-                .size(11.0)
-                .color(egui::Color32::from_rgb(200, 200, 220)),
+                .size(FONT_BODY)
+                .color(theme.fg_text),
         );
     });
 }

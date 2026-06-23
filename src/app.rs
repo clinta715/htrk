@@ -12,7 +12,7 @@ use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::{DEFAULT_CHANNELS, MAX_CHANNELS};
 use crate::ui::file_browser::{BrowserMode, FileBrowser};
-use crate::ui::pattern_grid::{ColumnVisibility, CursorPosition, Selection, SubColumn};
+use crate::ui::pattern_grid::{ColumnVisibility, Selection, SubColumn};
 use crate::ui::panel_event::PanelEvent;
 use crate::ui::theme::ThemePreset;
 use crate::ui::TrackerTheme;
@@ -92,11 +92,24 @@ pub struct HtrkApp {
     pub(crate) show_phrase_generator: bool,
     pub(crate) slice_dialog_open: bool,
     pub(crate) slice_config: crate::actions::slice_to_instrument::SliceConfig,
+
+    pub(crate) mcp_server: Option<crate::mcp::McpServer>,
+}
+
+impl HtrkApp {
+    pub fn with_config(config: AppConfig) -> Self {
+        Self::from_config(config)
+    }
 }
 
 impl Default for HtrkApp {
     fn default() -> Self {
-        let config = AppConfig::load();
+        Self::from_config(AppConfig::load())
+    }
+}
+
+impl HtrkApp {
+    fn from_config(config: AppConfig) -> Self {
         let inst_list_w = config.instrument_list_width.unwrap_or(150.0);
         let inst_env_h = config.instrument_envelope_height.unwrap_or(180.0);
         let mut file_browser = FileBrowser::default();
@@ -105,6 +118,10 @@ impl Default for HtrkApp {
         file_browser.restore_widths_from_config(&config);
         let playback_state = Arc::new(AtomicPlaybackState::default());
         let pending_view_switch = Arc::new(AtomicU8::new(0));
+        let mcp_enabled = config.mcp_enabled;
+        let mcp_port = config.mcp_port;
+        let mcp_http_enabled = config.mcp_http_enabled;
+        let mcp_http_port = config.mcp_http_port;
         HtrkApp {
             core: crate::core::HtrkCore::new(playback_state.clone()),
             stream: None,
@@ -138,6 +155,8 @@ impl Default for HtrkApp {
             audio_init_failed: false,
             sample_editor: crate::ui::sample_editor_panel::SampleEditor {
                 amplify_factor: config.default_amplify_factor,
+                list_width: config.sample_list_width.unwrap_or(200.0),
+                waveform_height: config.sample_waveform_height.unwrap_or(150.0),
                 ..crate::ui::sample_editor_panel::SampleEditor::default()
             },
             col_vis: config.get_col_vis(),
@@ -194,6 +213,17 @@ impl Default for HtrkApp {
                 let devmcp = eguidev_runtime::attach(devmcp);
 
                 Arc::new(devmcp)
+            },
+            mcp_server: if mcp_enabled {
+                let http_port = if mcp_http_enabled { Some(mcp_http_port) } else { None };
+                let server = crate::mcp::McpServer::start(mcp_port, http_port);
+                eprintln!("[app] MCP server enabled (TCP port {})", server.port);
+                if let Some(hp) = server.http_port {
+                    eprintln!("[app] MCP HTTP SSE transport enabled (port {hp})");
+                }
+                Some(server)
+            } else {
+                None
             },
         }
     }
@@ -641,22 +671,6 @@ impl HtrkApp {
         }
     }
 
-    pub(crate) fn select_current_cell(&mut self) {
-        let cur = self.core.cursor;
-        self.core.selection_anchor = Some(cur);
-        self.core.selection = Some(Selection { start: cur, end: cur });
-    }
-
-    pub(crate) fn select_line(&mut self) {
-        let row = self.core.cursor.row;
-        let last_ch = self.core.num_channels().saturating_sub(1);
-        self.core.selection_anchor = Some(self.core.cursor);
-        self.core.selection = Some(Selection {
-            start: CursorPosition { row, channel: 0, sub_column: SubColumn::Note },
-            end: CursorPosition { row, channel: last_ch, sub_column: SubColumn::EffectParamLow },
-        });
-    }
-
     pub(crate) fn cut_selection(&mut self) {
         self.core.copy_selection();
         self.core.delete_selection();
@@ -765,9 +779,17 @@ impl HtrkApp {
             self.init_audio();
         }
 
+        // Process MCP mutation requests on the main thread.
+        if let Some(ref mut server) = self.mcp_server {
+            while let Ok(cmd) = server.command_rx.try_recv() {
+                let result = crate::mcp::mutations::execute_mutation(&mut self.core, &cmd.method, &cmd.params);
+                let _ = cmd.response_tx.send(result);
+            }
+        }
+
         crate::actions::handle_keyboard_input(self, ctx);
 
-        if ctx.memory(|m| m.focused().is_none()) {
+        if self.current_view == AppView::Pattern && ctx.memory(|m| m.focused().is_none()) {
             ctx.input_mut(|i| {
                 i.events.retain(|e| !matches!(e,
                     egui::Event::Key { key: egui::Key::Tab, pressed: true, .. }
@@ -843,12 +865,88 @@ impl HtrkApp {
             }
         }
 
+        // Update MCP module snapshot for the MCP thread.
+        if let Some(ref mut server) = self.mcp_server {
+            if let Some(ref module) = self.core.module {
+                let patterns_json: Vec<(usize, serde_json::Value)> = module.patterns.iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let rows: Vec<Vec<crate::sequencer::pattern::Cell>> = p.data.iter()
+                            .map(|row| row[..module.channel_panning.len()].to_vec())
+                            .collect();
+                        (i, serde_json::json!({"num_rows": p.num_rows, "data": rows}))
+                    })
+                    .collect();
+                let instruments_json: Vec<(usize, serde_json::Value)> = module.instruments.iter()
+                    .enumerate()
+                    .map(|(i, inst)| (i, serde_json::to_value(inst).unwrap_or_default()))
+                    .collect();
+                let samples_json: Vec<(usize, serde_json::Value)> = module.samples.iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let info = serde_json::json!({
+                            "name": s.name,
+                            "sample_rate": s.sample_rate,
+                            "bits_per_sample": s.bits_per_sample,
+                            "length": s.data.len(),
+                            "loop_type": format!("{:?}", s.loop_type),
+                            "loop_start": s.loop_start,
+                            "loop_end": s.loop_end,
+                            "default_volume": s.default_volume,
+                            "default_panning": s.default_panning,
+                            "global_volume": s.global_volume,
+                            "relative_note": s.relative_note,
+                            "fine_tune": s.fine_tune,
+                        });
+                        (i, info)
+                    })
+                    .collect();
+
+                let module_json = serde_json::to_value(&**module).unwrap_or_default();
+                let pb = &self.core.playback_state;
+                let playing = pb.playing.load(std::sync::atomic::Ordering::Relaxed);
+                let pb_snapshot = crate::mcp::protocol::PlaybackSnapshot {
+                    playing,
+                    current_order: pb.current_order.load(std::sync::atomic::Ordering::Relaxed),
+                    current_row: pb.current_row.load(std::sync::atomic::Ordering::Relaxed),
+                    current_pattern: pb.current_pattern.load(std::sync::atomic::Ordering::Relaxed),
+                    current_tick: pb.current_tick.load(std::sync::atomic::Ordering::Relaxed),
+                    bpm: pb.bpm.load(std::sync::atomic::Ordering::Relaxed),
+                    speed: pb.speed.load(std::sync::atomic::Ordering::Relaxed),
+                    active_voices: pb.active_voices.load(std::sync::atomic::Ordering::Relaxed),
+                    cpu_usage_pct: pb.cpu_usage_pct.load(std::sync::atomic::Ordering::Relaxed),
+                };
+                let ch_snapshot = crate::mcp::protocol::ChannelsSnapshot {
+                    panning: module.channel_panning.clone(),
+                    volume: module.channel_volume.clone(),
+                    muted: self.core.muted_channels.clone(),
+                    solo: self.core.solo_channels.clone(),
+                };
+
+                let snapshot = crate::mcp::protocol::ModuleSnapshot {
+                    module_json: Some(module_json),
+                    patterns_json,
+                    instruments_json,
+                    samples_json,
+                };
+                if let Ok(mut lock) = server.snapshot.write() {
+                    *lock = snapshot;
+                }
+                if let Ok(mut lock) = server.playback_snapshot.write() {
+                    *lock = pb_snapshot;
+                }
+                if let Ok(mut lock) = server.channels_snapshot.write() {
+                    *lock = ch_snapshot;
+                }
+            }
+        }
+
         (playback_row, playback_order, playback_pattern, playback_tick, playback_speed)
     }
 
     fn draw_dialogs(&mut self, ctx: &egui::Context) {
         if self.show_shortcuts {
-            crate::ui::help_screen::draw_shortcuts_window(ctx, &mut self.show_shortcuts);
+            crate::ui::help_screen::draw_shortcuts_window(ctx, &mut self.show_shortcuts, &self.theme);
         }
 
         if self.settings_state.open {
@@ -857,6 +955,7 @@ impl HtrkApp {
                 &mut self.settings_state,
                 &self.output_device_names,
                 self.selected_device_name.as_deref(),
+                &self.theme,
             );
             match action {
                 crate::ui::settings_window::SettingsAction::Save | crate::ui::settings_window::SettingsAction::Apply => {
@@ -883,14 +982,14 @@ impl HtrkApp {
         }
 
         if self.show_about {
-            egui::Window::new("About htrk")
+            egui::Window::new("About Holofonic Tracker")
                 .open(&mut self.show_about)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .resizable(false)
                 .default_width(350.0)
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
-                        ui.heading(concat!("htrk v", env!("CARGO_PKG_VERSION")));
+                        ui.heading(concat!("Holofonic Tracker v", env!("CARGO_PKG_VERSION")));
                         ui.add_space(8.0);
                         ui.label("A modern tracker / music sequencer");
                         ui.add_space(4.0);
@@ -1332,12 +1431,16 @@ impl eframe::App for HtrkApp {
                 self.current_sample_rate,
                 &self.current_sample_format,
                 &mut self.col_vis,
+                &self.config.recent_files,
             );
             if menu_resp.new_song {
                 self.new_song();
             }
             if menu_resp.open_file {
                 self.open_file_dialog();
+            }
+            if let Some(ref path) = menu_resp.open_recent {
+                crate::actions::load_file(self, path);
             }
             if menu_resp.import_sample {
                 self.browser_purpose = BrowserPurpose::General;
@@ -1510,9 +1613,11 @@ impl eframe::App for HtrkApp {
                 }
             });
 
-        egui::Panel::left("order_list")
+        let order_list_width = self.config.order_list_width.unwrap_or(150.0);
+        let order_panel_resp = egui::Panel::left("order_list")
+            .resizable(true)
             .min_size(120.0)
-            .default_size(150.0)
+            .default_size(order_list_width)
             .show_inside(ui, |ui| {
                 if let Some(ref module) = self.core.module {
                     let order_resp = crate::ui::order_list::draw_order_list(
@@ -1601,6 +1706,7 @@ impl eframe::App for HtrkApp {
                     ui.label("No module loaded");
                 }
             });
+        self.config.order_list_width = Some(order_panel_resp.response.rect.width());
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             if self.core.module.is_none() {
@@ -1869,10 +1975,17 @@ impl eframe::App for HtrkApp {
             }
         });
 
+        let size = ctx.viewport_rect().size();
+        self.config.window_width = Some(size.x);
+        self.config.window_height = Some(size.y);
+
         self.draw_dialogs(&ctx);
     }
 
     fn on_exit(&mut self) {
+        if let Some(ref mut server) = self.mcp_server {
+            server.stop();
+        }
         self.core.send_command(crate::audio::commands::AudioCommand::Stop);
         self.stream = None;
         self.core.command_sender = None;
