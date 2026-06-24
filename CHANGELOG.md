@@ -17,6 +17,10 @@ All notable changes to htrk will be documented in this file.
 - **CLAP Editor: Error Display**: `open_editor` failures now show a red label below the button instead of `eprintln!`.
 - **CLAP Editor: X-Close Detection**: Polling `IsWindowVisible` on the plugin's container HWND each frame; if the user closes the floating window externally, the Send FX UI updates immediately.
 - **F6 = Send FX view, F7 = Automation view**: Keyboard shortcuts (F2-F5 unchanged).
+- **CLAP plugin parameters**: `HostedPluginHandle::parameter_info()` now uses the clack `Param` extension to enumerate exposed parameters (id, name, min/max, is_automatable, is_modulatable). A new "Parameters" collapsible section in the Send FX view shows one Slider per parameter, with the param's actual range. Slider changes call `set_parameter()` which pushes to a lock-free SPSC ring shared with the audio thread; the plugin sees the new value on the next `process()` call.
+- **CLAP plugin parameter automation**: New `AutomationTarget::PluginParam { send_bus, host_index, param_id }` variant. The sequencer queues plugin-param automation values; the audio engine routes them to the right plugin's param ring after each `process_tick()`. Combine with the Send FX sliders for full per-param automation.
+- **Effects column fixes**: hex typing in the FX column always writes the cell's `Effect`, regardless of whether an automation lane is overlaid. Clicking in the FX column with an automation overlay now creates an automation point by default; `Ctrl+click` bypasses automation to enter an effect value. The keyboard hex-digits no longer auto-route to `enter_automation_hex` (which was a UX trap).
+- **Right-click context menu**: New "Effect" section in the pattern editor's right-click menu with a "Set Effect" submenu (all 16 hex effects 0-F with names: Arpeggio, Portamento, Vibrato, SetVolume, SetSpeed, etc.) and a "Set Param (P/Z/S/R/X)" submenu (the named CLAP-style effect commands). "Clear Effect" sets the effect to `None`. All actions work on the cursor cell or the full selection.
 
 ### Changed
 
