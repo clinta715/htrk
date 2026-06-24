@@ -300,6 +300,47 @@ pub fn effect_param_value(effect: &Effect) -> Option<u8> {
 
 use crate::sequencer::pattern::Cell;
 
+/// Construct the canonical "zero parameter" Effect for a given 0-F hex digit.
+/// Mirrors the look-up in `hex_to_effect()` in keyboard.rs but is shared
+/// with the right-click "Set Effect" submenu so the two paths agree.
+pub fn effect_from_hex_digit(d: u8) -> Effect {
+    match d {
+        0 => Effect::Arpeggio { note1: 0, note2: 0 },
+        1 => Effect::PortamentoUp { speed: 0 },
+        2 => Effect::PortamentoDown { speed: 0 },
+        3 => Effect::TonePortamento { speed: 0 },
+        4 => Effect::Vibrato { speed: 0, depth: 0 },
+        5 => Effect::TonePortamentoVolumeSlide { up: 0 },
+        6 => Effect::VibratoVolumeSlide { up: 0 },
+        7 => Effect::Tremolo { speed: 0, depth: 0 },
+        8 => Effect::SetPanning { pan: 0 },
+        9 => Effect::SetSampleOffset { offset: 0 },
+        0xA => Effect::VolumeSlide { up: 0, down: 0 },
+        0xB => Effect::PositionJump { order: 0 },
+        0xC => Effect::SetVolume { volume: 0 },
+        0xD => Effect::PatternBreak { row: 0 },
+        0xE => Effect::ExtendedEffect { param: 0 },
+        0xF => Effect::SetSpeed { speed: 0 },
+        _ => Effect::None,
+    }
+}
+
+/// Construct the named parameter-style effect that maps to the keyboard
+/// letters P / Z / S / R / X. The `command` discriminant is defined by
+/// `ParamEffectCommand` in the UI layer.
+pub fn effect_from_param_command(command_kind: u8) -> Effect {
+    // The discriminant values are arbitrary but must be stable across
+    // the UI and the sequencer. They are NOT persisted.
+    match command_kind {
+        0 => Effect::SetSendBusParam { bus: 0, param: 0, value: 0 },
+        1 => Effect::SetFilterCutoff { cutoff: 0 },
+        2 => Effect::SetSendLevel { send_index: 0, level: 0 },
+        3 => Effect::SetFilterResonance { resonance: 0 },
+        4 => Effect::SetFilterType { filter_type: 0 },
+        _ => Effect::None,
+    }
+}
+
 pub fn set_effect_param_value(mut cell: Cell, val: u8) -> Cell {
     match &mut cell.effect {
         Effect::Arpeggio { note1, note2 } => { *note1 = val >> 4; *note2 = val & 0x0F; }

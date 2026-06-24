@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::edit::{SetCellCommand, BulkSetCellsCommand, TransposeCommand};
+use crate::sequencer::effect::Effect;
 use crate::sequencer::module::MAX_CHANNELS;
 use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
@@ -374,6 +375,78 @@ impl HtrkCore {
                             };
                             let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
                         }
+                    }
+                    crate::ui::pattern_grid::ContextMenuAction::SetEffect { hex } => {
+                        // Set the effect on the cursor cell (or the entire
+                        // selection if active). The param defaults to 0;
+                        // user can fine-tune via hex typing in the param
+                        // columns.
+                        let effect = crate::sequencer::effect::effect_from_hex_digit(hex);
+                        let mut old_cells: Vec<(usize, usize, Cell)> = Vec::new();
+                        let mut new_cells: Vec<(usize, usize, Cell)> = Vec::new();
+                        for row in min.row..=max.row {
+                            for ch in min.channel..=max.channel {
+                                let c = arc_module.patterns[pat_idx].data[row][ch];
+                                old_cells.push((row, ch, c));
+                                let mut c2 = c;
+                                c2.effect = effect.clone();
+                                new_cells.push((row, ch, c2));
+                            }
+                        }
+                        let cmd = crate::edit::BulkSetCellsCommand {
+                            order: selected_order,
+                            old_cells,
+                            new_cells,
+                        };
+                        let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                    }
+                    crate::ui::pattern_grid::ContextMenuAction::SetParamEffect { command } => {
+                        // Map the UI's ParamEffectCommand to a stable
+                        // discriminant (0..=4) for the sequencer helper.
+                        let kind: u8 = match command {
+                            crate::ui::pattern_grid::ParamEffectCommand::SetSendBusParam => 0,
+                            crate::ui::pattern_grid::ParamEffectCommand::SetFilterCutoff => 1,
+                            crate::ui::pattern_grid::ParamEffectCommand::SetSendLevel => 2,
+                            crate::ui::pattern_grid::ParamEffectCommand::SetFilterResonance => 3,
+                            crate::ui::pattern_grid::ParamEffectCommand::SetFilterType => 4,
+                        };
+                        let effect = crate::sequencer::effect::effect_from_param_command(kind);
+                        let mut old_cells: Vec<(usize, usize, Cell)> = Vec::new();
+                        let mut new_cells: Vec<(usize, usize, Cell)> = Vec::new();
+                        for row in min.row..=max.row {
+                            for ch in min.channel..=max.channel {
+                                let c = arc_module.patterns[pat_idx].data[row][ch];
+                                old_cells.push((row, ch, c));
+                                let mut c2 = c;
+                                c2.effect = effect.clone();
+                                new_cells.push((row, ch, c2));
+                            }
+                        }
+                        let cmd = crate::edit::BulkSetCellsCommand {
+                            order: selected_order,
+                            old_cells,
+                            new_cells,
+                        };
+                        let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
+                    }
+                    crate::ui::pattern_grid::ContextMenuAction::ClearEffect => {
+                        let mut old_cells: Vec<(usize, usize, Cell)> = Vec::new();
+                        let mut new_cells: Vec<(usize, usize, Cell)> = Vec::new();
+                        for row in min.row..=max.row {
+                            for ch in min.channel..=max.channel {
+                                let c = arc_module.patterns[pat_idx].data[row][ch];
+                                old_cells.push((row, ch, c));
+                                let mut c2 = c;
+                                c2.effect = Effect::None;
+                                new_cells.push((row, ch, c2));
+                            }
+                        }
+                        let cmd = crate::edit::BulkSetCellsCommand {
+                            order: selected_order,
+                            old_cells,
+                            new_cells,
+                        };
+                        let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
                     }
                 }
             }

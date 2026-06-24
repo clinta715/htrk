@@ -91,7 +91,15 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
     //    Shift+Tab matches the plain-Tab branch. Fix: inspect raw events directly,
     //    matching !modifiers.any() vs modifiers.shift_only() (same semantics begin_pass
     //    uses internally).
-    if is_pattern && !any_dialog_open {
+    //
+    // Tab/Shift-Tab advance the channel cursor in the pattern editor. The
+    // capture is gated on BOTH `is_pattern` (we're in the pattern view) AND
+    // `edit_mode` (we're in data-entry/edit mode). When the user is in
+    // view-only mode (or any other view), Tab is left to egui's normal
+    // focus traversal so dialog widgets (sliders, text fields) work
+    // correctly. Pressing Tab in a non-pattern view should also fall
+    // through to the normal focus chain.
+    if is_pattern && !any_dialog_open && app.edit_mode {
         let mut tab_pressed = false;
         let mut shift_pressed = false;
         ctx.input_mut(|i| {
@@ -856,7 +864,7 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
         }
         let mut cell = app.core.get_cell_at_cursor();
         let changed = if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
-            cell.effect = hex_to_effect(d as u8);
+            cell.effect = crate::sequencer::effect::effect_from_hex_digit(d as u8);
             true
         } else {
             match ch.to_ascii_uppercase() {
@@ -949,27 +957,6 @@ fn preview_note(app: &mut HtrkApp, note_key: u8) {
     });
 }
 
-fn hex_to_effect(d: u8) -> Effect {
-    match d {
-        0 => Effect::Arpeggio { note1: 0, note2: 0 },
-        1 => Effect::PortamentoUp { speed: 0 },
-        2 => Effect::PortamentoDown { speed: 0 },
-        3 => Effect::TonePortamento { speed: 0 },
-        4 => Effect::Vibrato { speed: 0, depth: 0 },
-        5 => Effect::TonePortamentoVolumeSlide { up: 0 },
-        6 => Effect::VibratoVolumeSlide { up: 0 },
-        7 => Effect::Tremolo { speed: 0, depth: 0 },
-        8 => Effect::SetPanning { pan: 0 },
-        9 => Effect::SetSampleOffset { offset: 0 },
-        0xA => Effect::VolumeSlide { up: 0, down: 0 },
-        0xB => Effect::PositionJump { order: 0 },
-        0xC => Effect::SetVolume { volume: 0 },
-        0xD => Effect::PatternBreak { row: 0 },
-        0xE => Effect::ExtendedEffect { param: 0 },
-        0xF => Effect::SetSpeed { speed: 0 },
-        _ => Effect::None,
-    }
-}
 
 fn effect_param(effect: &Effect) -> u8 {
     crate::sequencer::effect::effect_param_value(effect).unwrap_or(0)

@@ -285,6 +285,31 @@ pub enum ContextMenuAction {
     InterpolateEffect,
     Reverse,
     Randomize,
+    /// Insert an effect command at the cursor position. `hex` is the
+    /// effect type digit (0-15). Used by the "Set Effect" submenu.
+    SetEffect { hex: u8 },
+    /// Set the effect to one of the named CLAP-style commands: P, Z, S, R, X.
+    /// Maps to the Effect::SetSendBusParam / SetFilterCutoff / etc.
+    SetParamEffect { command: ParamEffectCommand },
+    /// Clear the effect command at the cursor position (or all selected
+    /// cells if a selection is active).
+    ClearEffect,
+}
+
+/// Identifies one of the named parameter-style effect commands that the
+/// "Set Effect" submenu exposes in addition to the standard hex effects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamEffectCommand {
+    /// 'P' — SetSendBusParam (param 0 by default; user can edit param high/low)
+    SetSendBusParam,
+    /// 'Z' — SetFilterCutoff
+    SetFilterCutoff,
+    /// 'S' — SetSendLevel
+    SetSendLevel,
+    /// 'R' — SetFilterResonance
+    SetFilterResonance,
+    /// 'X' — SetFilterType
+    SetFilterType,
 }
 
 pub struct PatternGridResponse {
@@ -604,6 +629,63 @@ pub fn draw_pattern_grid(
 
     let has_selection = selection.is_some();
     response.context_menu(|ui| {
+        // ── Effect commands (context-sensitive: always available) ──
+        // "Set Effect" submenu lists all 16 hex effects with their standard
+        // tracker names. The "Param" submenu lists the named CLAP-style
+        // commands (P/Z/S/R/X). Selecting one sets the cursor cell's effect
+        // to that command; with a selection, it sets the effect on all
+        // selected cells (param defaults to 0 — user can fine-tune the
+        // param high/low via the regular hex typing after picking).
+        ui.label(egui::RichText::new("Effect").strong());
+        ui.menu_button("Set Effect", |ui| {
+            // Standard 0-F effects with their human-readable names
+            const EFFECT_NAMES: &[&str] = &[
+                "0  Arpeggio",
+                "1  Portamento Up",
+                "2  Portamento Down",
+                "3  Tone Portamento",
+                "4  Vibrato",
+                "5  TPort + Vol Slide",
+                "6  Vibrato + Vol Slide",
+                "7  Tremolo",
+                "8  Set Panning",
+                "9  Set Sample Offset",
+                "A  Volume Slide",
+                "B  Position Jump",
+                "C  Set Volume",
+                "D  Pattern Break",
+                "E  Extended (E0-EFF)",
+                "F  Set Speed",
+            ];
+            for (i, name) in EFFECT_NAMES.iter().enumerate() {
+                if ui.button(*name).clicked() {
+                    context_menu_action = Some(ContextMenuAction::SetEffect { hex: i as u8 });
+                    ui.close();
+                }
+            }
+        });
+        ui.menu_button("Set Param (P/Z/S/R/X)", |ui| {
+            const PARAM_NAMES: &[(&str, ParamEffectCommand)] = &[
+                ("P  Set Send Bus Param",  ParamEffectCommand::SetSendBusParam),
+                ("Z  Set Filter Cutoff",   ParamEffectCommand::SetFilterCutoff),
+                ("S  Set Send Level",      ParamEffectCommand::SetSendLevel),
+                ("R  Set Filter Resonance",ParamEffectCommand::SetFilterResonance),
+                ("X  Set Filter Type",     ParamEffectCommand::SetFilterType),
+            ];
+            for (label, cmd) in PARAM_NAMES {
+                if ui.button(*label).clicked() {
+                    context_menu_action = Some(ContextMenuAction::SetParamEffect { command: *cmd });
+                    ui.close();
+                }
+            }
+        });
+        if ui.button("Clear Effect").clicked() {
+            context_menu_action = Some(ContextMenuAction::ClearEffect);
+            ui.close();
+        }
+        ui.separator();
+
+        // ── Block operations (selection-only) ──
         ui.label(egui::RichText::new("Block Operations").strong());
         ui.separator();
         if ui.add_enabled(has_selection, egui::Button::new("Fill Instrument")).clicked() {
