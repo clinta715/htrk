@@ -109,6 +109,41 @@ impl ClapPluginHandle {
     }
 }
 
+/// Extract a plugin's descriptor without instantiating it.
+/// Used for the plugin browser UI to list available plugins.
+/// This loads the .clap library, queries the factory for descriptors, then
+/// unloads. Costs ~10ms per plugin due to dlopen.
+pub fn extract_descriptor_for_browser(path: &Path) -> Result<PluginDescriptor, PluginError> {
+    // On Windows, .clap can be a directory bundle. Resolve to the actual DLL.
+    let load_path = if path.is_dir() {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| PluginError::InvalidFormat("Bundle missing name".into()))?;
+        let dll_name = format!("{stem}.clap");
+        let dll = path.join(&dll_name);
+        if !dll.is_file() {
+            return Err(PluginError::LoadFailed(format!(
+                "Bundle {} has no {} DLL", path.display(), dll_name
+            )));
+        }
+        dll
+    } else {
+        path.to_path_buf()
+    };
+    let entry = unsafe {
+        PluginEntry::load(&load_path).map_err(|e| PluginError::LoadFailed(e.to_string()))?
+    };
+    let plugin_factory = entry
+        .get_plugin_factory()
+        .ok_or(PluginError::LoadFailed("No plugin factory".into()))?;
+    let clap_descriptor = plugin_factory
+        .plugin_descriptors()
+        .next()
+        .ok_or(PluginError::LoadFailed("No plugins in bundle".into()))?;
+    Ok(extract_descriptor(path, &clap_descriptor))
+}
+
 fn extract_descriptor(path: &Path, clap_desc: &ClapPluginDescriptor) -> PluginDescriptor {
     let plugin_id = clap_desc
         .id()
@@ -350,7 +385,7 @@ impl HostedPluginProcessor for ClapPluginProcessor {
         let out_l_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(out_l_ptr, block_len) };
         let out_r_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(out_r_ptr, block_len) };
 
-        let mut input_audio = self.input_ports.with_input_buffers([AudioPortBuffer {
+        let input_audio = self.input_ports.with_input_buffers([AudioPortBuffer {
             latency: 0,
             channels: AudioPortBufferType::f32_input_only([
                 InputChannel::variable(in_l_slice),
@@ -652,5 +687,29 @@ mod tests {
 
         let stopped = processor.stop();
         handle.deactivate(stopped).expect("deactivate failed");
+    }
+
+    /// Integration test: extract_descriptor_for_browser loads the .clap
+    /// library just enough to read its descriptor (no instantiation).
+    /// This is the fast path used by the plugin browser UI to populate
+    /// the plugin list on startup.
+    #[test]
+    fn test_extract_descriptor_for_browser() {
+        let clap_path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !clap_path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found");
+            return;
+        }
+        match extract_descriptor_for_browser(clap_path) {
+            Ok(d) => {
+                eprintln!("[ok] Extracted descriptor: {} ({})", d.name, d.plugin_id);
+                assert!(!d.name.is_empty(), "Descriptor should have a name");
+                assert!(!d.plugin_id.is_empty(), "Descriptor should have a plugin id");
+                assert_eq!(d.format, PluginFormat::Clap);
+                // TAL Reverb 4 should be a Reverb effect, not instrument
+                assert_ne!(d.plugin_type, PluginType::Instrument);
+            }
+            Err(e) => panic!("extract_descriptor_for_browser failed: {e}"),
+        }
     }
 }

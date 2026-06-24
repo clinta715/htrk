@@ -37,6 +37,10 @@ pub struct SettingsState {
     default_project_path: Option<String>,
     default_wav_path: Option<String>,
 
+    /// Additional directories to scan for CLAP plugins, beyond the system
+    /// defaults. Phase 2 plugin hosting.
+    plugin_scan_paths: Vec<String>,
+
     editor_font_size: u32,
     zoom_factor: f32,
     scroll_speed: f32,
@@ -66,6 +70,7 @@ pub struct SettingsState {
     debug_enabled: bool,
 
     new_sample_path: String,
+    new_plugin_path: String,
 
     pending_refresh_devices: bool,
 
@@ -83,6 +88,7 @@ impl SettingsState {
             default_instrument_path: config.default_instrument_path.clone(),
             default_project_path: config.default_project_path.clone(),
             default_wav_path: config.default_wav_path.clone(),
+            plugin_scan_paths: config.plugin_scan_paths.clone(),
 
             editor_font_size: config.editor_font_size,
             zoom_factor: config.zoom_factor,
@@ -113,6 +119,7 @@ impl SettingsState {
             debug_enabled: config.debug,
 
             new_sample_path: String::new(),
+            new_plugin_path: String::new(),
 
             pending_refresh_devices: false,
 
@@ -126,6 +133,7 @@ impl SettingsState {
         config.default_instrument_path = self.default_instrument_path.clone();
         config.default_project_path = self.default_project_path.clone();
         config.default_wav_path = self.default_wav_path.clone();
+        config.plugin_scan_paths = self.plugin_scan_paths.clone();
 
         config.editor_font_size = self.editor_font_size;
         config.zoom_factor = self.zoom_factor;
@@ -291,6 +299,58 @@ fn draw_paths_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerT
     path_row(ui, "Instrument Path", &mut state.default_instrument_path);
     path_row(ui, "WAV Export Path", &mut state.default_wav_path);
     path_row(ui, "Project Path", &mut state.default_project_path);
+
+    ui.add_space(12.0);
+    super::style::section_header(ui, "Plugin Scan Paths (CLAP)", theme);
+    ui.add_space(2.0);
+    ui.label(egui::RichText::new(
+        "Additional directories to scan for CLAP plugins. The system defaults \
+         (e.g. C:\\Program Files\\Common Files\\CLAP) are always included."
+    ).size(FONT_BODY).weak());
+
+    let mut remove_idx = None;
+    for (i, path) in state.plugin_scan_paths.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(format!("{:>2}.", i + 1)).monospace().size(FONT_BODY));
+            let resp = ui.add_sized(
+                [ui.available_width() - 90.0, 20.0],
+                egui::TextEdit::singleline(path).font(egui::FontId::monospace(11.0)),
+            );
+            if resp.lost_focus() && path.trim().is_empty() {
+                remove_idx = Some(i);
+            }
+            if ui.button("...").clicked() {
+                if let Some(p) = pick_folder() {
+                    *path = p.to_string_lossy().into_owned();
+                }
+            }
+            if ui.button("X").clicked() {
+                remove_idx = Some(i);
+            }
+        });
+    }
+    if let Some(idx) = remove_idx {
+        state.plugin_scan_paths.remove(idx);
+    }
+
+    ui.horizontal(|ui| {
+        ui.add_space(20.0);
+        ui.add(egui::TextEdit::singleline(&mut state.new_plugin_path)
+            .font(egui::FontId::monospace(11.0))
+            .hint_text("Add plugin path..."));
+        if ui.button("+ Add").clicked() {
+            let p = state.new_plugin_path.trim().to_string();
+            if !p.is_empty() {
+                state.plugin_scan_paths.push(p);
+                state.new_plugin_path.clear();
+            }
+        }
+        if ui.button("... Browse").clicked() {
+            if let Some(p) = pick_folder() {
+                state.plugin_scan_paths.push(p.to_string_lossy().into_owned());
+            }
+        }
+    });
 }
 
 fn path_row(ui: &mut egui::Ui, label: &str, value: &mut Option<String>) {

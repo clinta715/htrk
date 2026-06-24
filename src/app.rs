@@ -80,6 +80,9 @@ pub struct HtrkApp {
     pub(crate) col_vis: ColumnVisibility,
     pub(crate) playback_view: crate::ui::playback_view_panel::PlaybackView,
     pub(crate) sendfx_panel: crate::ui::sendfx_panel::SendFxPanel,
+    /// Status of the plugin browser dialog (loading / error / loaded).
+    /// Phase 2 plugin hosting.
+    pub(crate) plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus,
     pub(crate) alt_l_count: u8,
     pub(crate) alt_l_last: Option<std::time::Instant>,
     pub(crate) automation_editor: crate::ui::automation_editor_panel::AutomationEditor,
@@ -169,6 +172,7 @@ impl HtrkApp {
             config,
             playback_view: crate::ui::playback_view_panel::PlaybackView::default(),
             sendfx_panel: crate::ui::sendfx_panel::SendFxPanel::default(),
+            plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
             automation_editor: crate::ui::automation_editor_panel::AutomationEditor::default(),
             instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor {
                 list_width: inst_list_w,
@@ -234,12 +238,30 @@ impl HtrkApp {
                     }
                 }
                 // Configure plugin library scan paths and trigger an initial scan.
+                // The scan finds .clap files; loading each descriptor requires
+                // a dlopen + clack factory call, which is expensive. We do the
+                // initial scan on the main thread to populate file paths, then
+                // the UI triggers per-file descriptor extraction on demand
+                // (e.g. via the Plugin browser's "Rescan" button).
                 let plugin_scan_paths = plugin_scan_paths.clone();
                 if let Ok(mut lib) = server.plugin_library.write() {
                     lib.set_scan_roots(plugin_scan_paths.clone());
                     let found = lib.scan();
                     eprintln!("[app] Plugin library: {} .clap file(s) found in {} root(s)",
                         found.len(), plugin_scan_paths.len() + crate::audio::plugins::default_search_paths().len());
+
+                    // Probe each .clap file to extract its descriptor. This
+                    // is done on the main thread (one-time cost at startup).
+                    // For very large plugin collections this can be slow;
+                    // future work can make it incremental.
+                    for path in &found {
+                        if let Ok(descriptor) =
+                            crate::audio::plugins::clap_plugin::extract_descriptor_for_browser(path)
+                        {
+                            lib.add_descriptor(descriptor);
+                        }
+                    }
+                    eprintln!("[app] Plugin library: {} descriptor(s) loaded", lib.descriptor_count());
                 }
                 Some(server)
             } else {
@@ -250,6 +272,17 @@ impl HtrkApp {
 }
 
 impl HtrkApp {
+    /// Returns the list of discovered CLAP plugins from the MCP server's
+    /// plugin library. Empty if MCP is disabled or no scan has been done.
+    pub fn discovered_plugins(&self) -> Vec<crate::audio::plugins::PluginDescriptor> {
+        if let Some(ref mcp) = self.mcp_server {
+            if let Ok(lib) = mcp.plugin_library.read() {
+                return lib.list_descriptors().into_iter().cloned().collect();
+            }
+        }
+        Vec::new()
+    }
+
     pub fn refresh_output_devices(&mut self) {
         use cpal::traits::{HostTrait, DeviceTrait};
         let host = cpal::default_host();
@@ -1907,6 +1940,58 @@ impl eframe::App for HtrkApp {
                 }
                 AppView::SendFx => {
                     self.sendfx_panel.ui(ui, &mut self.core.command_sender);
+
+                    // Plugin browser dialog: shown when a bus requests it.
+                    if let Some(si) = self.sendfx_panel.plugin_browser_open_for {
+                        let discovered = self.discovered_plugins();
+                        let bus_letter = char::from(b'A' + si as u8);
+                        let mut open = true;
+                        let result = crate::ui::plugin_browser::draw_plugin_browser(
+                            &ctx,
+                            &mut open,
+                            si,
+                            &bus_letter.to_string(),
+                            &self.theme,
+                            &discovered,
+                            &self.plugin_browser_status,
+                        );
+                        match result {
+                            crate::ui::plugin_browser::PluginSelectResult::Selected {
+                                descriptor,
+                                send_index,
+                            } => {
+                                self.plugin_browser_status = crate::ui::plugin_browser::PluginBrowserStatus::Loading(descriptor.name.clone());
+                                let sample_rate = if self.current_sample_rate > 0 {
+                                    self.current_sample_rate as f64
+                                } else {
+                                    48000.0
+                                };
+                                let max_block = 512;
+                                match crate::ui::plugin_browser::load_and_install_plugin(
+                                    &descriptor,
+                                    send_index,
+                                    sample_rate,
+                                    max_block,
+                                    &mut self.core.command_sender,
+                                ) {
+                                    Ok(name) => {
+                                        self.sendfx_panel.plugin_names[send_index] = Some(name.clone());
+                                        self.plugin_browser_status = crate::ui::plugin_browser::PluginBrowserStatus::Loaded(name);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[plugin] load failed: {e}");
+                                        self.plugin_browser_status = crate::ui::plugin_browser::PluginBrowserStatus::Error(e);
+                                    }
+                                }
+                            }
+                            crate::ui::plugin_browser::PluginSelectResult::Cancelled => {
+                                self.plugin_browser_status = crate::ui::plugin_browser::PluginBrowserStatus::Idle;
+                            }
+                        }
+                        if !open {
+                            self.sendfx_panel.plugin_browser_open_for = None;
+                        }
+                    }
                 }
                 AppView::Playback => {
                     let num_channels = self.core.num_channels();

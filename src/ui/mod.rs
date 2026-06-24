@@ -13,6 +13,7 @@ pub mod instrument_editor_panel;
 pub mod menu_bar;
 pub mod note_map;
 pub mod oscilloscope;
+pub mod plugin_browser;
 pub mod order_list;
 pub mod pattern_grid;
 pub mod pattern_view;

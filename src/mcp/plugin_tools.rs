@@ -5,7 +5,7 @@
 use serde_json::json;
 
 use crate::mcp::protocol::{ToolContext, *};
-use crate::audio::plugins::{PluginDescriptor, PluginFormat, PluginLibrary};
+use crate::audio::plugins::{PluginDescriptor, PluginFormat};
 
 /// List all discovered plugins, optionally filtered by name substring.
 pub fn cmd_plugin_list(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {

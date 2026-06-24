@@ -55,6 +55,8 @@ pub fn draw_sendfx_view(
     send_bus_types: &mut [SendEffectType; NUM_SEND_BUSES],
     send_bus_params: &mut [[f32; 5]; NUM_SEND_BUSES],
     send_pre_fader: &mut [bool; NUM_SEND_BUSES],
+    plugin_names: &mut [Option<String>; NUM_SEND_BUSES],
+    plugin_browser_open_for: &mut Option<usize>,
 ) {
     ui.horizontal(|ui| {
         for si in 0..NUM_SEND_BUSES {
@@ -91,6 +93,33 @@ pub fn draw_sendfx_view(
                                 }
                             }
                         });
+                });
+
+                // ── Plugin slot ──
+                let plugin_name = plugin_names[si].as_deref().unwrap_or("").to_string();
+                if !plugin_name.is_empty() {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(100, 255, 100),
+                        format!("Plugin: {plugin_name}")
+                    );
+                } else {
+                    ui.label(egui::RichText::new("(built-in effect)").weak().size(11.0));
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Plugin...").clicked() {
+                        *plugin_browser_open_for = Some(si);
+                    }
+                    if !plugin_name.is_empty() {
+                        if ui.button("Remove").clicked() {
+                            if let Some(ref mut sender) = command_sender {
+                                sender.send(AudioCommand::SetSendPlugin {
+                                    send_index: si,
+                                    processor: None,
+                                });
+                            }
+                            plugin_names[si] = None;
+                        }
+                    }
                 });
 
                 ui.separator();
