@@ -138,6 +138,12 @@ pub trait HostedPluginProcessor: Send {
         transport: &TransportInfo,
     );
 
+    /// Stop the processor and return an opaque handle to the stopped state.
+    /// The handle is passed back to the main-thread `HostedPluginHandle::deactivate`
+    /// which downcasts it to the concrete type and calls the plugin's deactivation.
+    /// Consumes self.
+    fn stop(self: Box<Self>) -> Box<dyn std::any::Any>;
+
     /// Set a parameter value (main-thread or audio-thread safe).
     fn set_parameter(&mut self, param_id: u32, value: f32);
 

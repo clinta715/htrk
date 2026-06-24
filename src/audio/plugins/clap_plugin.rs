@@ -37,9 +37,35 @@ pub struct ClapPluginHandle {
 
 impl ClapPluginHandle {
     /// Load a CLAP plugin from disk and instantiate it. Discovers the first plugin in the bundle.
+    ///
+    /// On Windows, CLAP plugins can be packaged as either:
+    /// - A single `.clap` DLL file directly at the path
+    /// - A directory with `.clap` extension containing a DLL of the same name
+    /// This method handles both cases.
     pub fn load(path: &Path) -> Result<Self, PluginError> {
+        // On Windows, .clap can be a directory bundle. Resolve to the actual DLL.
+        let load_path = if path.is_dir() {
+            // Bundle directory: look for a DLL with the same stem
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| PluginError::InvalidFormat("Bundle missing name".into()))?;
+            let dll_name = format!("{stem}.clap");
+            let dll = path.join(&dll_name);
+            if !dll.is_file() {
+                return Err(PluginError::LoadFailed(format!(
+                    "Bundle {} has no {} DLL",
+                    path.display(),
+                    dll_name
+                )));
+            }
+            dll
+        } else {
+            path.to_path_buf()
+        };
+
         let entry = unsafe {
-            PluginEntry::load(path).map_err(|e| PluginError::LoadFailed(e.to_string()))?
+            PluginEntry::load(&load_path).map_err(|e| PluginError::LoadFailed(e.to_string()))?
         };
 
         let plugin_factory = entry
@@ -148,27 +174,34 @@ impl HostedPluginHandle for ClapPluginHandle {
             max_frames_count: max_block.max(1),
         };
 
-        instance
+        // PluginInstance::activate consumes the closure, returns the StoppedPluginAudioProcessor
+        let stopped = instance
             .activate(|_, _| (), config)
             .map_err(|e| e.to_string())?;
 
+        // Start processing, getting the StartedPluginAudioProcessor for the audio thread
+        let started = stopped
+            .start_processing()
+            .map_err(|e| format!("start_processing: {e:?}"))?;
+
         self.activated = true;
-        Ok(Box::new(ClapPluginProcessor {
-            descriptor: self.descriptor.clone(),
+        Ok(Box::new(ClapPluginProcessor::new(
+            started,
+            self.descriptor.clone(),
             sample_rate,
-        }))
+            max_block as usize,
+        )))
     }
 
-    fn deactivate(&mut self, _stopped: Box<dyn Any>) -> Result<(), String> {
+    fn deactivate(&mut self, stopped: Box<dyn Any>) -> Result<(), String> {
         if let Some(instance) = self.instance.as_mut() {
             if self.activated {
-                // The `_stopped` Box carries the audio thread's StoppedPluginAudioProcessor
-                // reference. When dropped, it releases the reference. We then call
-                // try_deactivate_with to deallocate the audio processor.
-                drop(_stopped);
-                instance
-                    .try_deactivate_with(|_audio_proc, _main_thread| ())
-                    .map_err(|e| e.to_string())?;
+                // Downcast the Box to the concrete StoppedPluginAudioProcessor type
+                // and pass it to instance.deactivate() which stops the plugin.
+                let stopped = stopped
+                    .downcast::<clack_host::process::StoppedPluginAudioProcessor<HtrkHost>>()
+                    .map_err(|_| "stopped processor wrong type".to_string())?;
+                instance.deactivate(*stopped);
                 self.activated = false;
             }
         }
@@ -199,16 +232,68 @@ impl HostedPluginHandle for ClapPluginHandle {
     }
 }
 
-// ── Audio-thread Processor (stub) ──
+// ── Audio-thread Processor (real CLAP processing) ──
 
-/// Stub processor that passes audio through. The real implementation will
-/// wrap a `StartedPluginAudioProcessor<HtrkHost>` and call its process() method.
+/// Real CLAP processor that calls the plugin's process() function each callback.
+/// Wraps a `StartedPluginAudioProcessor<HtrkHost>` and pre-allocates the
+/// audio I/O buffers + event buffers in `new()` for allocation-free processing.
 pub struct ClapPluginProcessor {
+    processor: StartedPluginAudioProcessor<HtrkHost>,
     descriptor: PluginDescriptor,
     sample_rate: f64,
+    max_block: usize,
+
+    // Pre-allocated I/O buffers, sized to max_block
+    in_l: Vec<f32>,
+    in_r: Vec<f32>,
+    out_l: Vec<f32>,
+    out_r: Vec<f32>,
+
+    // Pre-allocated AudioPorts containers
+    input_ports: AudioPorts,
+    output_ports: AudioPorts,
+
+    // Pre-allocated event buffers (allocated once at construction; RT-safe)
+    input_event_buffer: clack_host::events::io::EventBuffer,
+    output_event_buffer: clack_host::events::io::EventBuffer,
+}
+
+impl ClapPluginProcessor {
+    pub fn new(
+        processor: StartedPluginAudioProcessor<HtrkHost>,
+        descriptor: PluginDescriptor,
+        sample_rate: f64,
+        max_block: usize,
+    ) -> Self {
+        let max_block = max_block.max(1) as usize;
+        ClapPluginProcessor {
+            processor,
+            descriptor,
+            sample_rate,
+            max_block,
+            in_l: vec![0.0; max_block],
+            in_r: vec![0.0; max_block],
+            out_l: vec![0.0; max_block],
+            out_r: vec![0.0; max_block],
+            input_ports: AudioPorts::with_capacity(2, 1),
+            output_ports: AudioPorts::with_capacity(2, 1),
+            input_event_buffer: clack_host::events::io::EventBuffer::with_capacity(0),
+            output_event_buffer: clack_host::events::io::EventBuffer::with_capacity(0),
+        }
+    }
+
+    /// Stop processing and return the StoppedPluginAudioProcessor so the handle can
+    /// call `instance.deactivate(stopped)` on the main thread. Consumes self.
+    pub fn stop(self) -> clack_host::process::StoppedPluginAudioProcessor<HtrkHost> {
+        self.processor.stop_processing()
+    }
 }
 
 impl HostedPluginProcessor for ClapPluginProcessor {
+    fn stop(self: Box<Self>) -> Box<dyn std::any::Any> {
+        Box::new(ClapPluginProcessor::stop(*self))
+    }
+
     fn process(
         &mut self,
         input_l: &[f32],
@@ -218,14 +303,85 @@ impl HostedPluginProcessor for ClapPluginProcessor {
         frame_count: usize,
         _transport: &TransportInfo,
     ) {
-        // Pass-through (Phase 2 stub — real CLAP process() integration is filled in
-        // incrementally as we test against real plugins).
-        let n = frame_count.min(input_l.len()).min(output_l.len());
-        output_l[..n].copy_from_slice(&input_l[..n]);
-        output_r[..n].copy_from_slice(&input_r[..n]);
+        let n = frame_count.min(self.max_block);
+
+        // Copy input into our pre-allocated buffers
+        for i in 0..n {
+            self.in_l[i] = if i < input_l.len() { input_l[i] } else { 0.0 };
+            self.in_r[i] = if i < input_r.len() { input_r[i] } else { 0.0 };
+            self.out_l[i] = 0.0;
+            self.out_r[i] = 0.0;
+        }
+        // Zero the rest
+        for i in n..self.max_block {
+            self.in_l[i] = 0.0;
+            self.in_r[i] = 0.0;
+            self.out_l[i] = 0.0;
+            self.out_r[i] = 0.0;
+        }
+
+        // Build audio port buffer array. We need &mut [f32] for the buffer references.
+        // We split the buffers into individual channel slices.
+        use clack_host::process::audio_buffers::{
+            AudioPortBuffer, AudioPortBufferType, InputChannel,
+        };
+
+        // Split the in/out buffers into per-channel slices.
+        // We use indices instead of slices to avoid borrow issues with `with_input_buffers`.
+        let in_l_ptr = self.in_l.as_mut_ptr();
+        let in_r_ptr = self.in_r.as_mut_ptr();
+        let out_l_ptr = self.out_l.as_mut_ptr();
+        let out_r_ptr = self.out_r.as_mut_ptr();
+        let block_len = self.max_block;
+
+        // SAFETY: The pointers are valid for `block_len` f32 elements.
+        let in_l_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(in_l_ptr, block_len) };
+        let in_r_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(in_r_ptr, block_len) };
+        let out_l_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(out_l_ptr, block_len) };
+        let out_r_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(out_r_ptr, block_len) };
+
+        let mut input_audio = self.input_ports.with_input_buffers([AudioPortBuffer {
+            latency: 0,
+            channels: AudioPortBufferType::f32_input_only([
+                InputChannel::variable(in_l_slice),
+                InputChannel::variable(in_r_slice),
+            ]),
+        }]);
+
+        let mut output_audio = self.output_ports.with_output_buffers([AudioPortBuffer {
+            latency: 0,
+            channels: AudioPortBufferType::f32_output_only([
+                out_l_slice,
+                out_r_slice,
+            ]),
+        }]);
+
+        // Empty input events for Phase 2 (FX plugins don't need MIDI).
+        let input_events = clack_host::events::io::InputEvents::from_buffer(&self.input_event_buffer);
+        let mut output_events = clack_host::events::io::OutputEvents::from_buffer(&mut self.output_event_buffer);
+
+        let _ = self.processor.process(
+            &input_audio,
+            &mut output_audio,
+            &input_events,
+            &mut output_events,
+            None,
+            None,
+        );
+
+        // Copy plugin output back to caller's buffers
+        for i in 0..frame_count.min(n) {
+            output_l[i] = self.out_l[i];
+            output_r[i] = self.out_r[i];
+        }
     }
 
-    fn set_parameter(&mut self, _param_id: u32, _value: f32) {}
+    fn set_parameter(&mut self, _param_id: u32, _value: f32) {
+        // Phase 2: parameter changes must go through the parameter queue
+        // and be applied as ParamValue events in the next process() call.
+        // Stub for now — no parameters are accessible yet.
+    }
+
     fn get_parameter(&self, _param_id: u32) -> f32 { 0.0 }
     fn parameter_count(&self) -> u32 { 0 }
     fn latency(&self) -> u32 { 0 }
@@ -262,5 +418,229 @@ mod tests {
     fn test_invalid_path_returns_error() {
         let result = ClapPluginHandle::load(std::path::Path::new("/nonexistent/plugin.clap"));
         assert!(result.is_err());
+    }
+
+    /// Integration test: try to load a real CLAP plugin from the system install.
+    /// Skipped if the plugin isn't available (CI without CLAP installed).
+    #[test]
+    fn test_load_real_clap_plugin() {
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found at {}", path.display());
+            return;
+        }
+        let handle = ClapPluginHandle::load(path);
+        match handle {
+            Ok(h) => {
+                let desc = h.descriptor();
+                eprintln!("[ok] Loaded plugin: {} ({})", desc.name, desc.plugin_id);
+                eprintln!("     vendor: {}", desc.vendor);
+                eprintln!("     audio: {} in / {} out, has_editor={}, supports_state={}",
+                    desc.audio_inputs, desc.audio_outputs, desc.has_editor, desc.supports_state);
+                assert!(!desc.name.is_empty(), "Plugin name should not be empty");
+            }
+            Err(e) => panic!("Failed to load TAL-Reverb-4: {e}"),
+        }
+    }
+
+    /// Integration test: try to load several different CLAP plugin formats
+    /// (single-DLL and bundle) to verify the loader handles both.
+    #[test]
+    fn test_load_multiple_clap_plugins() {
+        let candidates = [
+            (r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap", "bundle"),
+            (r"C:\Program Files\Common Files\CLAP\bit-crusher-windows-x64.clap", "dll"),
+            (r"C:\Program Files\Common Files\CLAP\Dexed.clap", "dll"),
+            (r"C:\Program Files\Common Files\CLAP\JC303.clap", "dll"),
+        ];
+        let mut loaded = 0;
+        let mut failed: Vec<String> = Vec::new();
+        for (path_str, kind) in &candidates {
+            let path = std::path::Path::new(path_str);
+            if !path.exists() {
+                eprintln!("[skip] {} not found ({})", path_str, kind);
+                continue;
+            }
+            match ClapPluginHandle::load(path) {
+                Ok(h) => {
+                    let desc = h.descriptor();
+                    eprintln!("[ok] {}: {} ({})", kind, desc.name, desc.plugin_id);
+                    loaded += 1;
+                }
+                Err(e) => {
+                    eprintln!("[fail] {}: {}", path_str, e);
+                    failed.push(path_str.to_string());
+                }
+            }
+        }
+        assert!(loaded >= 2, "Expected at least 2 plugins to load, got {loaded}");
+        assert!(failed.is_empty(), "Failed to load: {failed:?}");
+    }
+
+    /// Integration test: full lifecycle (load → activate → process → deactivate).
+    /// Skipped if the plugin isn't available.
+    #[test]
+    fn test_activate_real_clap_plugin() {
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found at {}", path.display());
+            return;
+        }
+
+        let mut handle = ClapPluginHandle::load(path).expect("load failed");
+
+        // Activate at 48kHz, 256 sample block size
+        let mut processor = handle.activate(48000.0, 256).expect("activate failed");
+        eprintln!("[ok] Activated plugin: {}", processor.name());
+
+        // Process a block of silence (1s = 48000 samples, process in 256-sample chunks)
+        let in_l = vec![0.0f32; 256];
+        let in_r = vec![0.0f32; 256];
+        let mut out_l = vec![0.0f32; 256];
+        let mut out_r = vec![0.0f32; 256];
+        let transport = TransportInfo {
+            bpm: 120.0,
+            sample_rate: 48000.0,
+            sample_position: 0,
+            is_playing: true,
+        };
+
+        // Process a few blocks. The reverb should produce non-zero output if we
+        // feed it a non-silent input. With silence input, it should produce
+        // only tail/decay of previous samples (which is zero here, since
+        // we never fed any signal).
+        for block in 0..4 {
+            processor.process(&in_l, &in_r, &mut out_l, &mut out_r, 256, &transport);
+            eprintln!("[ok] Block {}: out[0] = {:.6} (silence in -> near-silence expected)",
+                block, out_l[0]);
+        }
+
+        // Test with a real signal (impulse) to see if the reverb tail is produced
+        let mut impulse_l = vec![0.0f32; 256];
+        let mut impulse_r = vec![0.0f32; 256];
+        impulse_l[0] = 1.0;
+        impulse_r[0] = 1.0;
+        processor.process(&impulse_l, &impulse_r, &mut out_l, &mut out_r, 256, &transport);
+        let peak = out_l.iter().chain(out_r.iter()).fold(0.0f32, |a, &b| a.max(b.abs()));
+        eprintln!("[ok] Impulse response peak: {peak:.6} (should be non-zero for active reverb)");
+
+        // Test deactivation: stop the processor and deactivate the instance
+        let stopped = processor.stop();
+        handle.deactivate(stopped).expect("deactivate failed");
+        eprintln!("[ok] Deactivated plugin cleanly");
+    }
+
+    /// Integration test: process a sine wave through Bit Crusher plugin.
+    /// The output should be a quantized/distorted version of the input.
+    #[test]
+    fn test_bit_crusher_processing() {
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\bit-crusher-windows-x64.clap");
+        if !path.exists() {
+            eprintln!("[skip] Bit Crusher not found");
+            return;
+        }
+
+        let mut handle = ClapPluginHandle::load(path).expect("load failed");
+        let mut processor = handle.activate(48000.0, 256).expect("activate failed");
+        eprintln!("[ok] Activated: {}", processor.name());
+
+        // Generate a 1kHz sine wave
+        let freq = 1000.0f32;
+        let sr = 48000.0f32;
+        let mut input_l = Vec::with_capacity(256);
+        let mut input_r = Vec::with_capacity(256);
+        for i in 0..256 {
+            let t = i as f32 / sr;
+            let s = (2.0 * std::f32::consts::PI * freq * t).sin() * 0.5;
+            input_l.push(s);
+            input_r.push(s);
+        }
+        let mut out_l = vec![0.0f32; 256];
+        let mut out_r = vec![0.0f32; 256];
+        let transport = TransportInfo {
+            bpm: 120.0,
+            sample_rate: 48000.0,
+            sample_position: 0,
+            is_playing: true,
+        };
+
+        // Feed a few blocks of sine so the effect's internal state stabilizes
+        for _ in 0..4 {
+            processor.process(&input_l, &input_r, &mut out_l, &mut out_r, 256, &transport);
+        }
+
+        let in_peak = input_l.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
+        let out_peak = out_l.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
+        eprintln!("[ok] Sine input peak: {in_peak:.4}");
+        eprintln!("[ok] Bit crusher output peak: {out_peak:.4} (non-zero means plugin is processing)");
+        assert!(out_peak > 0.01, "Bit Crusher should produce non-trivial output");
+
+        // Compare sample values: bit crusher should quantize the input,
+        // producing a different (not equal) output for most samples.
+        let mut differences = 0;
+        let mut exact_matches = 0;
+        for i in 0..256 {
+            if (input_l[i] - out_l[i]).abs() > 0.001 {
+                differences += 1;
+            } else {
+                exact_matches += 1;
+            }
+        }
+        eprintln!("[ok] Bit crusher: {differences}/256 samples changed, {exact_matches} exact matches");
+        // Note: the bit crusher's default parameters may pass through audio unchanged.
+        // We're just verifying the plugin processes audio (non-zero output is sufficient).
+        // Once we have parameter control, we can crank up the bit reduction to confirm.
+
+        let stopped = processor.stop();
+        handle.deactivate(stopped).expect("deactivate failed");
+        eprintln!("[ok] Deactivated cleanly");
+    }
+
+    /// Integration test: process audio through TAL Reverb 4 with a longer
+    /// signal to verify the reverb tail extends across multiple blocks.
+    #[test]
+    fn test_reverb_tail_extends() {
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found");
+            return;
+        }
+
+        let mut handle = ClapPluginHandle::load(path).expect("load failed");
+        let mut processor = handle.activate(48000.0, 256).expect("activate failed");
+        let transport = TransportInfo {
+            bpm: 120.0,
+            sample_rate: 48000.0,
+            sample_position: 0,
+            is_playing: true,
+        };
+
+        // Block 0: send an impulse
+        let mut impulse = vec![0.0f32; 256];
+        impulse[0] = 1.0;
+        let mut out_l = vec![0.0f32; 256];
+        let mut out_r = vec![0.0f32; 256];
+        processor.process(&impulse, &impulse, &mut out_l, &mut out_r, 256, &transport);
+        let block0_peak = out_l.iter().chain(out_r.iter()).fold(0.0f32, |a, &b| a.max(b.abs()));
+
+        // Process ~100ms of silence following — reverb tail should continue
+        let silence = vec![0.0f32; 256];
+        let mut tail_peaks = Vec::new();
+        for _ in 0..20 {
+            processor.process(&silence, &silence, &mut out_l, &mut out_r, 256, &transport);
+            let peak = out_l.iter().chain(out_r.iter()).fold(0.0f32, |a, &b| a.max(b.abs()));
+            tail_peaks.push(peak);
+        }
+
+        let max_tail = tail_peaks.iter().fold(0.0f32, |a, &b| a.max(b));
+        let blocks_with_signal = tail_peaks.iter().filter(|&&p| p > 0.001).count();
+        eprintln!("[ok] Impulse block peak: {block0_peak:.4}");
+        eprintln!("[ok] Max tail peak:      {max_tail:.4}");
+        eprintln!("[ok] Blocks with signal: {blocks_with_signal}/20 (reverb tail should persist)");
+        assert!(max_tail > 0.001, "Reverb tail should be audible after silence");
+        assert!(blocks_with_signal >= 10, "Reverb tail should persist for at least ~130ms");
+
+        let stopped = processor.stop();
+        handle.deactivate(stopped).expect("deactivate failed");
     }
 }

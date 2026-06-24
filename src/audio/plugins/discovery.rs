@@ -156,4 +156,19 @@ mod tests {
         assert_eq!(result.clap_files.len(), 1);
         let _ = fs::remove_dir_all(&tmp);
     }
+
+    /// Integration test: scan the system's CLAP directory.
+    /// Skipped if the path doesn't exist (non-Windows or CLAP not installed).
+    #[test]
+    fn test_scan_system_clap_dir() {
+        let system_path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP");
+        if !system_path.exists() {
+            eprintln!("[skip] System CLAP dir not found");
+            return;
+        }
+        let result = scan_paths(&[system_path.to_path_buf()]);
+        eprintln!("[ok] Found {} .clap entries in system CLAP dir", result.total_found());
+        eprintln!("     errors: {}", result.errors.len());
+        assert!(result.total_found() >= 10, "Expected at least 10 .clap files on this system");
+    }
 }
