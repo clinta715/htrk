@@ -854,14 +854,12 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
     }
 
     if app.core.cursor.sub_column == SubColumn::EffectType {
-        let auto_target = app.core.automation_targets.get(app.core.cursor.channel).copied().flatten();
-        if auto_target.is_some() {
-            if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
-                app.enter_automation_hex(app.core.cursor.channel, app.core.cursor.row, d as u8);
-                app.advance_cursor_down(app.cursor_skip as usize);
-                return;
-            }
-        }
+        // Hex digits and named keys (P/Z/S/R/X) always set the cell's
+        // Effect, regardless of whether an automation lane is overlaid.
+        // The automation lane is a separate visualization (drawn over
+        // the FX column) and stores its data in the module's automation
+        // tracks, not in the cell. The user's hex typing is unambiguous:
+        // "set the effect command at this row to this command".
         let mut cell = app.core.get_cell_at_cursor();
         let changed = if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
             cell.effect = crate::sequencer::effect::effect_from_hex_digit(d as u8);
@@ -891,14 +889,9 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
     if app.core.cursor.sub_column == SubColumn::EffectParamHigh
         || app.core.cursor.sub_column == SubColumn::EffectParamLow
     {
-        let auto_target = app.core.automation_targets.get(app.core.cursor.channel).copied().flatten();
-        if auto_target.is_some() {
-            if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
-                app.enter_automation_hex(app.core.cursor.channel, app.core.cursor.row, d as u8);
-                app.advance_cursor_down(app.cursor_skip as usize);
-                return;
-            }
-        }
+        // Same as above: hex digits always set the Effect's param. The
+        // automation lane is a separate visualization, not an input
+        // conflict.
         if let Some(d) = ch.to_ascii_uppercase().to_digit(16) {
             let d = d as u8;
             let mut cell = app.core.get_cell_at_cursor();

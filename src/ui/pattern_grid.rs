@@ -592,21 +592,40 @@ pub fn draw_pattern_grid(
             let auto_overlay = automation_overlays.get(ch).and_then(|o| o.as_ref());
             let in_fx_col = sub_col_x >= metrics.effect_type_x && sub_col_x < metrics.channel_width;
 
+            // In the FX column, the click semantics depend on whether an
+            // automation overlay is active and what modifier keys are
+            // held:
+            //
+            //   - No automation overlay  -> standard effect value click
+            //   - Plain click             -> create automation point
+            //   - Shift + drag            -> freehand automation draw
+            //   - Ctrl + click            -> effect value click (bypass
+            //                                automation, lets the user
+            //                                still enter effects in the
+            //                                same cell that has automation)
+            //
+            // This avoids the "I can't edit an effect because automation
+            // is on this channel" deadlock.
+
             if let Some(info) = auto_overlay {
                 if in_fx_col {
                     let row_y = rel_y - display_row as f32 * metrics.row_height;
                     let value = 1.0 - (row_y / metrics.row_height).clamp(0.0, 1.0);
+                    let modifiers = ui.input(|i| i.modifiers);
 
-                    let shift_held = ui.input(|i| i.modifiers.shift);
-
-                    if response.clicked() && !shift_held {
+                    if response.clicked() && modifiers.ctrl {
+                        // Ctrl+click: treat as a normal effect value click
+                        let sub_column = position_to_sub_column(sub_col_x, metrics, col_vis);
+                        let cursor_pos = CursorPosition { row, channel: ch, sub_column };
+                        clicked_position = Some(cursor_pos);
+                    } else if response.clicked() && !modifiers.shift {
                         automation_interaction = Some(AutomationInteraction::PointCreated {
                             channel: ch,
                             order: info.current_order,
                             row: row as u16,
                             value,
                         });
-                    } else if response.dragged() && shift_held {
+                    } else if response.dragged() && modifiers.shift && !modifiers.ctrl {
                         automation_interaction = Some(AutomationInteraction::FreehandDraw {
                             channel: ch,
                             points: vec![(info.current_order, row as u16, value)],

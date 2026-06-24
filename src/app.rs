@@ -841,6 +841,7 @@ impl HtrkApp {
         self.core.handle_automation_interaction(interaction);
     }
 
+    #[allow(dead_code)] // exposed for future automation UI / MCP tools
     pub(crate) fn enter_automation_hex(&mut self, channel: usize, row: usize, digit: u8) {
         self.core.enter_automation_hex(channel, row, digit);
     }
