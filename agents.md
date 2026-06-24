@@ -345,13 +345,20 @@ Use the SP_* constants instead of inline `.add_space()`:
 - `PluginSlot` struct in `mod.rs` (re-exported in sequencer module) holds `{ format, path, plugin_id, state }`.
 - Phase 2 send FX integration will add `send_bus_plugins: [Option<PluginSlot>; 4]` to `Module`.
 
-### CLAP Integration Status (Phase 1-2)
-- **Phase 1 (done)**: trait, types, discovery, library, dependencies, descriptor extraction.
-- **Phase 2 (in progress)**: lifecycle skeleton (load/activate/deactivate). `process()` is a pass-through stub. Real CLAP process() integration (events, AudioPorts, parameter queue) is filled in incrementally as we test against real plugins.
-- **Phase 3-6 (future)**: send FX wire-up, instrument plugins, parameter automation, editor UI, VST3.
+### CLAP Integration Status (Phases 1-5)
+- **Phase 1-2 (done)**: trait, types, discovery, library, dependencies, real CLAP process() with AudioPorts/EventBuffer, send FX wiring, persistence (`Module.send_bus_plugins`), MCP tools.
+- **Phase 5 (done, Windows only)**: plugin editor windows. `open_editor()` probes floating mode first, falls back to embedded-with-top-level-HWND. macOS/Linux deferred.
+- **Phase 3-4, 6 (future)**: instrument plugins, parameter automation, VST3.
+
+### Editor Threading
+- `HostedPluginHandle` is `!Send` (CLAP `PluginInstance` is `!Send`). It must live on the main thread.
+- `HtrkApp.send_bus_handles: [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES]` stores them.
+- The audio thread only has the `HostedPluginProcessor` (which IS `Send`); the handle is never sent across threads.
+- The `ClapPluginHandle.host_window: Option<PluginHostWindow>` (Windows only) holds the embedded-mode top-level HWND. `Drop` calls `DestroyWindow`.
 
 ### Rule for Future Changes
 - When adding a new plugin format, create `vst3_plugin.rs` (or similar) implementing both `HostedPluginHandle` and `HostedPluginProcessor`.
 - All `process()` implementations must be allocation-free. Allocate all buffers in `activate()`.
 - Parameter changes from the UI thread go through the audio thread via an SPSC ring buffer; never set parameters directly on the audio-thread processor.
 - The PluginSlot is the only state that needs to be persisted to `.htk`; everything else is rebuilt on load.
+- Editor windows use a separate top-level OS window (not embedded in egui) — see `docs/plugin-hosting-plan.md` Phase 5 for rationale.

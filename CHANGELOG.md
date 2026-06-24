@@ -11,6 +11,7 @@ All notable changes to htrk will be documented in this file.
 - **Sample Editor**: Selection model (cut/copy/paste/crop/silence), zoom with scroll support, loop marker manipulation, Fade In/Out processing, waveform context menu with Normalize/Reverse/TrimSilence. All operations undoable.
 - **Slice-to-Instrument**: Slice samples to create multi-sampled instruments, with per-slice mapping to note ranges.
 - **Envelope Generator**: Automation curve generator for envelope points with configurable shapes.
+- **CLAP Plugin Editor Windows (Phase 5, Windows only)**: "Edit..." button in the Send FX panel opens the plugin's GUI as a top-level OS window. Supports both floating mode (plugin manages its own window) and embedded mode (host provides a Win32 HWND via `windows-sys 0.59`). Tested with TAL Reverb 4. macOS/Linux deferred to a future release.
 
 ### Changed
 

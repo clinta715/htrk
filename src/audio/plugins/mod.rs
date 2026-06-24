@@ -6,6 +6,8 @@
 pub mod clap_plugin;
 pub mod discovery;
 pub mod library;
+#[cfg(windows)]
+pub mod plugin_window;
 
 pub use library::PluginLibrary;
 
@@ -195,6 +197,22 @@ pub trait HostedPluginHandle {
     /// Returns self as Any for downcasting to a concrete type.
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
+
+    /// Open the plugin's editor (if it has one). Called on the main thread.
+    /// The plugin's editor appears as a floating OS window managed by the plugin
+    /// itself (CLAP `is_floating=true`). Returns an error if the plugin has no
+    /// editor, the GUI extension is unavailable, or creation fails.
+    fn open_editor(&mut self) -> Result<(), String>;
+
+    /// Close the plugin's editor (if open). Called on the main thread.
+    /// Safe to call even if the editor is not open.
+    fn close_editor(&mut self);
+
+    /// Returns true if the plugin's editor is currently open.
+    fn is_editor_open(&self) -> bool;
+
+    /// Returns true if the plugin has an editor at all.
+    fn has_editor(&self) -> bool;
 }
 
 // ── Plugin Slot (persistence model) ──

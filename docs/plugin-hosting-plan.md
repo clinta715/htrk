@@ -313,27 +313,61 @@ struct ParamChangeEvent {
 
 ---
 
-## Phase 5 — Plugin Editor UI (~3-5 days)
+## Phase 5 — Plugin Editor UI (DONE for Windows; macOS/Linux deferred)
 
-- Extract native window handle via `raw-window-handle` from eframe
-- Reserve egui area for plugin editor
-- Reparent native child window (HWND/NSView/X11)
-- Wayland fallback: floating window
-- Gate in `any_dialog_open` (AGENTS.md §11)
+**Status:** Windows floating + embedded editors working (June 2026).
 
-### Platform Handles
+### What ships
 
-```rust
-use raw_window_handle::RawWindowHandle;
+- `HostedPluginHandle` trait gains `open_editor()`, `close_editor()`,
+  `is_editor_open()`, `has_editor()` methods (`src/audio/plugins/mod.rs`).
+- `ClapPluginHandle` implements them via clack's GUI extension
+  (`src/audio/plugins/clap_plugin.rs`).
+- `HtrkApp` stores main-thread plugin handles in
+  `send_bus_handles: [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES]`
+  (replaces the `std::mem::forget(handle)` hack in
+  `load_and_install_plugin`).
+- `SendFxPanel` now has an "Edit..." / "Close" button per send bus that
+  toggles the editor. The "Remove" button also closes the editor.
+- `src/audio/plugins/plugin_window.rs` (Windows-only) creates a
+  top-level HWND via `windows-sys 0.59` for the embedded-fallback path.
+- Tests: 335 lib tests pass; `test_editor_open_close_real_plugin` opens
+  and closes TAL Reverb 4's editor and verifies the lifecycle.
 
-let clap_window = match raw {
-    RawWindowHandle::Win32(h) => clap_window_t { api: CLAP_WINDOW_API_WIN32, win32: h.hwnd.get() },
-    RawWindowHandle::AppKit(h) => clap_window_t { api: CLAP_WINDOW_API_COCOA, cocoa: h.ns_view.as_ptr() },
-    RawWindowHandle::Xlib(h) => clap_window_t { api: CLAP_WINDOW_API_X11, x11: h.window },
-    RawWindowHandle::Wayland(_) => /* must use floating window */,
-};
-plugin_gui.set_parent(&clap_window);
-```
+### Architecture
+
+1. `open_editor()` first probes floating mode
+   (`GuiApiType::WIN32, is_floating=true`). If the plugin supports it
+   (e.g. plugins that manage their own top-level window), the plugin
+   creates and shows its own window — no host HWND needed.
+2. If floating is unsupported, fall back to embedded mode
+   (`is_floating=false`). We create a top-level `WS_OVERLAPPEDWINDOW`
+   HWND, call `plugin_gui.set_parent(Window::from_win32_hwnd(hwnd))`,
+   then `set_size` and `show`.
+3. The `PluginHostWindow` is stored in the `ClapPluginHandle` and
+   `Drop`-destroyed in `close_editor()`, which also calls
+   `plugin_gui.destroy()`.
+
+### Why a top-level HWND instead of an eframe child
+
+- eframe 0.34 on winit 0.30 doesn't expose a stable Win32 HWND API for
+  reparenting external windows inside the egui viewport.
+- A separate top-level window is simpler, has correct focus handling,
+  and matches what most CLAP hosts do.
+- The eframe process keeps pumping Win32 messages, so the plugin's
+  child HWND receives `WM_PAINT` and `WM_SIZE` naturally.
+
+### Future work
+
+- macOS: `PluginHostWindow` for NSView (NSWindow with contentView).
+  Probably 50-100 LOC using objc2 or cocoa-foundation.
+- Linux X11: pass the eframe `Window`'s X11 handle as the parent
+  (raw-window-handle 0.6 already has the conversion in
+  `clack_extensions::gui::Window::from_window_handle`).
+- Wayland: no embedded support in CLAP spec — must use floating
+  mode. CLAP's `is_floating=true` is mandatory.
+- In-egui embedding: defer until eframe 0.35+ exposes a stable
+  `raw-window-handle` API on `Frame`.
 
 ---
 

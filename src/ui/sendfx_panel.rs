@@ -1,4 +1,5 @@
 use eframe::egui;
+use crate::audio::plugins::HostedPluginHandle;
 use crate::audio::CommandSender;
 use crate::sequencer::effect::{NUM_SEND_BUSES, SendEffectType};
 
@@ -37,7 +38,12 @@ impl Default for SendFxPanel {
 }
 
 impl SendFxPanel {
-    pub fn ui(&mut self, ui: &mut egui::Ui, command_sender: &mut Option<CommandSender>) {
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        command_sender: &mut Option<CommandSender>,
+        plugin_handles: &mut [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
+    ) {
         crate::ui::sendfx_editor::draw_sendfx_view(
             ui,
             command_sender,
@@ -46,6 +52,7 @@ impl SendFxPanel {
             &mut self.pre_fader,
             &mut self.plugin_names,
             &mut self.plugin_browser_open_for,
+            plugin_handles,
         );
     }
 }

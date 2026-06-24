@@ -1,6 +1,7 @@
 use eframe::egui;
 use crate::audio::engine::CommandSender;
 use crate::audio::commands::AudioCommand;
+use crate::audio::plugins::HostedPluginHandle;
 use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 
@@ -57,6 +58,7 @@ pub fn draw_sendfx_view(
     send_pre_fader: &mut [bool; NUM_SEND_BUSES],
     plugin_names: &mut [Option<String>; NUM_SEND_BUSES],
     plugin_browser_open_for: &mut Option<usize>,
+    plugin_handles: &mut [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
 ) {
     ui.horizontal(|ui| {
         for si in 0..NUM_SEND_BUSES {
@@ -110,13 +112,38 @@ pub fn draw_sendfx_view(
                         *plugin_browser_open_for = Some(si);
                     }
                     if !plugin_name.is_empty() {
+                        let has_editor = plugin_handles[si]
+                            .as_ref()
+                            .map(|h| h.has_editor())
+                            .unwrap_or(false);
+                        let is_open = plugin_handles[si]
+                            .as_ref()
+                            .map(|h| h.is_editor_open())
+                            .unwrap_or(false);
+                        if has_editor {
+                            let label = if is_open { "Close" } else { "Edit..." };
+                            if ui.button(label).clicked() {
+                                if let Some(ref mut handle) = plugin_handles[si] {
+                                    if is_open {
+                                        handle.close_editor();
+                                    } else if let Err(e) = handle.open_editor() {
+                                        eprintln!("[plugin] open editor failed: {e}");
+                                    }
+                                }
+                            }
+                        }
                         if ui.button("Remove").clicked() {
+                            // Close the editor first, then remove the processor.
+                            if let Some(ref mut handle) = plugin_handles[si] {
+                                handle.close_editor();
+                            }
                             if let Some(ref mut sender) = command_sender {
                                 sender.send(AudioCommand::SetSendPlugin {
                                     send_index: si,
                                     processor: None,
                                 });
                             }
+                            plugin_handles[si] = None;
                             plugin_names[si] = None;
                         }
                     }

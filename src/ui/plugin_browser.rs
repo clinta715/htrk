@@ -153,15 +153,16 @@ pub enum PluginBrowserStatus {
 // ── Plugin loading (main thread) ──
 
 /// Load a CLAP plugin and send it to the audio engine on a send bus.
-/// Returns a status message for UI display. This is a blocking operation
-/// (typically <100ms for most plugins).
+/// Returns the activated handle (main-thread side) and the plugin name.
+/// The handle MUST be kept on the main thread for editor operations.
+/// This is a blocking operation (typically <100ms for most plugins).
 pub fn load_and_install_plugin(
     descriptor: &PluginDescriptor,
     send_index: usize,
     sample_rate: f64,
     max_block: u32,
     command_sender: &mut Option<CommandSender>,
-) -> Result<String, String> {
+) -> Result<(Box<dyn HostedPluginHandle>, String), String> {
     // Load and activate on the main thread
     let mut handle = ClapPluginHandle::load(&descriptor.path)
         .map_err(|e| format!("Load failed: {e}"))?;
@@ -171,25 +172,18 @@ pub fn load_and_install_plugin(
 
     // Send the audio processor to the audio engine
     if let Some(ref mut sender) = command_sender {
-        // We have to drop the handle temporarily so the processor is the
-        // only owner of the StartedPluginAudioProcessor. The handle's
-        // PluginInstance is held by `handle` but the audio processor doesn't
-        // need it (it's independent of the instance after start_processing).
-        // We leak the handle for now — in Phase 2 cleanup we'll add proper
-        // deactivation via the UI.
         sender.send(AudioCommand::SetSendPlugin {
             send_index,
             processor: Some(processor),
         });
-        // Don't drop `handle` — it keeps the PluginInstance alive. The
-        // processor runs independently but the host (handle) must outlive
-        // any plugin operation that needs the instance.
-        std::mem::forget(handle);
     } else {
         return Err("No command sender — audio engine not running?".into());
     }
 
-    Ok(name)
+    // Erase the concrete type to a trait object so the caller can store it
+    // alongside other potential plugin formats in the future.
+    let handle: Box<dyn HostedPluginHandle> = Box::new(handle);
+    Ok((handle, name))
 }
 
 #[cfg(test)]

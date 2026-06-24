@@ -11,6 +11,8 @@ use crate::audio::playback_state::AtomicPlaybackState;
 
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::{DEFAULT_CHANNELS, MAX_CHANNELS};
+use crate::sequencer::effect::NUM_SEND_BUSES;
+use crate::audio::plugins::HostedPluginHandle;
 use crate::ui::file_browser::{BrowserMode, FileBrowser};
 use crate::ui::pattern_grid::{ColumnVisibility, Selection, SubColumn};
 use crate::ui::panel_event::PanelEvent;
@@ -80,6 +82,11 @@ pub struct HtrkApp {
     pub(crate) col_vis: ColumnVisibility,
     pub(crate) playback_view: crate::ui::playback_view_panel::PlaybackView,
     pub(crate) sendfx_panel: crate::ui::sendfx_panel::SendFxPanel,
+    /// Main-thread plugin handles, one per send bus. Used to open/close
+    /// plugin editor windows. The PluginInstance is `!Send` so these must
+    /// stay on the main thread alongside HtrkApp.
+    /// Phase 5 plugin hosting.
+    pub(crate) send_bus_handles: [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
     /// Status of the plugin browser dialog (loading / error / loaded).
     /// Phase 2 plugin hosting.
     pub(crate) plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus,
@@ -172,6 +179,7 @@ impl HtrkApp {
             config,
             playback_view: crate::ui::playback_view_panel::PlaybackView::default(),
             sendfx_panel: crate::ui::sendfx_panel::SendFxPanel::default(),
+            send_bus_handles: [None, None, None, None],
             plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
             automation_editor: crate::ui::automation_editor_panel::AutomationEditor::default(),
             instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor {
@@ -1939,7 +1947,7 @@ impl eframe::App for HtrkApp {
                     }
                 }
                 AppView::SendFx => {
-                    self.sendfx_panel.ui(ui, &mut self.core.command_sender);
+                    self.sendfx_panel.ui(ui, &mut self.core.command_sender, &mut self.send_bus_handles);
 
                     // Plugin browser dialog: shown when a bus requests it.
                     if let Some(si) = self.sendfx_panel.plugin_browser_open_for {
@@ -1974,7 +1982,8 @@ impl eframe::App for HtrkApp {
                                     max_block,
                                     &mut self.core.command_sender,
                                 ) {
-                                    Ok(name) => {
+                                    Ok((handle, name)) => {
+                                        self.send_bus_handles[send_index] = Some(handle);
                                         self.sendfx_panel.plugin_names[send_index] = Some(name.clone());
                                         self.plugin_browser_status = crate::ui::plugin_browser::PluginBrowserStatus::Loaded(name);
                                     }

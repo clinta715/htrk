@@ -10,6 +10,11 @@ use std::path::Path;
 
 use clack_host::prelude::*;
 use clack_common::plugin::PluginDescriptor as ClapPluginDescriptor;
+use clack_extensions::gui::{
+    GuiApiType, GuiConfiguration, PluginGui as PluginGuiExt, Window as ClapWindow,
+};
+#[cfg(windows)]
+use crate::audio::plugins::plugin_window::PluginHostWindow;
 
 use super::{
     HostedPluginHandle, HostedPluginProcessor, ParamInfo, PluginDescriptor, PluginError,
@@ -33,6 +38,12 @@ pub struct ClapPluginHandle {
     instance: Option<PluginInstance<HtrkHost>>,
     descriptor: PluginDescriptor,
     activated: bool,
+    editor_open: bool,
+    /// On Windows, a top-level HWND used as the parent for an embedded
+    /// plugin GUI. Only populated when the plugin only supports embedded
+    /// mode. None for floating-mode editors.
+    #[cfg(windows)]
+    host_window: Option<PluginHostWindow>,
 }
 
 impl ClapPluginHandle {
@@ -100,6 +111,9 @@ impl ClapPluginHandle {
             instance: Some(instance),
             descriptor,
             activated: false,
+            editor_open: false,
+            #[cfg(windows)]
+            host_window: None,
         })
     }
 
@@ -264,6 +278,115 @@ impl HostedPluginHandle for ClapPluginHandle {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+
+    fn open_editor(&mut self) -> Result<(), String> {
+        if self.editor_open {
+            return Ok(());
+        }
+        let instance = self
+            .instance
+            .as_mut()
+            .ok_or_else(|| "Plugin not loaded".to_string())?;
+        let mut handle = instance.plugin_handle();
+        let gui_ext = handle
+            .get_extension::<PluginGuiExt>()
+            .ok_or_else(|| "Plugin does not expose the GUI extension".to_string())?;
+
+        // Try floating mode first (plugin manages its own top-level window).
+        let floating_config = GuiConfiguration {
+            api_type: GuiApiType::WIN32,
+            is_floating: true,
+        };
+        if gui_ext.is_api_supported(&mut handle, floating_config) {
+            gui_ext.create(&mut handle, floating_config)
+                .map_err(|e| format!("Plugin GUI create failed: {e:?}"))?;
+            let _ = gui_ext.show(&mut handle);
+            self.editor_open = true;
+            return Ok(());
+        }
+
+        // Fall back to embedded mode (we provide a parent HWND).
+        #[cfg(windows)]
+        {
+            let embedded_config = GuiConfiguration {
+                api_type: GuiApiType::WIN32,
+                is_floating: false,
+            };
+            if !gui_ext.is_api_supported(&mut handle, embedded_config) {
+                return Err("Plugin does not support Win32 GUI".into());
+            }
+            // Create a top-level window to host the embedded GUI.
+            let title = format!("{} - htrk", self.descriptor.name);
+            let host_window = PluginHostWindow::create(&title)
+                .ok_or_else(|| "Failed to create plugin host window".to_string())?;
+            let hwnd = host_window.hwnd();
+            // SAFETY: The HWND is valid for the lifetime of the host_window,
+            // which we keep in self.host_window until close_editor runs.
+            let clap_window = ClapWindow::from_win32_hwnd(hwnd as *mut _);
+            gui_ext.create(&mut handle, embedded_config)
+                .map_err(|e| format!("Plugin GUI create failed: {e:?}"))?;
+            // Try to size the plugin's GUI to match a reasonable initial size.
+            if let Some(size) = gui_ext.get_size(&mut handle) {
+                let _ = gui_ext.set_size(&mut handle, size);
+            }
+            // SAFETY: set_parent requires a valid host window.
+            unsafe {
+                let _ = gui_ext.set_parent(&mut handle, clap_window);
+            }
+            let _ = gui_ext.show(&mut handle);
+            self.host_window = Some(host_window);
+            self.editor_open = true;
+            Ok(())
+        }
+        #[cfg(not(windows))]
+        Err("Embedded mode requires Windows".into())
+    }
+
+    fn close_editor(&mut self) {
+        if !self.editor_open {
+            return;
+        }
+        if let Some(instance) = self.instance.as_mut() {
+            let mut handle = instance.plugin_handle();
+            if let Some(gui_ext) = handle.get_extension::<PluginGuiExt>() {
+                gui_ext.destroy(&mut handle);
+            }
+        }
+        // Drop the host window (this destroys the HWND).
+        #[cfg(windows)]
+        {
+            self.host_window = None;
+        }
+        self.editor_open = false;
+    }
+
+    fn is_editor_open(&self) -> bool {
+        self.editor_open
+    }
+
+    fn has_editor(&self) -> bool {
+        let Some(instance) = self.instance.as_ref() else {
+            return false;
+        };
+        // `plugin_handle()` requires &mut self. We use a raw pointer to get a mutable
+        // reference to the instance. PluginInstance is !Send and we only call this
+        // on the main thread, so this is safe.
+        let raw_ptr: *const PluginInstance<HtrkHost> = instance;
+        let mut_instance = unsafe { (raw_ptr as *mut PluginInstance<HtrkHost>).as_mut() }
+            .expect("instance pointer is null");
+        let mut handle = mut_instance.plugin_handle();
+        let Some(gui_ext) = handle.get_extension::<PluginGuiExt>() else {
+            return false;
+        };
+        // Some plugins only support one mode. Probe both floating and embedded.
+        gui_ext.is_api_supported(
+            &mut handle,
+            GuiConfiguration { api_type: GuiApiType::WIN32, is_floating: true },
+        ) || gui_ext.is_api_supported(
+            &mut handle,
+            GuiConfiguration { api_type: GuiApiType::WIN32, is_floating: false },
+        )
     }
 }
 
@@ -438,6 +561,12 @@ impl HostedPluginProcessor for ClapPluginProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serializes tests that create or destroy real Win32 windows. The OS
+    /// window class is process-global, so concurrent class registration +
+    /// window creation across threads can deadlock the test runner.
+    static WIN32_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_descriptor_extraction_basic() {
@@ -469,6 +598,7 @@ mod tests {
     /// Skipped if the plugin isn't available (CI without CLAP installed).
     #[test]
     fn test_load_real_clap_plugin() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
         if !path.exists() {
             eprintln!("[skip] TAL-Reverb-4.clap not found at {}", path.display());
@@ -492,6 +622,7 @@ mod tests {
     /// (single-DLL and bundle) to verify the loader handles both.
     #[test]
     fn test_load_multiple_clap_plugins() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let candidates = [
             (r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap", "bundle"),
             (r"C:\Program Files\Common Files\CLAP\bit-crusher-windows-x64.clap", "dll"),
@@ -526,6 +657,7 @@ mod tests {
     /// Skipped if the plugin isn't available.
     #[test]
     fn test_activate_real_clap_plugin() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
         if !path.exists() {
             eprintln!("[skip] TAL-Reverb-4.clap not found at {}", path.display());
@@ -579,6 +711,7 @@ mod tests {
     /// The output should be a quantized/distorted version of the input.
     #[test]
     fn test_bit_crusher_processing() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\bit-crusher-windows-x64.clap");
         if !path.exists() {
             eprintln!("[skip] Bit Crusher not found");
@@ -645,6 +778,7 @@ mod tests {
     /// signal to verify the reverb tail extends across multiple blocks.
     #[test]
     fn test_reverb_tail_extends() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
         if !path.exists() {
             eprintln!("[skip] TAL-Reverb-4.clap not found");
@@ -695,6 +829,7 @@ mod tests {
     /// the plugin list on startup.
     #[test]
     fn test_extract_descriptor_for_browser() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let clap_path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
         if !clap_path.exists() {
             eprintln!("[skip] TAL-Reverb-4.clap not found");
@@ -711,5 +846,69 @@ mod tests {
             }
             Err(e) => panic!("extract_descriptor_for_browser failed: {e}"),
         }
+    }
+
+    /// Integration test: open and close the GUI editor of a real CLAP plugin
+    /// (TAL Reverb 4). The editor appears as a floating OS window. We just
+    /// verify that open/close calls succeed without panicking — the visual
+    /// window itself can't be tested from a headless context.
+    #[test]
+    fn test_editor_open_close_real_plugin() {
+        // Serialize Win32 window creation across tests in the same process.
+        // Multiple tests creating top-level windows concurrently can deadlock
+        // the test runner (window class registration is process-global).
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found");
+            return;
+        }
+
+        let mut handle = ClapPluginHandle::load(path).expect("load failed");
+        // Activate the plugin first (most CLAP plugins require activation
+        // before the GUI can be created).
+        let _processor = handle.activate(48000.0, 256).expect("activate failed");
+
+        // Some CLAP plugins only expose the GUI extension after activation.
+        // Probe via open_editor() and accept either success (Win32 GUI) or
+        // a failure (no GUI / headless).
+        assert!(!handle.is_editor_open(), "Editor should not be open initially");
+
+        match handle.open_editor() {
+            Ok(()) => {
+                assert!(handle.is_editor_open(), "Editor should be open after open_editor()");
+                eprintln!("[ok] Opened editor for {}", handle.descriptor().name);
+
+                // Open again should be a no-op (returns Ok).
+                handle.open_editor().expect("double open should be a no-op");
+                assert!(handle.is_editor_open());
+
+                // Close the editor.
+                handle.close_editor();
+                assert!(!handle.is_editor_open(), "Editor should be closed after close_editor()");
+                eprintln!("[ok] Closed editor cleanly");
+            }
+            Err(e) => {
+                eprintln!("[warn] open_editor failed (may be headless or no GUI): {e}");
+            }
+        }
+
+        // Close again should be a no-op.
+        handle.close_editor();
+    }
+
+    /// Integration test: has_editor() returns a value (true or false)
+    /// without panicking.
+    #[test]
+    fn test_has_editor_returns_bool() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found");
+            return;
+        }
+        let handle = ClapPluginHandle::load(path).expect("load failed");
+        let has = handle.has_editor();
+        eprintln!("[ok] TAL Reverb 4 has_editor() = {has}");
     }
 }

@@ -839,7 +839,9 @@ checksum = "0f7a09059637aa2043aeaab65e1d95bc91f340da1f05512c0c00e6e0283e5d9b"
 dependencies = [
  "bitflags 2.11.1",
  "clack-common",
+ "clack-host",
  "clap-sys",
+ "raw-window-handle",
 ]
 
 [[package]]
@@ -2042,12 +2044,14 @@ dependencies = [
  "eguidev_runtime",
  "hound",
  "midir",
+ "raw-window-handle",
  "rfd",
  "ringbuf",
  "rtrb",
  "serde",
  "serde_json",
  "toml",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
