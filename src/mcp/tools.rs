@@ -1,4 +1,6 @@
 use serde_json::json;
+
+use crate::mcp::library::DirFilter;
 use crate::mcp::protocol::*;
 
 /// Tools that require mutation access (routed through main-thread command queue).
@@ -17,6 +19,7 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "playback.set_bpm", "playback.set_speed",
     "channel.set_panning", "channel.set_volume", "channel.set_mute", "channel.set_solo",
     "sendfx.set_bus", "sendfx.set_return_level",
+    "sample_library.import",
 ];
 
 pub fn list_tools() -> Vec<ToolDefinition> {
@@ -453,6 +456,51 @@ pub fn list_tools() -> Vec<ToolDefinition> {
             },
             "required": ["send_index", "level"]
         })),
+
+        // ── Sample Library (read-only) ──
+        tool_def("sample_library.configure", "Configure sample library root directories", json!({
+            "type": "object",
+            "properties": {
+                "roots": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of root directory paths for the sample library"
+                }
+            },
+            "required": ["roots"]
+        })),
+        tool_def("sample_library.list_dir", "List a directory in the sample library", json!({
+            "type": "object",
+            "properties": {
+                "path":      {"type": "string", "description": "Directory path to list"},
+                "page":      {"type": "integer", "description": "Page number (0-based)", "default": 0},
+                "page_size": {"type": "integer", "description": "Items per page (default 50)", "default": 50},
+                "filter": {
+                    "type": "object",
+                    "description": "Optional filter",
+                    "properties": {
+                        "name_contains": {"type": "string", "description": "Substring match on filename"},
+                        "min_duration":  {"type": "number", "description": "Minimum duration in seconds"},
+                        "max_duration":  {"type": "number", "description": "Maximum duration in seconds"},
+                        "category":      {"type": "string", "description": "Substring match on heuristically detected category"}
+                    }
+                }
+            },
+            "required": ["path"]
+        })),
+        tool_def("sample_library.search", "Search indexed samples across library roots", json!({
+            "type": "object",
+            "properties": {
+                "query":   {"type": "string", "description": "Search query (filename or category substring)"},
+                "scope_roots": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": "Restrict search to these roots (default: all)"
+                },
+                "page":      {"type": "integer", "description": "Page number (0-based)", "default": 0},
+                "page_size": {"type": "integer", "description": "Items per page (default 50)", "default": 50}
+            },
+            "required": ["query"]
+        })),
     ]
 }
 
@@ -473,6 +521,12 @@ pub fn call_tool(name: &str, params: serde_json::Value, ctx: &ToolContext) -> Cm
         "order.get"   => Ok(crate::mcp::resources::read_resource("htrk://order", ctx)?),
         "cell.get"    => cell_get(params, ctx),
         "playback.state" => Ok(crate::mcp::resources::read_resource("htrk://playback", ctx)?),
+
+        // Sample library tools
+        "sample_library.configure" => cmd_sample_library_configure(params, ctx),
+        "sample_library.list_dir"  => cmd_sample_library_list_dir(params, ctx),
+        "sample_library.search"    => cmd_sample_library_search(params, ctx),
+
         _ if MUTATION_TOOLS.contains(&name) => {
             Err("Requires mutation dispatch".into())
         }
@@ -498,4 +552,68 @@ fn cell_get(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
     let row_data = pat_data.get(row).and_then(|v| v.as_array()).ok_or("Row out of range")?;
     let cell = row_data.get(channel).ok_or("Channel out of range")?;
     Ok(cell.clone())
+}
+
+// ── Sample library handlers (read-only, run on MCP thread) ──
+
+fn cmd_sample_library_configure(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
+    let roots_arr = params.get("roots")
+        .and_then(|v| v.as_array())
+        .ok_or("Missing 'roots' array")?;
+
+    let roots: Vec<std::path::PathBuf> = roots_arr.iter()
+        .filter_map(|v| v.as_str())
+        .map(std::path::PathBuf::from)
+        .collect();
+
+    let count = roots.len();
+    let mut library = ctx.library.write().map_err(|e| format!("Library lock poisoned: {e}"))?;
+    library.set_roots(roots);
+
+    Ok(json!({ "roots_configured": count }))
+}
+
+fn cmd_sample_library_list_dir(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
+    let path_str = params.get("path")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'path'")?;
+
+    let page = params.get("page").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+    let page_size = params.get("page_size").and_then(|v| v.as_i64()).unwrap_or(50) as usize;
+
+    let filter = params.get("filter").and_then(|f| {
+        let name_contains = f.get("name_contains").and_then(|v| v.as_str()).map(String::from);
+        let category = f.get("category").and_then(|v| v.as_str()).map(String::from);
+        let min_duration = f.get("min_duration").and_then(|v| v.as_f64());
+        let max_duration = f.get("max_duration").and_then(|v| v.as_f64());
+        if name_contains.is_none() && category.is_none() && min_duration.is_none() && max_duration.is_none() {
+            None
+        } else {
+            Some(DirFilter { name_contains, category, min_duration, max_duration })
+        }
+    });
+
+    let mut library = ctx.library.write().map_err(|e| format!("Library lock poisoned: {e}"))?;
+    let listing = library.list_dir(std::path::Path::new(path_str), page, page_size, filter.as_ref())?;
+    serde_json::to_value(&listing).map_err(|e| format!("Serialization error: {e}"))
+}
+
+fn cmd_sample_library_search(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
+    let query = params.get("query")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'query'")?;
+
+    let page = params.get("page").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+    let page_size = params.get("page_size").and_then(|v| v.as_i64()).unwrap_or(50) as usize;
+
+    let scope_roots: Option<Vec<std::path::PathBuf>> = params.get("scope_roots")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter()
+            .filter_map(|v| v.as_str())
+            .map(std::path::PathBuf::from)
+            .collect());
+
+    let library = ctx.library.read().map_err(|e| format!("Library lock poisoned: {e}"))?;
+    let results = library.search(query, scope_roots.as_deref(), page, page_size);
+    serde_json::to_value(&results).map_err(|e| format!("Serialization error: {e}"))
 }

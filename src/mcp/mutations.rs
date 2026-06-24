@@ -103,6 +103,7 @@ pub fn execute_mutation(core: &mut HtrkCore, method: &str, params: &serde_json::
         "sample.load"          => cmd_sample_load(core, params),
         "sample.remove"        => cmd_sample_remove(core, params),
         "sample.set_property"  => cmd_sample_set_property(core, params),
+        "sample_library.import" => cmd_sample_library_import(core, params),
 
         // ── Envelope tools ──
         "envelope.set"         => cmd_envelope_set(core, params),
@@ -994,6 +995,87 @@ fn get_envelope_mut<'a>(inst: &'a mut Instrument, et: EnvelopeType) -> &'a mut O
         EnvelopeType::Pitch => &mut inst.pitch_envelope,
         EnvelopeType::Filter => &mut inst.filter_envelope,
     }
+}
+
+fn cmd_sample_library_import(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResult {
+    let path = get_str!(params, "path").ok_or("Missing 'path'")?;
+    let name_override = get_str!(params, "name");
+    let target_slot = get_i64!(params, "target_slot").map(|v| v as usize);
+    let set_note = get_str!(params, "set_note");
+
+    let wav_data = std::fs::read(&path).map_err(|e| format!("Failed to read '{path}': {e}"))?;
+    let mut sample = crate::formats::wav::import_wav(&wav_data)
+        .map_err(|e| format!("Failed to import WAV: {e}"))?;
+
+    if let Some(n) = name_override {
+        sample.name = n;
+    } else if let Some(stem) = std::path::Path::new(&path).file_stem().and_then(|s| s.to_str()) {
+        sample.name = stem.to_string();
+    }
+
+    if let Some(note_str) = set_note {
+        if let Ok(rel) = note_to_relative(&note_str) {
+            sample.relative_note = rel;
+        }
+    }
+
+    core.ensure_module_ownership();
+    if let Some(ref mut module) = core.module {
+        if let Some(arc_module) = Arc::get_mut(module) {
+            let idx = if let Some(slot) = target_slot {
+                if slot < arc_module.samples.len() {
+                    arc_module.samples[slot] = sample;
+                    slot
+                } else {
+                    while arc_module.samples.len() <= slot {
+                        arc_module.samples.push(crate::sequencer::sample::Sample::default());
+                    }
+                    arc_module.samples[slot] = sample;
+                    slot
+                }
+            } else {
+                let idx = arc_module.samples.len();
+                arc_module.samples.push(sample);
+                idx
+            };
+            core.sync_module_to_audio();
+            return Ok(serde_json::json!({"ok": true, "sample_index": idx, "path": path}));
+        }
+    }
+    Err("No module loaded".into())
+}
+
+fn note_to_relative(note: &str) -> Result<i8, String> {
+    let bytes = note.as_bytes();
+    if bytes.len() < 2 {
+        return Err("Invalid note".into());
+    }
+    let letter = bytes[0].to_ascii_uppercase();
+    let semitones = match letter {
+        b'C' => 0,
+        b'D' => 2,
+        b'E' => 4,
+        b'F' => 5,
+        b'G' => 7,
+        b'A' => 9,
+        b'B' => 11,
+        _ => return Err("Invalid note letter".into()),
+    };
+    let mut idx = 1;
+    let mut semitone_offset: i8 = 0;
+    if idx < bytes.len() && (bytes[idx] == b'#' || bytes[idx] == b'-') {
+        if bytes[idx] == b'#' {
+            semitone_offset = 1;
+        }
+        idx += 1;
+    }
+    if idx >= bytes.len() {
+        return Err("Missing octave".into());
+    }
+    let octave_str = &note[idx..];
+    let octave: i8 = octave_str.parse().map_err(|_| "Invalid octave")?;
+    let midi_key = 12 * (octave + 1) + semitones + semitone_offset;
+    Ok(midi_key - 60)
 }
 
 fn cmd_envelope_set(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResult {

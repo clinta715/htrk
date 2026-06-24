@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 use std::thread;
 
+use crate::mcp::library::SampleLibrary;
 use crate::mcp::protocol::*;
 use crate::mcp::resources;
 use crate::mcp::tools;
@@ -20,6 +21,7 @@ pub struct McpServer {
     pub snapshot: Arc<RwLock<ModuleSnapshot>>,
     pub playback_snapshot: Arc<RwLock<PlaybackSnapshot>>,
     pub channels_snapshot: Arc<RwLock<ChannelsSnapshot>>,
+    pub library: Arc<RwLock<SampleLibrary>>,
     pub shutdown: Arc<AtomicBool>,
 }
 
@@ -44,6 +46,7 @@ impl McpServer {
                     snapshot: Arc::new(RwLock::new(ModuleSnapshot::default())),
                     playback_snapshot: Arc::new(RwLock::new(PlaybackSnapshot::default())),
                     channels_snapshot: Arc::new(RwLock::new(ChannelsSnapshot::default())),
+                    library: Arc::new(RwLock::new(SampleLibrary::new())),
                     shutdown: Arc::new(AtomicBool::new(true)),
                 };
             }
@@ -55,11 +58,13 @@ impl McpServer {
         let snapshot = Arc::new(RwLock::new(ModuleSnapshot::default()));
         let playback_snapshot = Arc::new(RwLock::new(PlaybackSnapshot::default()));
         let channels_snapshot = Arc::new(RwLock::new(ChannelsSnapshot::default()));
+        let library = Arc::new(RwLock::new(SampleLibrary::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let snapshot_clone = snapshot.clone();
         let pb_snapshot_clone = playback_snapshot.clone();
         let ch_snapshot_clone = channels_snapshot.clone();
+        let library_clone = library.clone();
         let shutdown_clone = shutdown.clone();
         let cmd_tx = command_tx.clone();
 
@@ -113,6 +118,7 @@ impl McpServer {
                                         module_snapshot: snapshot.clone(),
                                         playback_snapshot: pb.clone(),
                                         channels_snapshot: ch.clone(),
+                                        library: library_clone.clone(),
                                     };
                                     drop(snapshot);
                                     drop(pb);
@@ -155,6 +161,7 @@ impl McpServer {
                 snapshot.clone(),
                 playback_snapshot.clone(),
                 channels_snapshot.clone(),
+                library.clone(),
                 shutdown.clone(),
             )
         });
@@ -169,6 +176,7 @@ impl McpServer {
             snapshot,
             playback_snapshot,
             channels_snapshot,
+            library,
             shutdown,
         }
     }

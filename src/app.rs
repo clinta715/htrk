@@ -122,6 +122,9 @@ impl HtrkApp {
         let mcp_port = config.mcp_port;
         let mcp_http_enabled = config.mcp_http_enabled;
         let mcp_http_port = config.mcp_http_port;
+        let library_roots: Vec<std::path::PathBuf> = config.library_roots.iter()
+            .map(std::path::PathBuf::from)
+            .collect();
         HtrkApp {
             core: crate::core::HtrkCore::new(playback_state.clone()),
             stream: None,
@@ -220,6 +223,12 @@ impl HtrkApp {
                 eprintln!("[app] MCP server enabled (TCP port {})", server.port);
                 if let Some(hp) = server.http_port {
                     eprintln!("[app] MCP HTTP SSE transport enabled (port {hp})");
+                }
+                if !library_roots.is_empty() {
+                    if let Ok(mut lib) = server.library.write() {
+                        lib.set_roots(library_roots.clone());
+                        eprintln!("[app] Sample library configured with {} root(s)", library_roots.len());
+                    }
                 }
                 Some(server)
             } else {

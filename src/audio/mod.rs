@@ -3,6 +3,7 @@ pub mod effects;
 pub mod sequencer;
 pub mod engine;
 pub mod filter;
+pub mod plugins;
 pub mod sendfx;
 pub mod mixer;
 pub mod playback_state;

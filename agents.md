@@ -279,3 +279,79 @@ Use the SP_* constants instead of inline `.add_space()`:
 - When adding a new `.size(N)` call, use the corresponding FONT_* constant.
 - When adding a new `section_header`-like label, use `style::section_header()`.
 - When adding a colored label outside standard widgets, check if an existing `theme.*` token fits before creating a new literal.
+
+## 19. Sample Library (Phase 1)
+
+### Architecture
+- `SampleLibrary` in `src/mcp/library.rs` is a per-session, in-memory directory browser with lazy WAV header caching.
+- Stored on `McpServer` as `library: Arc<RwLock<SampleLibrary>>` and passed to all `ToolContext` instances.
+- `library_roots: Vec<String>` in `AppConfig` persists root paths; applied to the library on startup in `HtrkApp::default()`.
+
+### MCP Tools
+- **Read-only** (MCP thread): `sample_library.configure` (set roots), `sample_library.list_dir` (browse + paginate), `sample_library.search` (filename substring match across cached entries).
+- **Mutation** (main thread): `sample_library.import` (load WAV into module with optional `target_slot`, `name`, `set_note`).
+- Library tools access the library via `ctx.library.write()` (configure/list_dir populate the cache) or `ctx.library.read()` (search reads the cache).
+
+### Filename Heuristic Parser
+- `parse_filename(name)` splits on `_`, ` `, `.` (NOT `-` — dashes are part of tracker note notation like `C-4`).
+- Note detection: `[A-G][#b-]?[0-9]+` — supports sharps (`D#3`), flats (`Bb2`), and tracker dashes (`C-4`). Case-preserved in output (`Bb2`, not `BB2`).
+- BPM detection: `\d+bpm` (case-insensitive suffix) or standalone 3-digit number.
+- Category: all non-note, non-BPM tokens joined by space. Only set if at least one note or BPM was found (low confidence otherwise → all fields None).
+
+### WAV Header Reading
+- `read_wav_header(path)` reads only the RIFF/fmt/data chunks (no PCM data) to extract `duration`, `sample_rate`, `bit_depth`, `num_channels`. Same algorithm as `wav_duration()` in `file_browser.rs` but returns richer metadata.
+
+### Caching
+- `cache: HashMap<PathBuf, LibraryEntry>` — populated lazily on `list_dir` calls. Entry-level cache (per file), not directory-level.
+- `dir_cache: HashMap<PathBuf, Vec<PathBuf>>` — child path lists per directory, avoiding repeated `read_dir`.
+- Both caches cleared on `set_roots()`.
+- No persistent index (SQLite) in Phase 1 — cold cache on every app restart.
+
+### Rule for Future Changes
+- When adding a new library tool, add it to `list_tools()` in `tools.rs`. If read-only, add a match arm in `call_tool()`. If mutation, add to `MUTATION_TOOLS` and `execute_mutation()` in `mutations.rs`.
+- The `ToolContext` now carries `library: Arc<RwLock<SampleLibrary>>` — any new read-only tool can access it via `ctx.library`.
+- Never call `std::fs::read` for full WAV data in a read-only library tool — use `read_wav_header` for metadata only. Full PCM loading only happens in `sample_library.import` (mutation, main thread).
+
+## 20. CLAP/VST Plugin Hosting
+
+### Architecture
+- `src/audio/plugins/` — new module containing `HostedPlugin` trait, plugin discovery, library, and format-specific loaders.
+- The audio engine talks to plugins via a format-agnostic trait; CLAP is implemented in `clap_plugin.rs`, VST3 (future) in `vst3_plugin.rs`.
+
+### Threading Model
+- **Main thread**: `ClapPluginHandle` owns the CLAP `PluginInstance` (which is `!Send` by design).
+- **Audio thread**: `ClapPluginProcessor` owns the `StartedPluginAudioProcessor` (Send but !Sync).
+- The processor is passed across threads via `AudioCommand`, but the PluginInstance stays on the main thread.
+- When deactivating: audio thread returns a `StoppedPluginAudioProcessor` (boxed as `Any + Send`) back to the main thread; the main thread calls `instance.try_deactivate_with(closure)` to finalize.
+
+### Traits
+- `HostedPluginProcessor: Send` — audio-thread side. Must not allocate in `process()`.
+- `HostedPluginHandle` — main-thread side. NOT `Send` (PluginInstance is !Send).
+- All buffer fields are pre-allocated in `activate()` and reused on each `process()` call.
+
+### Discovery (`src/audio/plugins/discovery.rs`)
+- `default_search_paths()` returns OS-specific CLAP directories:
+  - Windows: `C:\Program Files\Common Files\CLAP`
+  - macOS: `/Library/Audio/Plug-Ins/CLAP`, `~/Library/Audio/Plug-Ins/CLAP`
+  - Linux: `/usr/lib/clap`, `~/.clap`, `/usr/local/lib/clap`
+- `scan_paths(roots)` walks the given directories and collects `.clap` files. Recursive, deduplicated via canonical paths.
+- Per-session in-memory cache, cleared on `set_scan_roots()`.
+
+### Library (`src/audio/plugins/library.rs`)
+- `PluginLibrary` — in-memory metadata cache for discovered plugins, keyed by `(format, path, plugin_id)`.
+- Mirrors `SampleLibrary` pattern. No persistent index yet (Phase 4+).
+
+### Persistence
+- `PluginSlot` struct in `mod.rs` (re-exported in sequencer module) holds `{ format, path, plugin_id, state }`.
+- Phase 2 send FX integration will add `send_bus_plugins: [Option<PluginSlot>; 4]` to `Module`.
+
+### CLAP Integration Status (Phase 1-2)
+- **Phase 1 (done)**: trait, types, discovery, library, dependencies, descriptor extraction.
+- **Phase 2 (in progress)**: lifecycle skeleton (load/activate/deactivate). `process()` is a pass-through stub. Real CLAP process() integration (events, AudioPorts, parameter queue) is filled in incrementally as we test against real plugins.
+- **Phase 3-6 (future)**: send FX wire-up, instrument plugins, parameter automation, editor UI, VST3.
+
+### Rule for Future Changes
+- When adding a new plugin format, create `vst3_plugin.rs` (or similar) implementing both `HostedPluginHandle` and `HostedPluginProcessor`.
+- All `process()` implementations must be allocation-free. Allocate all buffers in `activate()`.
+- Parameter changes from the UI thread go through the audio thread via an SPSC ring buffer; never set parameters directly on the audio-thread processor.
+- The PluginSlot is the only state that needs to be persisted to `.htk`; everything else is rebuilt on load.

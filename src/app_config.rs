@@ -179,6 +179,9 @@ pub struct AppConfig {
     pub mcp_http_enabled: bool,
     #[serde(default = "default_mcp_http_port")]
     pub mcp_http_port: u16,
+
+    #[serde(default)]
+    pub library_roots: Vec<String>,
 }
 
 fn default_col_vis() -> bool { true }
@@ -271,6 +274,7 @@ impl Default for AppConfig {
             mcp_port: default_mcp_port(),
             mcp_http_enabled: false,
             mcp_http_port: default_mcp_http_port(),
+            library_roots: Vec::new(),
         }
     }
 }

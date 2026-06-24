@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread;
 
+use crate::mcp::library::SampleLibrary;
 use crate::mcp::protocol::*;
 
 pub struct HttpServer {
@@ -16,9 +17,10 @@ struct Shared {
     sessions: Mutex<HashMap<String, mpsc::Sender<String>>>,
     next_id: AtomicU64,
     cmd_tx: mpsc::Sender<McpCommand>,
-    snapshot: Arc<std::sync::RwLock<ModuleSnapshot>>,
-    playback_snapshot: Arc<std::sync::RwLock<PlaybackSnapshot>>,
-    channels_snapshot: Arc<std::sync::RwLock<ChannelsSnapshot>>,
+    snapshot: Arc<RwLock<ModuleSnapshot>>,
+    playback_snapshot: Arc<RwLock<PlaybackSnapshot>>,
+    channels_snapshot: Arc<RwLock<ChannelsSnapshot>>,
+    library: Arc<RwLock<SampleLibrary>>,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -26,9 +28,10 @@ impl HttpServer {
     pub fn start(
         port: u16,
         cmd_tx: mpsc::Sender<McpCommand>,
-        snapshot: Arc<std::sync::RwLock<ModuleSnapshot>>,
-        playback_snapshot: Arc<std::sync::RwLock<PlaybackSnapshot>>,
-        channels_snapshot: Arc<std::sync::RwLock<ChannelsSnapshot>>,
+        snapshot: Arc<RwLock<ModuleSnapshot>>,
+        playback_snapshot: Arc<RwLock<PlaybackSnapshot>>,
+        channels_snapshot: Arc<RwLock<ChannelsSnapshot>>,
+        library: Arc<RwLock<SampleLibrary>>,
         shutdown: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         let addr = format!("127.0.0.1:{port}");
@@ -49,6 +52,7 @@ impl HttpServer {
             snapshot,
             playback_snapshot,
             channels_snapshot,
+            library,
             shutdown,
         });
 
@@ -291,6 +295,7 @@ fn handle_post(
         module_snapshot: snapshot.clone(),
         playback_snapshot: pb.clone(),
         channels_snapshot: ch.clone(),
+        library: shared.library.clone(),
     };
     drop(snapshot);
     drop(pb);
