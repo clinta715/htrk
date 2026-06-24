@@ -501,6 +501,32 @@ pub fn list_tools() -> Vec<ToolDefinition> {
             },
             "required": ["query"]
         })),
+
+        // ── Plugin tools (read-only) ──
+        tool_def("plugin.scan", "Scan filesystem for CLAP plugins in default and configured scan paths", json!({
+            "type": "object",
+            "properties": {
+                "extra_paths": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": "Additional paths to scan beyond the system defaults"
+                }
+            }
+        })),
+        tool_def("plugin.list", "List all discovered plugins, optionally filtered by name substring", json!({
+            "type": "object",
+            "properties": {
+                "name_contains": {"type": "string", "description": "Filter by substring in name or id (case-insensitive)"}
+            }
+        })),
+        tool_def("plugin.info", "Get detailed information about a specific plugin (triggers a full plugin load)", json!({
+            "type": "object",
+            "properties": {
+                "format": {"type": "string", "enum": ["clap"], "description": "Plugin format"},
+                "path":   {"type": "string", "description": "Path to the plugin bundle or DLL"},
+                "plugin_id": {"type": "string", "description": "Plugin stable id (CLAP id)"}
+            },
+            "required": ["format", "path", "plugin_id"]
+        })),
     ]
 }
 
@@ -526,6 +552,11 @@ pub fn call_tool(name: &str, params: serde_json::Value, ctx: &ToolContext) -> Cm
         "sample_library.configure" => cmd_sample_library_configure(params, ctx),
         "sample_library.list_dir"  => cmd_sample_library_list_dir(params, ctx),
         "sample_library.search"    => cmd_sample_library_search(params, ctx),
+
+        // Plugin tools
+        "plugin.scan" => crate::mcp::plugin_tools::cmd_plugin_scan(params, ctx),
+        "plugin.list" => crate::mcp::plugin_tools::cmd_plugin_list(params, ctx),
+        "plugin.info" => crate::mcp::plugin_tools::cmd_plugin_info(params, ctx),
 
         _ if MUTATION_TOOLS.contains(&name) => {
             Err("Requires mutation dispatch".into())

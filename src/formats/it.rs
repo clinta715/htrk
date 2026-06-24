@@ -174,6 +174,7 @@ impl FormatHandler for ItHandler {
             ],
             send_return_levels: [0.5, 0.0, 0.0, 0.0],
             send_pre_fader: Default::default(),
+            send_bus_plugins: Default::default(),
             automation_tracks: Vec::new(),
             next_automation_id: 0,
         })
@@ -808,4 +809,5 @@ pub fn save_module(_module: &Module) -> Vec<u8> {
     // Placeholder implementation for now
     Vec::new()
 }
+
 

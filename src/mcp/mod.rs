@@ -1,4 +1,5 @@
 pub mod library;
+pub mod plugin_tools;
 pub mod protocol;
 pub mod resources;
 pub mod tools;

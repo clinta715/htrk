@@ -6,6 +6,7 @@ use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread;
 
 use crate::mcp::library::SampleLibrary;
+use crate::audio::plugins::PluginLibrary;
 use crate::mcp::protocol::*;
 
 pub struct HttpServer {
@@ -21,6 +22,7 @@ struct Shared {
     playback_snapshot: Arc<RwLock<PlaybackSnapshot>>,
     channels_snapshot: Arc<RwLock<ChannelsSnapshot>>,
     library: Arc<RwLock<SampleLibrary>>,
+    plugin_library: Arc<RwLock<PluginLibrary>>,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -32,6 +34,7 @@ impl HttpServer {
         playback_snapshot: Arc<RwLock<PlaybackSnapshot>>,
         channels_snapshot: Arc<RwLock<ChannelsSnapshot>>,
         library: Arc<RwLock<SampleLibrary>>,
+        plugin_library: Arc<RwLock<PluginLibrary>>,
         shutdown: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         let addr = format!("127.0.0.1:{port}");
@@ -53,6 +56,7 @@ impl HttpServer {
             playback_snapshot,
             channels_snapshot,
             library,
+            plugin_library,
             shutdown,
         });
 
@@ -296,6 +300,7 @@ fn handle_post(
         playback_snapshot: pb.clone(),
         channels_snapshot: ch.clone(),
         library: shared.library.clone(),
+        plugin_library: shared.plugin_library.clone(),
     };
     drop(snapshot);
     drop(pb);

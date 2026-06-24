@@ -289,6 +289,16 @@ impl ClapPluginProcessor {
     }
 }
 
+impl std::fmt::Debug for ClapPluginProcessor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClapPluginProcessor")
+            .field("name", &self.descriptor.name)
+            .field("sample_rate", &self.sample_rate)
+            .field("max_block", &self.max_block)
+            .finish()
+    }
+}
+
 impl HostedPluginProcessor for ClapPluginProcessor {
     fn stop(self: Box<Self>) -> Box<dyn std::any::Any> {
         Box::new(ClapPluginProcessor::stop(*self))

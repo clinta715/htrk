@@ -292,6 +292,7 @@ impl FormatHandler for UltHandler {
             send_bus_config: Default::default(),
             send_return_levels: Default::default(),
             send_pre_fader: Default::default(),
+            send_bus_plugins: Default::default(),
             automation_tracks: Vec::new(),
             next_automation_id: 0,
         })

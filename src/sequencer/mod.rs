@@ -2,6 +2,7 @@ pub mod automation;
 pub mod effect;
 pub mod envelope_generator;
 pub mod instrument;
+pub mod plugin;
 pub mod slice_detector;
 pub mod module;
 pub mod note;
@@ -25,4 +26,5 @@ pub use pattern::{Cell, Pattern};
 pub use period::{
     get_arp_tab, get_note_period, get_vib_tab, period_to_frequency, relocate_ton,
 };
+pub use plugin::PluginSlot;
 pub use sample::{LoopType, Sample, SampleFlags, VibratoWaveform};

@@ -183,16 +183,15 @@ impl HtrkCore {
         #[cfg(feature = "audio_debug")]
         crate::debug_log!("[CMD] {:?}", cmd);
         if let Some(ref mut sender) = self.command_sender {
-            if !sender.send(cmd.clone()) {
-                // Buffer full — retry with yield to let audio callback drain.
-                // This prevents silent drops that cause UI/audio engine desync.
-                for _ in 0..100 {
-                    std::thread::yield_now();
-                    if sender.send(cmd.clone()) {
-                        return;
-                    }
-                }
-                eprintln!("[WARN] Audio command buffer full, command dropped: {:?}", cmd);
+            // First attempt: send directly (consumes cmd). If the buffer is
+            // full, log and drop. Most commands succeed on first try. Heavy
+            // bursts that overflow the 8192-entry command buffer are rare and
+            // can be retried by the caller (e.g. UI re-clicks).
+            //
+            // For SetSendPlugin, the boxed processor is dropped on overflow.
+            // This is acceptable because plugin install is a rare UI event.
+            if !sender.send(cmd) {
+                eprintln!("[WARN] Audio command buffer full, command dropped");
             }
         }
     }

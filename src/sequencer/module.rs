@@ -2,6 +2,7 @@ use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::instrument::Instrument;
 use crate::sequencer::pattern::Pattern;
+use crate::sequencer::plugin::PluginSlot;
 use crate::sequencer::sample::Sample;
 
 fn default_send_bus_config() -> [SendEffectType; NUM_SEND_BUSES] {
@@ -117,6 +118,11 @@ pub struct Module {
     #[serde(default)]
     pub send_pre_fader: [bool; NUM_SEND_BUSES],
 
+    /// Plugin slots for each send bus. None means the bus uses its built-in
+    /// SendEffect (or None if `send_bus_config[i] == SendEffectType::None`).
+    #[serde(default)]
+    pub send_bus_plugins: [Option<PluginSlot>; NUM_SEND_BUSES],
+
     #[serde(default)]
     pub automation_tracks: Vec<crate::sequencer::automation::AutomationTrack>,
     #[serde(default)]
@@ -145,6 +151,7 @@ impl Default for Module {
             send_bus_config: [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None],
             send_return_levels: [0.5, 0.0, 0.0, 0.0],
             send_pre_fader: [false; NUM_SEND_BUSES],
+            send_bus_plugins: [None, None, None, None],
             automation_tracks: Vec::new(),
             next_automation_id: 0,
         }

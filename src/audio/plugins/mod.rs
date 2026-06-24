@@ -7,6 +7,8 @@ pub mod clap_plugin;
 pub mod discovery;
 pub mod library;
 
+pub use library::PluginLibrary;
+
 use std::any::Any;
 use std::path::PathBuf;
 
@@ -124,7 +126,7 @@ pub struct ParamChange {
 // Implemented by anything that processes audio in the audio thread.
 // Must be Send. Must not allocate in `process()`.
 
-pub trait HostedPluginProcessor: Send {
+pub trait HostedPluginProcessor: Send + std::fmt::Debug {
     /// Process audio. Called from the audio thread.
     /// All buffers are pre-allocated and the same length.
     /// `frame_count` is the number of valid frames in each buffer.

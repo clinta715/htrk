@@ -182,6 +182,12 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub library_roots: Vec<String>,
+
+    /// Additional directories to scan for CLAP plugins, beyond the system
+    /// defaults (e.g. `C:\Program Files\Common Files\CLAP`). Set via the
+    /// Settings UI or MCP. Phase 2 plugin hosting.
+    #[serde(default)]
+    pub plugin_scan_paths: Vec<String>,
 }
 
 fn default_col_vis() -> bool { true }
@@ -275,6 +281,7 @@ impl Default for AppConfig {
             mcp_http_enabled: false,
             mcp_http_port: default_mcp_http_port(),
             library_roots: Vec::new(),
+            plugin_scan_paths: Vec::new(),
         }
     }
 }

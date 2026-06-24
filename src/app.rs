@@ -125,6 +125,9 @@ impl HtrkApp {
         let library_roots: Vec<std::path::PathBuf> = config.library_roots.iter()
             .map(std::path::PathBuf::from)
             .collect();
+        let plugin_scan_paths: Vec<std::path::PathBuf> = config.plugin_scan_paths.iter()
+            .map(std::path::PathBuf::from)
+            .collect();
         HtrkApp {
             core: crate::core::HtrkCore::new(playback_state.clone()),
             stream: None,
@@ -229,6 +232,14 @@ impl HtrkApp {
                         lib.set_roots(library_roots.clone());
                         eprintln!("[app] Sample library configured with {} root(s)", library_roots.len());
                     }
+                }
+                // Configure plugin library scan paths and trigger an initial scan.
+                let plugin_scan_paths = plugin_scan_paths.clone();
+                if let Ok(mut lib) = server.plugin_library.write() {
+                    lib.set_scan_roots(plugin_scan_paths.clone());
+                    let found = lib.scan();
+                    eprintln!("[app] Plugin library: {} .clap file(s) found in {} root(s)",
+                        found.len(), plugin_scan_paths.len() + crate::audio::plugins::default_search_paths().len());
                 }
                 Some(server)
             } else {

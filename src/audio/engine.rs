@@ -41,6 +41,11 @@ pub struct AudioEngine {
     ch_peak_cache: Vec<f32>,
     send_fx_left: Vec<f32>,
     send_fx_right: Vec<f32>,
+    /// Separate scratch buffers for hosted-plugin output (to avoid aliasing
+    /// the input buffer when the plugin reads input and writes output in the
+    /// same process() call). Phase 2 plugin hosting.
+    plugin_out_left: Vec<f32>,
+    plugin_out_right: Vec<f32>,
 }
 
 struct SendBus {
@@ -48,6 +53,9 @@ struct SendBus {
     return_level: f32,
     pre_fader: bool,
     effect: Option<Box<dyn crate::audio::sendfx::SendEffect>>,
+    /// Hosted plugin processor (e.g. CLAP). Mutually exclusive with `effect` —
+    /// when a plugin is set, the built-in SendEffect is bypassed. Phase 2.
+    plugin: Option<Box<dyn crate::audio::plugins::HostedPluginProcessor>>,
 }
 
 pub struct CommandSender {
@@ -89,6 +97,8 @@ pub fn create_engine_and_sender(
         ch_peak_cache: vec![0.0; DEFAULT_CHANNELS],
         send_fx_left: vec![0.0; BUFFER_SIZE],
         send_fx_right: vec![0.0; BUFFER_SIZE],
+        plugin_out_left: vec![0.0; BUFFER_SIZE],
+        plugin_out_right: vec![0.0; BUFFER_SIZE],
         send_buses: {
             let configs = [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None];
             let returns = [0.5, 0.0, 0.0, 0.0];
@@ -99,6 +109,7 @@ pub fn create_engine_and_sender(
                     return_level: returns[i],
                     pre_fader: false,
                     effect: sendfx::create_send_effect(effect_type, sample_rate as f32),
+                    plugin: None,
                 });
             }
             buses
@@ -132,6 +143,8 @@ impl AudioEngine {
             self.mix_right.resize(frame_count, 0.0);
             self.send_fx_left.resize(frame_count, 0.0);
             self.send_fx_right.resize(frame_count, 0.0);
+            self.plugin_out_left.resize(frame_count, 0.0);
+            self.plugin_out_right.resize(frame_count, 0.0);
             let num_ch = self.sequencer.state.channels.len();
             let total_size = num_ch * frame_count * 2;
             self.ch_mix.resize(total_size, 0.0);
@@ -283,9 +296,38 @@ impl AudioEngine {
                 }
             }
 
-            // Process each bus through its effect and mix back
+            // Process each bus through its effect (or hosted plugin) and mix back.
+            // Plugin takes precedence: when set, the built-in SendEffect is bypassed.
             for bus in &mut self.send_buses {
-                if let Some(ref mut fx) = bus.effect {
+                if let Some(ref mut plugin) = bus.plugin {
+                    // Copy bus.buffer (interleaved L/R) into planar scratch buffers
+                    for i in 0..frame_count {
+                        self.send_fx_left[i] = bus.buffer[i * 2];
+                        self.send_fx_right[i] = bus.buffer[i * 2 + 1];
+                    }
+                    // Zero plugin output buffers before call
+                    for i in 0..frame_count {
+                        self.plugin_out_left[i] = 0.0;
+                        self.plugin_out_right[i] = 0.0;
+                    }
+                    plugin.process(
+                        &self.send_fx_left[..frame_count],
+                        &self.send_fx_right[..frame_count],
+                        &mut self.plugin_out_left[..frame_count],
+                        &mut self.plugin_out_right[..frame_count],
+                        frame_count,
+                        &crate::audio::plugins::TransportInfo {
+                            bpm: bpm as f64,
+                            sample_rate: sample_rate as f64,
+                            sample_position: 0,
+                            is_playing: self.sequencer.state.playing,
+                        },
+                    );
+                    for i in 0..frame_count {
+                        bus.buffer[i * 2] = self.plugin_out_left[i];
+                        bus.buffer[i * 2 + 1] = self.plugin_out_right[i];
+                    }
+                } else if let Some(ref mut fx) = bus.effect {
                     let left = &mut self.send_fx_left[..frame_count];
                     let right = &mut self.send_fx_right[..frame_count];
                     for i in 0..frame_count {
@@ -394,6 +436,14 @@ impl AudioEngine {
                             return_level: module.send_return_levels.get(i).copied().unwrap_or(0.0),
                             pre_fader: module.send_pre_fader.get(i).copied().unwrap_or(false),
                             effect: sendfx::create_send_effect(effect_type, self.output_sample_rate as f32),
+                            // Plugin processors are sent by the main thread via
+                            // SetSendPlugin commands after module load. The
+                            // plugin is loaded + activated on the main thread
+                            // (where the PluginInstance lives), then handed off
+                            // to the audio thread. For now, plugins are not
+                            // auto-reloaded from the module on .htk load — the
+                            // user re-assigns them via the UI or MCP.
+                            plugin: None,
                         };
                         bus
                     }).collect();
@@ -474,6 +524,27 @@ impl AudioEngine {
                 AudioCommand::SetSendPreFader { send_index, pre_fader } => {
                     if send_index < self.send_buses.len() {
                         self.send_buses[send_index].pre_fader = pre_fader;
+                    }
+                }
+                AudioCommand::SetSendPlugin { send_index, processor } => {
+                    if send_index < self.send_buses.len() {
+                        // Installing a plugin replaces the built-in SendEffect.
+                        // The old SendEffect is dropped here (audio thread side).
+                        // To deactivate a previously-installed plugin's audio
+                        // processor cleanly, the main thread should call
+                        // ClapPluginHandle::deactivate() before sending the
+                        // SetSendPlugin command. The Drop impl on the old
+                        // processor will leak the audio-thread side, but since
+                        // the main thread deactivates the instance first, the
+                        // CLAP plugin's own resources are released.
+                        self.send_buses[send_index].plugin = processor;
+                    }
+                }
+                AudioCommand::SetSendPluginParam { send_index, param_id, value } => {
+                    if send_index < self.send_buses.len() {
+                        if let Some(ref mut plugin) = self.send_buses[send_index].plugin {
+                            plugin.set_parameter(param_id, value);
+                        }
                     }
                 }
             }
@@ -992,5 +1063,80 @@ mod tests {
         engine.process_callback(&mut output);
         assert!(output.iter().any(|&s| s != 0.0),
             "preview note must be audible while the sequencer is stopped");
+    }
+
+    /// Integration test: install a CLAP plugin on a send bus via AudioCommand.
+    /// Verifies the wiring is correct (the plugin is stored on the bus and
+    /// survives engine callbacks). The actual audio processing is tested
+    /// separately in `clap_plugin.rs`.
+    /// Skipped if no CLAP plugin is available at the standard install path.
+    #[test]
+    fn send_bus_plugin_install_wiring() {
+        let clap_path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !clap_path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found");
+            return;
+        }
+
+        use crate::audio::plugins::clap_plugin::ClapPluginHandle;
+        use crate::audio::plugins::HostedPluginHandle;
+
+        // Load and activate the CLAP plugin on the main thread.
+        let mut handle = ClapPluginHandle::load(clap_path).expect("plugin load");
+        let processor = handle.activate(48000.0, 256).expect("plugin activate");
+        eprintln!("[ok] Activated: {}", processor.name());
+
+        // Set up the audio engine with a module.
+        let state = Arc::new(AtomicPlaybackState::default());
+        let (mut engine, mut sender) = create_engine_and_sender(state.clone(), 48000, 2);
+
+        let mut module = crate::sequencer::Module::default();
+        module.order_list = vec![0];
+        module.patterns.push(crate::sequencer::Pattern::new(64));
+        module.send_return_levels[0] = 0.5;
+        sender.send(AudioCommand::LoadModule(Arc::new(module)));
+        engine.process_callback(&mut [0.0f32; 512]); // drain LoadModule
+
+        // Initially, no plugin on bus 0
+        assert!(engine.send_buses[0].plugin.is_none());
+        assert!(engine.send_buses[0].effect.is_some(),
+            "Built-in SendEffect (Delay or Reverb) should be active by default");
+
+        // Install the CLAP plugin on send bus 0
+        sender.send(AudioCommand::SetSendPlugin {
+            send_index: 0,
+            processor: Some(processor),
+        });
+        engine.process_callback(&mut [0.0f32; 512]); // drain
+
+        // Now the plugin is installed
+        assert!(engine.send_buses[0].plugin.is_some(),
+            "Plugin should be installed on send bus 0 after SetSendPlugin command");
+        eprintln!("[ok] Plugin installed on send bus 0");
+
+        // Set a parameter via the AudioCommand
+        sender.send(AudioCommand::SetSendPluginParam {
+            send_index: 0,
+            param_id: 0,
+            value: 0.5,
+        });
+        engine.process_callback(&mut [0.0f32; 512]); // drain
+
+        // The plugin survives multiple callbacks (process() is called each time)
+        for _ in 0..4 {
+            engine.process_callback(&mut [0.0f32; 512]);
+        }
+        assert!(engine.send_buses[0].plugin.is_some(),
+            "Plugin should still be installed after callbacks");
+
+        // Remove the plugin (SetSendPlugin with None)
+        sender.send(AudioCommand::SetSendPlugin {
+            send_index: 0,
+            processor: None,
+        });
+        engine.process_callback(&mut [0.0f32; 512]); // drain
+        assert!(engine.send_buses[0].plugin.is_none(),
+            "Plugin should be removed after SetSendPlugin with None");
+        eprintln!("[ok] Plugin removed from send bus 0");
     }
 }

@@ -2,6 +2,7 @@ use std::sync::{mpsc, Arc, RwLock};
 use serde::{Deserialize, Serialize};
 
 use crate::mcp::library::SampleLibrary;
+use crate::audio::plugins::PluginLibrary;
 
 // ── MCP JSON-RPC types (subset of the MCP spec) ──
 
@@ -79,6 +80,7 @@ pub struct ToolContext {
     pub playback_snapshot: PlaybackSnapshot,
     pub channels_snapshot: ChannelsSnapshot,
     pub library: Arc<RwLock<SampleLibrary>>,
+    pub plugin_library: Arc<RwLock<PluginLibrary>>,
 }
 
 // ── Snapshots (read-only, shared with MCP thread via Arc<RwLock<>>) ──

@@ -1,3 +1,4 @@
+use crate::audio::plugins::HostedPluginProcessor;
 use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::module::Module;
 use crate::sequencer::player::PlayMode;
@@ -17,7 +18,7 @@ pub enum LimiterMode {
     SoftKneeSmooth,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum AudioCommand {
     Play,
     PlayFrom { order: u16, row: u16 },
@@ -57,4 +58,18 @@ pub enum AudioCommand {
     SetSendFxParam { send_index: usize, param: u32, value: f32 },
     SetSendEffectType { send_index: usize, effect_type: SendEffectType },
     SetSendPreFader { send_index: usize, pre_fader: bool },
+
+    /// Install a hosted plugin processor on a send bus, replacing any built-in
+    /// SendEffect. The plugin is already activated by the main thread; the
+    /// audio thread just calls process() each callback. Pass `None` to clear.
+    SetSendPlugin {
+        send_index: usize,
+        processor: Option<Box<dyn HostedPluginProcessor>>,
+    },
+    /// Set a parameter on the hosted plugin processor on a send bus.
+    SetSendPluginParam {
+        send_index: usize,
+        param_id: u32,
+        value: f32,
+    },
 }
