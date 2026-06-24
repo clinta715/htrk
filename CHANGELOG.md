@@ -2,7 +2,7 @@
 
 All notable changes to htrk will be documented in this file.
 
-## [0.17.0] - 2026-06-23
+## [0.18.0] - 2026-06-24
 
 ### Added
 
@@ -13,6 +13,12 @@ All notable changes to htrk will be documented in this file.
 - **Effect hover popups**: The FX column hover popup now shows the hex code, the standard name, the param range, and the current values. E.g. `4  Vibrato / X = speed (0-F), Y = depth (0-F) / current: 4 8`.
 - **Expanded help screen (F1)**: New collapsible sections for Sub-column navigation, Volume column FAQ, Effect commands (with a per-effect reference table), Send FX, Mixer, Automation, MCP scripting server, and Command-line flags. The window is now resizable (was fixed) and starts at 820x640.
 - **Volume column tests**: 3 new tests in `actions::keyboard::tests` covering the volume column keyboard path (tens/ones digit entry, note preservation) — the underlying code is correct, and the new tooltips/breadcrumb/header make it discoverable.
+
+### Changed
+
+- **Version**: 0.17.0 → 0.18.0
+
+## [0.17.0] - 2026-06-23
 
 ### Added
 
