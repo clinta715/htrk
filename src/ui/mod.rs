@@ -22,6 +22,7 @@ pub mod phrase_generator_dialog;
 pub mod sample_editor;
 pub mod sample_editor_panel;
 pub mod sendfx_panel;
+pub mod mixer_view;
 pub mod sample_export_dialog;
 pub mod sample_map;
 pub mod sample_palette;

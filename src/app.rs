@@ -28,6 +28,7 @@ pub enum AppView {
     SendFx,
     Playback,
     Automation,
+    Mixer,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +106,7 @@ pub struct HtrkApp {
     pub(crate) alt_l_last: Option<std::time::Instant>,
     pub(crate) automation_editor: crate::ui::automation_editor_panel::AutomationEditor,
     pub(crate) instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor,
+    pub(crate) mixer_state: crate::ui::mixer_view::MixerState,
     pub(crate) devmcp: Arc<DevMcp>,
     pub(crate) pending_view_switch: Arc<AtomicU8>,
     pub(crate) show_exit_confirm: bool,
@@ -181,6 +183,7 @@ impl HtrkApp {
                 envelope_height: config.instrument_envelope_height.unwrap_or(180.0),
                 ..crate::ui::instrument_editor_panel::InstrumentEditor::default()
             },
+            mixer_state: crate::ui::mixer_view::MixerState::default(),
             devmcp,
             pending_view_switch: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
             show_exit_confirm: false,
@@ -262,6 +265,7 @@ impl HtrkApp {
                 list_width: inst_list_w,
                 envelope_height: inst_env_h,
             },
+            mixer_state: crate::ui::mixer_view::MixerState::default(),
             pending_view_switch: pending_view_switch.clone(),
             show_exit_confirm: false,
             exit_confirmed: false,
@@ -1033,6 +1037,7 @@ impl HtrkApp {
                 4 => AppView::SendFx,
                 5 => AppView::Playback,
                 6 => AppView::Automation,
+                7 => AppView::Mixer,
                 _ => self.current_view,
             };
         }
@@ -1953,6 +1958,7 @@ impl eframe::App for HtrkApp {
             ui.dev_selectable_value("view.sendfx", &mut self.current_view, AppView::SendFx, "Send FX");
             ui.dev_selectable_value("view.playback", &mut self.current_view, AppView::Playback, "Playback");
             ui.dev_selectable_value("view.automation", &mut self.current_view, AppView::Automation, "Automation");
+            ui.dev_selectable_value("view.mixer", &mut self.current_view, AppView::Mixer, "Mixer");
             });
             ui.dev_separator("view.separator");
 
@@ -2272,6 +2278,32 @@ impl eframe::App for HtrkApp {
                             self.core.sync_module_to_audio();
                         }
                     }
+                }
+                AppView::Mixer => {
+                    // Collect the per-bus plugin slot + return level
+                    // (read-only here; the Send FX view is the place
+                    // for plugin load / unload).
+                    let mut plugin_slots: [Option<crate::sequencer::plugin::PluginSlot>; 4] = Default::default();
+                    let mut return_levels = [0.0f32; 4];
+                    if let Some(ref module) = self.core.module {
+                        for bus in 0..4 {
+                            if let Some(slot) = module.send_bus_plugins[bus].clone() {
+                                plugin_slots[bus] = Some(slot);
+                            }
+                            return_levels[bus] = module
+                                .send_return_levels
+                                .get(bus)
+                                .copied()
+                                .unwrap_or(1.0);
+                        }
+                    }
+                    self.mixer_state.ui(
+                        ui,
+                        &mut self.core,
+                        &self.theme,
+                        &plugin_slots,
+                        &return_levels,
+                    );
                 }
             }
         });
