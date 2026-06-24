@@ -201,6 +201,17 @@ impl AudioEngine {
                     self.sequencer.process_tick();
                     self.sequencer.state.clock.sample_counter -= samples_per_tick;
 
+                    // Route any plugin-param automation values that the
+                    // sequencer queued during process_tick() to the
+                    // appropriate HostedPluginProcessor's param ring.
+                    for (send_bus, param_id, value) in self.sequencer.collect_plugin_param_automation() {
+                        if (send_bus as usize) < self.send_buses.len() {
+                            if let Some(ref mut plugin) = self.send_buses[send_bus as usize].plugin {
+                                plugin.set_parameter(param_id, value);
+                            }
+                        }
+                    }
+
                     if !self.sequencer.state.playing {
                         break;
                     }

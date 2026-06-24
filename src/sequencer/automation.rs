@@ -23,6 +23,14 @@ pub enum AutomationTarget {
     Speed,
     SendReturnLevel { bus: u8 },
     SendBusParam { bus: u8, param: u8 },
+    /// Automation on a CLAP plugin parameter. The `send_bus` is the
+    /// send bus that owns the plugin (0..=3). The `param_id` is the
+    /// plugin's stable `ClapId` (assigned by the plugin and stable
+    /// across rescans). The `host_index` is the host-side index in
+    /// `Module.send_bus_plugins[bus].param_info` (used by the UI to
+    /// resolve the param name and range).
+    #[serde(skip)] // not persisted; re-resolved on load from send_bus_plugins
+    PluginParam { send_bus: u8, host_index: u32, param_id: u32 },
 }
 
 impl AutomationTarget {
@@ -67,6 +75,9 @@ impl AutomationTarget {
                 3 => "FX D",
                 _ => "FX ?",
             },
+            // PluginParam labels are computed dynamically (from the
+            // param_info) so this static label is just a placeholder.
+            AutomationTarget::PluginParam { .. } => "Plugin",
         }
     }
 

@@ -7,6 +7,7 @@
 
 use std::any::Any;
 use std::path::Path;
+use std::sync::Arc;
 
 use clack_host::prelude::*;
 use clack_common::plugin::PluginDescriptor as ClapPluginDescriptor;
@@ -15,12 +16,13 @@ use clack_extensions::gui::{
     Window as ClapWindow,
 };
 use clack_extensions::log::{HostLog, HostLogImpl, LogSeverity};
+use clack_extensions::params::{ParamInfoBuffer, PluginParams};
 #[cfg(windows)]
 use crate::audio::plugins::plugin_window::{self, PluginHostWindow};
 
 use super::{
-    EditorMode, HostedPluginHandle, HostedPluginProcessor, ParamInfo, PluginDescriptor,
-    PluginError, PluginFormat, PluginType, TransportInfo,
+    EditorMode, HostedPluginHandle, HostedPluginProcessor, ParamChange, ParamInfo,
+    ParamRingBuffer, PluginDescriptor, PluginError, PluginFormat, PluginType, TransportInfo,
 };
 
 // ── Host Handler ──
@@ -109,6 +111,21 @@ pub struct ClapPluginHandle {
     /// or HWND creation failed). Surfaced to the UI so the user sees what went
     /// wrong instead of a silent failure.
     last_editor_error: Option<String>,
+    /// Cached parameter info, populated lazily on the first call to
+    /// `parameter_info()`. Avoids re-querying the plugin on every
+    /// UI frame (the query requires a main-thread `plugin_handle()` call
+    /// which is relatively expensive due to FFIs).
+    cached_param_info: Vec<ParamInfo>,
+    /// SPSC parameter ring shared with the audio-thread `ClapPluginProcessor`.
+    /// The handle pushes here when the user (or automation) requests a
+    /// param change. The processor drains the ring inside `process()` and
+    /// feeds `ParamValueEvent`s into the input events buffer.
+    param_ring: Arc<ParamRingBuffer>,
+    /// Monotonic counter to assign a stable host-side index to each
+    /// discovered parameter. This index is what the UI uses to refer to
+    /// a specific param (e.g. for automation targets). The underlying
+    /// CLAP `ClapId` is opaque and not stable across rescans.
+    param_index_to_id: Vec<u32>,
 }
 
 impl ClapPluginHandle {
@@ -181,12 +198,77 @@ impl ClapPluginHandle {
             #[cfg(windows)]
             host_window: None,
             last_editor_error: None,
+            cached_param_info: Vec::new(),
+            param_ring: Arc::new(ParamRingBuffer::new(256)),
+            param_index_to_id: Vec::new(),
         })
     }
 
     /// Returns the descriptor.
     pub fn descriptor(&self) -> &PluginDescriptor {
         &self.descriptor
+    }
+
+    /// Get a reference to the parameter ring buffer. The audio-thread
+    /// processor reads from this ring inside `process()` and feeds the
+    /// queued values into the plugin as `ParamValueEvent`s.
+    pub fn param_ring(&self) -> &Arc<ParamRingBuffer> {
+        &self.param_ring
+    }
+
+    /// Get the cached parameter info. The cache is populated lazily on
+    /// the first call to `parameter_info()`. Returns an empty slice if
+    /// the plugin doesn't expose the params extension.
+    pub fn param_info(&self) -> &[ParamInfo] {
+        &self.cached_param_info
+    }
+
+    /// Look up the stable host-side index for a given CLAP param ID.
+    /// The index is what the UI uses to refer to a specific param
+    /// (e.g. for automation targets). Returns None if the param ID
+    /// is not known.
+    pub fn param_index_for_id(&self, clap_id: u32) -> Option<usize> {
+        self.param_index_to_id.iter().position(|&id| id == clap_id)
+    }
+
+    /// Get the CLAP param ID for a host-side index. Returns None if
+    /// the index is out of range.
+    pub fn param_id_for_index(&self, index: usize) -> Option<u32> {
+        self.param_index_to_id.get(index).copied()
+    }
+
+    /// Push a parameter change to the audio-thread ring. The audio
+    /// thread will feed it as a `ParamValueEvent` on the next process()
+    /// call. Value should be in the param's [min, max] range.
+    pub fn set_parameter(&self, clap_id: u32, value: f32) {
+        self.param_ring.push(ParamChange {
+            param_id: clap_id,
+            value: value as f64,
+        });
+    }
+
+    /// Read a parameter's current value. Returns 0.0 if the plugin
+    /// doesn't expose the param or the value is unavailable.
+    pub fn get_parameter(&self, clap_id: u32) -> f32 {
+        let Some(instance) = self.instance.as_ref() else {
+            return 0.0;
+        };
+        // `plugin_handle()` requires &mut self. We use a raw pointer to
+        // get a mutable reference to the instance. PluginInstance is !Send
+        // and we only call this on the main thread, so this is safe.
+        let raw_ptr: *const PluginInstance<HtrkHost> = instance;
+        let Some(mut_instance) = (unsafe { (raw_ptr as *mut PluginInstance<HtrkHost>).as_ref() }) else {
+            return 0.0;
+        };
+        let raw_mut = raw_ptr as *mut PluginInstance<HtrkHost>;
+        let mut_instance_mut = unsafe { raw_mut.as_mut() }.expect("instance is null");
+        let _ = mut_instance; // silence unused
+        let mut handle = mut_instance_mut.plugin_handle();
+        let Some(params) = handle.get_extension::<PluginParams>() else {
+            return 0.0;
+        };
+        let id = clack_common::utils::ClapId::from(clap_id);
+        params.get_value(&mut handle, id).unwrap_or(0.0) as f32
     }
 }
 
@@ -306,6 +388,7 @@ impl HostedPluginHandle for ClapPluginHandle {
             self.descriptor.clone(),
             sample_rate,
             max_block as usize,
+            self.param_ring.clone(),
         )))
     }
 
@@ -335,26 +418,63 @@ impl HostedPluginHandle for ClapPluginHandle {
     }
 
     fn parameter_info(&self) -> Vec<ParamInfo> {
-        // TODO(param-ext): Implement CLAP params extension. See
-        // docs/parameter-extension-todo.md for the full plan.
-        //
-        // Steps:
-        // 1. Get the `PluginParams` extension via
-        //    `handle.get_extension::<clack_extensions::params::PluginParams>()`.
-        // 2. Iterate `params.count(&mut handle)` then
-        //    `params.get_info(&mut handle, i, &mut ParamInfoBuffer)` into
-        //    our `ParamInfo` struct.
-        // 3. Wire to UI: in `sendfx_editor.rs`, add a "Parameters" collapsible
-        //    section per bus that shows one `Slider` per `ParamInfo` (mirror
-        //    hdaw2's `effect_editor/mod.rs:410-429`).
-        // 4. Wire to audio thread: add a `ParamRingBuffer` field on
-        //    `ClapPluginProcessor`, drain it in `process()` and feed
-        //    `ParamValueEvent`s into the input events buffer (mirror
-        //    hdaw2/src/audio/clap_effect.rs:370-385 and
-        //    hdaw2/src/audio/param_ring.rs:1-77).
-        //
-        // Reference: hdaw2's `clap_instance.rs` and `param_ring.rs`.
-        Vec::new()
+        // Returns the cached parameter info. The cache is populated on
+        // the first call. Subsequent calls just return the cached copy.
+        // The param query requires a main-thread `plugin_handle()` call
+        // (FFI) which is relatively expensive, so caching matters.
+        if !self.cached_param_info.is_empty() {
+            return self.cached_param_info.clone();
+        }
+        let Some(instance) = self.instance.as_ref() else {
+            return Vec::new();
+        };
+        // `plugin_handle()` requires &mut self. Use a raw pointer trick
+        // (PluginInstance is !Send; this is main-thread-only).
+        let raw_ptr = instance as *const PluginInstance<HtrkHost>;
+        let Some(mut_instance) = (unsafe { (raw_ptr as *mut PluginInstance<HtrkHost>).as_mut() }) else {
+            return Vec::new();
+        };
+        let mut handle = mut_instance.plugin_handle();
+        let Some(params) = handle.get_extension::<PluginParams>() else {
+            return Vec::new();
+        };
+
+        let count = params.count(&mut handle);
+        if count == 0 {
+            return Vec::new();
+        }
+
+        let mut buf = ParamInfoBuffer::new();
+        let mut info_out: Vec<ParamInfo> = Vec::with_capacity(count as usize);
+        let mut index_to_id: Vec<u32> = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            if let Some(info) = params.get_info(&mut handle, i, &mut buf) {
+                let id = info.id.get();
+                let name = String::from_utf8_lossy(info.name).into_owned();
+                let is_automatable = info.flags.contains(clack_extensions::params::ParamInfoFlags::IS_AUTOMATABLE);
+                let is_modulatable = info.flags.contains(clack_extensions::params::ParamInfoFlags::IS_MODULATABLE);
+                index_to_id.push(id);
+                info_out.push(ParamInfo {
+                    id,
+                    name,
+                    min: info.min_value as f32,
+                    max: info.max_value as f32,
+                    default: info.default_value as f32,
+                    is_automatable,
+                    is_modulatable,
+                });
+            }
+        }
+        // Update the cache. We can only mutate self through a mutable
+        // borrow; use a small unsafe block to update the cached fields.
+        // SAFETY: the cache fields are only ever written here and read
+        // from the main thread (this trait method is main-thread only).
+        let this = self as *const Self as *mut Self;
+        unsafe {
+            (*this).cached_param_info = info_out.clone();
+            (*this).param_index_to_id = index_to_id;
+        }
+        info_out
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -588,6 +708,15 @@ pub struct ClapPluginProcessor {
     // Pre-allocated event buffers (allocated once at construction; RT-safe)
     input_event_buffer: clack_host::events::io::EventBuffer,
     output_event_buffer: clack_host::events::io::EventBuffer,
+
+    // SPSC parameter ring shared with the main-thread `ClapPluginHandle`.
+    // The handle pushes here when the user (or automation) requests a
+    // parameter change. We drain the ring inside `process()` and feed
+    // the queued values into the plugin as `ParamValueEvent`s.
+    param_ring: Arc<ParamRingBuffer>,
+    // Scratch vector for drained param changes. Allocated once;
+    // cleared between process() calls.
+    param_scratch: Vec<ParamChange>,
 }
 
 impl ClapPluginProcessor {
@@ -596,6 +725,7 @@ impl ClapPluginProcessor {
         descriptor: PluginDescriptor,
         sample_rate: f64,
         max_block: usize,
+        param_ring: Arc<ParamRingBuffer>,
     ) -> Self {
         let max_block = max_block.max(1) as usize;
         ClapPluginProcessor {
@@ -611,6 +741,8 @@ impl ClapPluginProcessor {
             output_ports: AudioPorts::with_capacity(2, 1),
             input_event_buffer: clack_host::events::io::EventBuffer::with_capacity(0),
             output_event_buffer: clack_host::events::io::EventBuffer::with_capacity(0),
+            param_ring,
+            param_scratch: Vec::with_capacity(64),
         }
     }
 
@@ -698,18 +830,56 @@ impl HostedPluginProcessor for ClapPluginProcessor {
             ]),
         }]);
 
-        // Empty input events for Phase 2 (FX plugins don't need MIDI).
-        let input_events = clack_host::events::io::InputEvents::from_buffer(&self.input_event_buffer);
-        let mut output_events = clack_host::events::io::OutputEvents::from_buffer(&mut self.output_event_buffer);
-
-        let _ = self.processor.process(
-            &input_audio,
-            &mut output_audio,
-            &input_events,
-            &mut output_events,
-            None,
-            None,
-        );
+        // Drain any pending parameter changes and feed them into the
+        // input events as `ParamValueEvent`s. The plugin sees the new
+        // values on this process() call. We use the audio thread's
+        // scratch buffer; events are pushed into the input_event_buffer
+        // and the buffer is then converted to InputEvents.
+        self.param_scratch.clear();
+        let drained = self.param_ring.drain_into(&mut self.param_scratch, 64);
+        if drained > 0 {
+            use clack_common::events::event_types::ParamValueEvent;
+            use clack_common::events::Pckn;
+            use clack_common::utils::{ClapId, Cookie};
+            // We need a fresh event buffer for this block. Re-create
+            // it with capacity for the drained events.
+            let mut ev_buffer = clack_host::events::io::EventBuffer::with_capacity(drained);
+            let pckn = Pckn::new(0u8, 0u8, 0u8, 0u8);
+            let cookie = Cookie::default();
+            for change in self.param_scratch.iter() {
+                let ev = ParamValueEvent::new(
+                    0,
+                    ClapId::from(change.param_id),
+                    pckn,
+                    change.value,
+                    cookie,
+                );
+                let _ = ev_buffer.push(&ev);
+            }
+            let input_events = clack_host::events::io::InputEvents::from_buffer(&ev_buffer);
+            let mut output_events = clack_host::events::io::OutputEvents::from_buffer(&mut self.output_event_buffer);
+            let _ = self.processor.process(
+                &input_audio,
+                &mut output_audio,
+                &input_events,
+                &mut output_events,
+                None,
+                None,
+            );
+        } else {
+            // No pending param changes — use the empty buffer we
+            // pre-allocated at construction time.
+            let input_events = clack_host::events::io::InputEvents::from_buffer(&self.input_event_buffer);
+            let mut output_events = clack_host::events::io::OutputEvents::from_buffer(&mut self.output_event_buffer);
+            let _ = self.processor.process(
+                &input_audio,
+                &mut output_audio,
+                &input_events,
+                &mut output_events,
+                None,
+                None,
+            );
+        }
 
         // Copy plugin output back to caller's buffers
         for i in 0..frame_count.min(n) {
@@ -718,20 +888,28 @@ impl HostedPluginProcessor for ClapPluginProcessor {
         }
     }
 
-    fn set_parameter(&mut self, _param_id: u32, _value: f32) {
-        // TODO(param-ext): Push (param_id, value) to a `ParamRingBuffer`
-        // (lock-free SPSC). Then drain in the audio thread right before
-        // calling `clack.process()` and feed `ParamValueEvent`s into the
-        // input events buffer. See docs/parameter-extension-todo.md.
+    fn set_parameter(&mut self, param_id: u32, value: f32) {
+        // Push the change to the SPSC ring. The audio thread will pick
+        // it up on the next process() call.
+        self.param_ring.push(ParamChange {
+            param_id,
+            value: value as f64,
+        });
     }
 
     fn get_parameter(&self, _param_id: u32) -> f32 {
-        // TODO(param-ext): Look up from an `Arc<AtomicU32>` parameter
-        // value table on the handle (mirror hdaw2/clap_instance.rs).
+        // Plugin parameter values are stored in the plugin itself;
+        // reading them from the host requires a main-thread call
+        // (plugin_handle is !Send). The processor doesn't have a copy
+        // of the values — callers should go through the handle for
+        // reads. Return 0.0 as a placeholder.
         0.0
     }
+
     fn parameter_count(&self) -> u32 {
-        // TODO(param-ext): Return `params.count(&mut handle)`.
+        // The processor doesn't cache the count; the handle does.
+        // Return 0 as a safe default — callers needing the count
+        // should go through the handle.
         0
     }
     fn latency(&self) -> u32 { 0 }

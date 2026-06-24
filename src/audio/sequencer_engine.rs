@@ -33,6 +33,11 @@ pub struct SequencerEngine {
     pub(crate) use_xm_model: bool,
     pub(crate) amiga_led_filter: bool,
     pub pending_send_fx_params: Vec<(usize, u32, f32)>,
+    /// Pending plugin-param automation values, populated by
+    /// `apply_automation_to_channel` and drained by the audio engine
+    /// via `collect_plugin_param_automation`. Each entry is
+    /// `(send_bus, param_id, value)`.
+    pub pending_plugin_param_changes: Vec<(u8, u32, f32)>,
     processor: EffectProcessor,
 }
 
@@ -48,6 +53,7 @@ impl SequencerEngine {
             use_xm_model: false,
             amiga_led_filter: false,
             pending_send_fx_params: Vec::new(),
+            pending_plugin_param_changes: Vec::new(),
             processor,
         }
     }
@@ -258,6 +264,20 @@ impl SequencerEngine {
         }
     }
 
+    /// Collect pending plugin-param automation values from the most
+    /// recent `process_automation` pass. The audio engine calls this
+    /// after `process_tick` to route values to the appropriate
+    /// `HostedPluginProcessor`'s param ring. The Vec is cleared on
+    /// each call.
+    pub fn collect_plugin_param_automation(
+        &mut self,
+    ) -> Vec<(u8, u32, f32)> {
+        // We piggy-back on the existing automation evaluation: the
+        // values are pushed into `pending_plugin_param_changes` by
+        // `apply_automation_to_channel` (which we'll update next).
+        std::mem::take(&mut self.pending_plugin_param_changes)
+    }
+
     fn apply_automation_to_channel(&mut self, ch: usize, target: &AutomationTarget, value: f32) {
         match target {
             AutomationTarget::ChannelVolume => {
@@ -276,6 +296,14 @@ impl SequencerEngine {
                 if (*bus as usize) < NUM_SEND_BUSES {
                     self.state.channels[ch].auto_send_factor[*bus as usize] = value;
                 }
+            }
+            // PluginParam: queue the value for the engine to route to
+            // the appropriate plugin's param ring. We don't push
+            // directly to the plugin from here because the sequencer
+            // doesn't have direct access to the plugin handles (the
+            // engine owns them).
+            AutomationTarget::PluginParam { send_bus, param_id, .. } => {
+                self.pending_plugin_param_changes.push((*send_bus, *param_id, value));
             }
             _ => {}
         }

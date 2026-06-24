@@ -6,6 +6,7 @@
 pub mod clap_plugin;
 pub mod discovery;
 pub mod library;
+pub mod param_ring;
 #[cfg(windows)]
 pub mod plugin_window;
 
@@ -137,11 +138,8 @@ pub struct ParamInfo {
 
 // ── Parameter Change Event (for SPSC queue) ──
 
-#[derive(Clone, Copy, Debug)]
-pub struct ParamChange {
-    pub param_id: u32,
-    pub value: f32,
-}
+pub use param_ring::ParamChange;
+pub use param_ring::ParamRingBuffer;
 
 // ── Audio-Thread Trait ──
 //
