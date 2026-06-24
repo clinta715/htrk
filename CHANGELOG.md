@@ -6,6 +6,16 @@ All notable changes to htrk will be documented in this file.
 
 ### Added
 
+- **Conventional Mixer (F11)**: New Mixer view with one channel strip per channel plus master and per-bus send strips. Each channel strip has Mute/Solo, volume slider (0-64), pan slider (0-255), and 4 send-level sliders. Send-bus strips show the loaded CLAP plugin's name and a return-level slider. 'Show all channels' toggle (off = only channels with non-empty cells in the current pattern). 'Reset' button to restore vol=64, pan=128, sends=0.
+- **Rich CLI help**: `htrk --help` lists all flags and the most useful key shortcuts. New commands: `--list-effects` (per-effect one-liner for 0-F + P/Z/S/R/X + volume column), `--mcp-help` (JSON-RPC transport, handshake, tool categories, examples), `--config-path` (prints the user's config.toml location), `--reset-config` (deletes config.toml). New runtime flags: `--no-mcp`, `--log-file <PATH>`, `--theme <NAME>`, `--headless` (reserved).
+- **Status-bar sub-column breadcrumb**: The status bar now shows the current sub-column (Col:Note/Inst/Vol/Fx) with a hover tooltip that lists what characters the column accepts. Helps users find the volume column without reading the manual.
+- **Per-column tooltips in the pattern grid**: A column header strip above the data rows shows the column name in each sub-column. Hovering any header shows a description of the column, how to edit it, and which Ctrl+N toggle hides it. When a column is hidden, the header tooltip changes to a 'hidden, toggle with Ctrl+N' message.
+- **Effect hover popups**: The FX column hover popup now shows the hex code, the standard name, the param range, and the current values. E.g. `4  Vibrato / X = speed (0-F), Y = depth (0-F) / current: 4 8`.
+- **Expanded help screen (F1)**: New collapsible sections for Sub-column navigation, Volume column FAQ, Effect commands (with a per-effect reference table), Send FX, Mixer, Automation, MCP scripting server, and Command-line flags. The window is now resizable (was fixed) and starts at 820x640.
+- **Volume column tests**: 3 new tests in `actions::keyboard::tests` covering the volume column keyboard path (tens/ones digit entry, note preservation) — the underlying code is correct, and the new tooltips/breadcrumb/header make it discoverable.
+
+### Added
+
 - **Design Token System**: Complete `TrackerTheme` color token set with 80+ semantic tokens replacing all hardcoded UI colors. `STYLE.md` documents all tokens, color contributions, and naming conventions.
 - **MCP Server (Phases 1-2)**: JSON-RPC 2.0 over TCP (port 18763) with read-only snapshots (module/playback/channels), mutation dispatch via main-thread command queue, and 20+ tools for querying and editing module state.
 - **Sample Editor**: Selection model (cut/copy/paste/crop/silence), zoom with scroll support, loop marker manipulation, Fade In/Out processing, waveform context menu with Normalize/Reverse/TrimSilence. All operations undoable.
