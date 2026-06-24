@@ -1,9 +1,10 @@
 use eframe::egui;
 use crate::audio::engine::CommandSender;
 use crate::audio::commands::AudioCommand;
-use crate::audio::plugins::HostedPluginHandle;
+use crate::audio::plugins::{EditorMode, HostedPluginHandle};
 use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::effect::NUM_SEND_BUSES;
+use crate::ui::sendfx_panel::EframeHwnd;
 
 fn param_label(effect: SendEffectType, index: u32) -> &'static str {
     match effect {
@@ -59,7 +60,21 @@ pub fn draw_sendfx_view(
     plugin_names: &mut [Option<String>; NUM_SEND_BUSES],
     plugin_browser_open_for: &mut Option<usize>,
     plugin_handles: &mut [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
+    eframe_hwnd: Option<EframeHwnd>,
 ) {
+    // X-close poll: if any plugin's editor HWND is no longer visible
+    // (user X-closed the window externally), call close_editor to keep
+    // our state in sync with reality.
+    for si in 0..NUM_SEND_BUSES {
+        if let Some(ref mut handle) = plugin_handles[si] {
+            if handle.is_editor_open() {
+                if !is_editor_hwnd_visible(handle.as_ref()) {
+                    handle.close_editor();
+                }
+            }
+        }
+    }
+
     ui.horizontal(|ui| {
         for si in 0..NUM_SEND_BUSES {
             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -120,18 +135,72 @@ pub fn draw_sendfx_view(
                             .as_ref()
                             .map(|h| h.is_editor_open())
                             .unwrap_or(false);
+                        let current_mode = plugin_handles[si]
+                            .as_ref()
+                            .and_then(|h| h.editor_mode());
+
                         if has_editor {
-                            let label = if is_open { "Close" } else { "Edit..." };
-                            if ui.button(label).clicked() {
-                                if let Some(ref mut handle) = plugin_handles[si] {
-                                    if is_open {
+                            if is_open {
+                                if ui.button("Close").clicked() {
+                                    if let Some(ref mut handle) = plugin_handles[si] {
                                         handle.close_editor();
-                                    } else if let Err(e) = handle.open_editor() {
-                                        eprintln!("[plugin] open editor failed: {e}");
+                                    }
+                                }
+                                // Show the active mode as a small label
+                                let mode_label = match current_mode {
+                                    Some(EditorMode::Floating) => "Floating",
+                                    Some(EditorMode::Embedded) => "Embedded",
+                                    None => "",
+                                };
+                                ui.label(
+                                    egui::RichText::new(mode_label)
+                                        .weak()
+                                        .size(10.0),
+                                );
+                            } else {
+                                // Default: "Edit..." (floating). The user can
+                                // hold Alt or use the menu for embedded mode.
+                                if ui.button("Edit...").clicked() {
+                                    if let Some(ref mut handle) = plugin_handles[si] {
+                                        if let Err(e) = handle.open_editor(
+                                            EditorMode::Floating,
+                                            None,
+                                        ) {
+                                            eprintln!("[plugin] open editor failed: {e}");
+                                        }
+                                    }
+                                }
+                                if eframe_hwnd.is_some() {
+                                    if ui.button("Edit (in htrk)").clicked() {
+                                        if let Some(ref mut handle) = plugin_handles[si] {
+                                            // The HWND is stored as a usize token;
+                                            // convert back to *mut c_void for the
+                                            // trait method.
+                                            let parent: *mut std::ffi::c_void =
+                                                eframe_hwnd.unwrap() as *mut _;
+                                            if let Err(e) = handle.open_editor(
+                                                EditorMode::Embedded,
+                                                Some(parent),
+                                            ) {
+                                                eprintln!("[plugin] open editor (embedded) failed: {e}");
+                                            }
+                                        }
                                     }
                                 }
                             }
+
+                            // Editor error label (red, below the button row)
+                            if let Some(err) = plugin_handles[si]
+                                .as_ref()
+                                .and_then(|h| h.last_editor_error())
+                            {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(255, 100, 100),
+                                    err,
+                                );
+                            }
                         }
+
                         if ui.button("Remove").clicked() {
                             // Close the editor first, then remove the processor.
                             if let Some(ref mut handle) = plugin_handles[si] {
@@ -235,4 +304,100 @@ pub fn draw_sendfx_view(
             });
         }
     });
+
+    // ── Embedded editor panel ──
+    //
+    // Below the bus cards, render a dedicated row for any plugin that is
+    // currently open in Embedded mode. The plugin's child HWND is already
+    // parented to our (invisible) host window, which is in turn a WS_CHILD
+    // of the eframe main window. We just need to make sure the host window
+    // is sized to fill the egui rect.
+    draw_embedded_editor_panels(ui, plugin_handles);
+}
+
+#[cfg(windows)]
+fn is_editor_hwnd_visible(handle: &dyn HostedPluginHandle) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+    let Some(hwnd) = handle.editor_hwnd() else {
+        // No editor HWND = probably floating mode. Always "visible" (the
+        // plugin manages its own window). Don't auto-close.
+        return true;
+    };
+    unsafe { IsWindowVisible(hwnd) != 0 }
+}
+
+#[cfg(not(windows))]
+fn is_editor_hwnd_visible(_handle: &dyn HostedPluginHandle) -> bool {
+    // Non-Windows: can't query the OS; assume visible. The plugin
+    // manages its own window in floating mode.
+    true
+}
+
+/// Render the embedded editor panel row. For each send bus whose plugin is
+/// currently open in Embedded mode, draw an egui frame whose rect will be
+/// the target for the plugin's child HWND. We use the same trick as
+/// hdaw2: query the plugin's preferred initial size, and resize the host
+/// window to match the egui rect.
+#[cfg(windows)]
+fn draw_embedded_editor_panels(
+    ui: &mut egui::Ui,
+    plugin_handles: &mut [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
+) {
+    // Find which buses are in Embedded mode.
+    let embedded_indices: Vec<usize> = plugin_handles
+        .iter()
+        .enumerate()
+        .filter_map(|(si, h)| {
+            let h = h.as_ref()?;
+            if h.is_editor_open() && h.editor_mode() == Some(EditorMode::Embedded) {
+                Some(si)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if embedded_indices.is_empty() {
+        return;
+    }
+
+    ui.add_space(8.0);
+    ui.separator();
+    ui.label(
+        egui::RichText::new("Embedded Plugin Editors")
+            .strong()
+            .size(13.0),
+    );
+
+    for si in embedded_indices {
+        if let Some(ref mut handle) = plugin_handles[si] {
+            let bus_letter = char::from(b'A' + si as u8);
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_min_height(280.0);
+                ui.label(format!("Send Bus {} (embedded editor)", bus_letter));
+                // Reserve space for the plugin's child HWND. The actual
+                // sizing happens in app.rs after the UI pass — here we
+                // just draw the rect so egui allocates the space.
+                let rect = ui.available_rect_before_wrap();
+                let width = rect.width().max(100.0) as i32;
+                let height = rect.height().max(100.0) as i32;
+                if let Some(hwnd) = handle.editor_hwnd() {
+                    // SAFETY: hwnd is a valid HWND owned by the plugin handle.
+                    unsafe {
+                        use windows_sys::Win32::UI::WindowsAndMessaging::MoveWindow;
+                        MoveWindow(hwnd, 0, 0, width, height, 1);
+                    }
+                }
+                ui.allocate_space(egui::vec2(width as f32, height as f32));
+            });
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn draw_embedded_editor_panels(
+    _ui: &mut egui::Ui,
+    _plugin_handles: &mut [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
+) {
+    // No-op on non-Windows.
 }

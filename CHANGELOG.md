@@ -12,6 +12,11 @@ All notable changes to htrk will be documented in this file.
 - **Slice-to-Instrument**: Slice samples to create multi-sampled instruments, with per-slice mapping to note ranges.
 - **Envelope Generator**: Automation curve generator for envelope points with configurable shapes.
 - **CLAP Plugin Editor Windows (Phase 5, Windows only)**: "Edit..." button in the Send FX panel opens the plugin's GUI as a top-level OS window. Supports both floating mode (plugin manages its own window) and embedded mode (host provides a Win32 HWND via `windows-sys 0.59`). Tested with TAL Reverb 4. macOS/Linux deferred to a future release.
+- **CLAP Host Extensions (Phase 5.1)**: Replaced the `()` shared handler with `HtrkHostShared` implementing `HostLogImpl` and `HostGuiImpl`. Plugin log messages now route through `tracing` (stderr by default, optional file via `AppConfig.log_file_path`). GUI callbacks (`resize_hints_changed`, `request_resize`, `request_show`, `request_hide`, `closed`) are wired.
+- **CLAP Editor: Embedded Mode**: New "Edit (in htrk)" button parents the plugin's GUI as a `WS_CHILD` of the eframe main window. Recommended only for plugins that handle DPI; floating is the default.
+- **CLAP Editor: Error Display**: `open_editor` failures now show a red label below the button instead of `eprintln!`.
+- **CLAP Editor: X-Close Detection**: Polling `IsWindowVisible` on the plugin's container HWND each frame; if the user closes the floating window externally, the Send FX UI updates immediately.
+- **F6 = Send FX view, F7 = Automation view**: Keyboard shortcuts (F2-F5 unchanged).
 
 ### Changed
 

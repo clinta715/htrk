@@ -71,3 +71,57 @@ pub fn shutdown() {
         *guard = None;
     }
 }
+
+// ── tracing integration ──
+//
+// Initializes the `tracing` ecosystem alongside the legacy debug log. We use
+// `tracing` for plugin-internal logging (CLAP HostLog, GUI events, etc.) and
+// route everything to stderr by default; if the user has configured a log file
+// path via `AppConfig.log_file_path`, we also write to that file (no ANSI).
+//
+// The legacy `debug_log` module above continues to work for app-level debug
+// messages written via `debug_log!` — they are unaffected by tracing.
+//
+// Set `RUST_LOG=htrk=debug,clap=info` (etc.) to control verbosity. The
+// `EnvFilter` honors per-target directives.
+
+use std::sync::Once;
+static TRACING_INIT: Once = Once::new();
+
+/// Initialize tracing. Safe to call multiple times — only the first call
+/// has any effect. Called from `HtrkApp::default`.
+pub fn init_tracing(log_file_path: Option<&str>) {
+    TRACING_INIT.call_once(|| {
+        use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+        let env_filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("htrk=info,clap=info"));
+
+        let stderr_layer = fmt::layer()
+            .with_writer(std::io::stderr)
+            .with_ansi(true);
+
+        let registry = tracing_subscriber::registry()
+            .with(env_filter)
+            .with(stderr_layer);
+
+        if let Some(path) = log_file_path {
+            if let Ok(file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let file_layer = fmt::layer()
+                    .with_writer(file)
+                    .with_ansi(false);
+                let _ = registry.with(file_layer).try_init();
+                return;
+            } else {
+                eprintln!(
+                    "[htrk] Failed to open log file '{path}', falling back to stderr only"
+                );
+            }
+        }
+        let _ = registry.try_init();
+    });
+}

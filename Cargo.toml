@@ -16,7 +16,7 @@ cpal = "0.17"
 ringbuf = "0.4"
 clack-host = { version = "0.1", features = ["libloading"] }
 clack-common = "0.1"
-clack-extensions = { version = "0.1", features = ["audio-ports", "params", "state", "tail", "latency", "gui", "raw-window-handle_06", "clack-host"] }
+clack-extensions = { version = "0.1", features = ["audio-ports", "log", "params", "state", "tail", "latency", "gui", "raw-window-handle_06", "clack-host"] }
 raw-window-handle = "0.6"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi"] }
@@ -30,6 +30,8 @@ bincode = "1"
 dirs = "5"
 toml = "0.8"
 chrono = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]
 opt-level = 3

@@ -531,6 +531,12 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                     egui::Key::F4 if !any_dialog_open => {
                         app.current_view = AppView::Instrument;
                     }
+                    egui::Key::F6 if !any_dialog_open => {
+                        app.current_view = AppView::SendFx;
+                    }
+                    egui::Key::F7 if !any_dialog_open => {
+                        app.current_view = AppView::Automation;
+                    }
                     egui::Key::F5 if modifiers.shift => {
                         app.current_view = AppView::Playback;
                         app.core.send_command(crate::audio::commands::AudioCommand::Play);

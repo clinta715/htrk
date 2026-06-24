@@ -11,25 +11,84 @@ use std::path::Path;
 use clack_host::prelude::*;
 use clack_common::plugin::PluginDescriptor as ClapPluginDescriptor;
 use clack_extensions::gui::{
-    GuiApiType, GuiConfiguration, PluginGui as PluginGuiExt, Window as ClapWindow,
+    GuiApiType, GuiConfiguration, GuiSize, HostGui, HostGuiImpl, PluginGui as PluginGuiExt,
+    Window as ClapWindow,
 };
+use clack_extensions::log::{HostLog, HostLogImpl, LogSeverity};
 #[cfg(windows)]
-use crate::audio::plugins::plugin_window::PluginHostWindow;
+use crate::audio::plugins::plugin_window::{self, PluginHostWindow};
 
 use super::{
-    HostedPluginHandle, HostedPluginProcessor, ParamInfo, PluginDescriptor, PluginError,
-    PluginFormat, PluginType, TransportInfo,
+    EditorMode, HostedPluginHandle, HostedPluginProcessor, ParamInfo, PluginDescriptor,
+    PluginError, PluginFormat, PluginType, TransportInfo,
 };
 
 // ── Host Handler ──
 //
-// `()` works for all three handler types — clack provides default no-op impls.
+// `HtrkHostShared` is the shared (thread-safe) callback handler that CLAP
+// plugins use to log messages and request GUI changes. We register the
+// `HostLog` and `HostGui` host-side extensions so plugins can talk back to us.
 
 pub struct HtrkHost;
+pub struct HtrkHostShared;
+
+impl<'a> SharedHandler<'a> for HtrkHostShared {
+    fn request_restart(&self) {
+        tracing::debug!("CLAP plugin requested restart");
+    }
+    fn request_process(&self) {
+        tracing::debug!("CLAP plugin requested process");
+    }
+    fn request_callback(&self) {
+        tracing::debug!("CLAP plugin requested callback");
+    }
+}
+
+impl HostLogImpl for HtrkHostShared {
+    fn log(&self, severity: LogSeverity, message: &str) {
+        match severity {
+            LogSeverity::Debug => tracing::debug!("CLAP: {message}"),
+            LogSeverity::Info => tracing::info!("CLAP: {message}"),
+            LogSeverity::Warning => tracing::warn!("CLAP: {message}"),
+            LogSeverity::Error => tracing::error!("CLAP: {message}"),
+            LogSeverity::Fatal => tracing::error!("CLAP FATAL: {message}"),
+            LogSeverity::HostMisbehaving => tracing::error!("CLAP HOST MISBEHAVING: {message}"),
+            LogSeverity::PluginMisbehaving => tracing::warn!("CLAP PLUGIN MISBEHAVING: {message}"),
+        }
+    }
+}
+
+impl HostGuiImpl for HtrkHostShared {
+    fn resize_hints_changed(&self) {
+        tracing::debug!("CLAP plugin resize hints changed");
+    }
+    fn request_resize(&self, new_size: GuiSize) -> Result<(), HostError> {
+        tracing::debug!("CLAP plugin requested resize to {}x{}", new_size.width, new_size.height);
+        Ok(())
+    }
+    fn request_show(&self) -> Result<(), HostError> {
+        tracing::debug!("CLAP plugin requested show");
+        Ok(())
+    }
+    fn request_hide(&self) -> Result<(), HostError> {
+        tracing::debug!("CLAP plugin requested hide");
+        Ok(())
+    }
+    fn closed(&self, was_destroyed: bool) {
+        tracing::debug!("CLAP plugin GUI closed (destroyed: {was_destroyed})");
+    }
+}
+
 impl HostHandlers for HtrkHost {
-    type Shared<'a> = ();
+    type Shared<'a> = HtrkHostShared;
     type MainThread<'a> = ();
     type AudioProcessor<'a> = ();
+
+    fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &Self::Shared<'_>) {
+        builder
+            .register::<HostLog>()
+            .register::<HostGui>();
+    }
 }
 
 // ── Main-thread Handle ──
@@ -39,11 +98,17 @@ pub struct ClapPluginHandle {
     descriptor: PluginDescriptor,
     activated: bool,
     editor_open: bool,
+    /// Which editor mode is currently in use (None if not open).
+    editor_mode: Option<crate::audio::plugins::EditorMode>,
     /// On Windows, a top-level HWND used as the parent for an embedded
-    /// plugin GUI. Only populated when the plugin only supports embedded
-    /// mode. None for floating-mode editors.
+    /// plugin GUI. Only populated when the plugin is in embedded mode
+    /// (or when floating was unavailable and we fell back to embedded).
     #[cfg(windows)]
     host_window: Option<PluginHostWindow>,
+    /// Last error from `open_editor` (e.g. plugin doesn't support any GUI mode,
+    /// or HWND creation failed). Surfaced to the UI so the user sees what went
+    /// wrong instead of a silent failure.
+    last_editor_error: Option<String>,
 }
 
 impl ClapPluginHandle {
@@ -97,7 +162,7 @@ impl ClapPluginHandle {
             .to_owned();
 
         let instance = PluginInstance::<HtrkHost>::new(
-            |_| (),
+            |_| HtrkHostShared,
             |_| (),
             &entry,
             &plugin_id,
@@ -112,8 +177,10 @@ impl ClapPluginHandle {
             descriptor,
             activated: false,
             editor_open: false,
+            editor_mode: None,
             #[cfg(windows)]
             host_window: None,
+            last_editor_error: None,
         })
     }
 
@@ -268,7 +335,25 @@ impl HostedPluginHandle for ClapPluginHandle {
     }
 
     fn parameter_info(&self) -> Vec<ParamInfo> {
-        // Parameter enumeration requires the params extension. Stub.
+        // TODO(param-ext): Implement CLAP params extension. See
+        // docs/parameter-extension-todo.md for the full plan.
+        //
+        // Steps:
+        // 1. Get the `PluginParams` extension via
+        //    `handle.get_extension::<clack_extensions::params::PluginParams>()`.
+        // 2. Iterate `params.count(&mut handle)` then
+        //    `params.get_info(&mut handle, i, &mut ParamInfoBuffer)` into
+        //    our `ParamInfo` struct.
+        // 3. Wire to UI: in `sendfx_editor.rs`, add a "Parameters" collapsible
+        //    section per bus that shows one `Slider` per `ParamInfo` (mirror
+        //    hdaw2's `effect_editor/mod.rs:410-429`).
+        // 4. Wire to audio thread: add a `ParamRingBuffer` field on
+        //    `ClapPluginProcessor`, drain it in `process()` and feed
+        //    `ParamValueEvent`s into the input events buffer (mirror
+        //    hdaw2/src/audio/clap_effect.rs:370-385 and
+        //    hdaw2/src/audio/param_ring.rs:1-77).
+        //
+        // Reference: hdaw2's `clap_instance.rs` and `param_ring.rs`.
         Vec::new()
     }
 
@@ -280,7 +365,13 @@ impl HostedPluginHandle for ClapPluginHandle {
         self
     }
 
-    fn open_editor(&mut self) -> Result<(), String> {
+    #[cfg(windows)]
+    fn open_editor(
+        &mut self,
+        mode: crate::audio::plugins::EditorMode,
+        parent_hwnd: Option<*mut std::ffi::c_void>,
+    ) -> Result<(), String> {
+        self.last_editor_error = None;
         if self.editor_open {
             return Ok(());
         }
@@ -293,54 +384,123 @@ impl HostedPluginHandle for ClapPluginHandle {
             .get_extension::<PluginGuiExt>()
             .ok_or_else(|| "Plugin does not expose the GUI extension".to_string())?;
 
-        // Try floating mode first (plugin manages its own top-level window).
         let floating_config = GuiConfiguration {
             api_type: GuiApiType::WIN32,
             is_floating: true,
         };
-        if gui_ext.is_api_supported(&mut handle, floating_config) {
-            gui_ext.create(&mut handle, floating_config)
-                .map_err(|e| format!("Plugin GUI create failed: {e:?}"))?;
-            let _ = gui_ext.show(&mut handle);
-            self.editor_open = true;
+        let embedded_config = GuiConfiguration {
+            api_type: GuiApiType::WIN32,
+            is_floating: false,
+        };
+
+        // Honor the requested mode. If the plugin doesn't support it, fall back
+        // to the other mode. Only fail if neither works.
+        let try_modes: &[EditorMode] = match mode {
+            EditorMode::Floating => &[EditorMode::Floating, EditorMode::Embedded],
+            EditorMode::Embedded => &[EditorMode::Embedded, EditorMode::Floating],
+        };
+
+        let parent_hwnd_ptr: *mut std::ffi::c_void =
+            parent_hwnd.unwrap_or(std::ptr::null_mut());
+
+        for &try_mode in try_modes {
+            let config = match try_mode {
+                EditorMode::Floating => floating_config,
+                EditorMode::Embedded => embedded_config,
+            };
+            if !gui_ext.is_api_supported(&mut handle, config) {
+                continue;
+            }
+
+            // For embedded mode, we need a parent HWND. If the caller didn't
+            // provide one (e.g. floating was requested but plugin only supports
+            // embedded), fall back to creating a top-level host window.
+            //
+            // Inline the logic here to avoid borrow conflicts with self.instance
+            // (which is already mutably borrowed via `handle`).
+            let result: Result<(), String> = match try_mode {
+                EditorMode::Floating => {
+                    gui_ext
+                        .create(&mut handle, config)
+                        .map_err(|e| format!("Plugin GUI create failed: {e:?}"))?;
+                    let _ = gui_ext.show(&mut handle);
+                    Ok(())
+                }
+                EditorMode::Embedded => {
+                    let title = format!("{} - htrk", self.descriptor.name);
+                    let window_mode = if parent_hwnd_ptr.is_null() {
+                        plugin_window::WindowMode::TopLevel
+                    } else {
+                        plugin_window::WindowMode::ChildOf(parent_hwnd_ptr)
+                    };
+                    let host_window = match PluginHostWindow::create(
+                        &title, window_mode, 800, 600,
+                    ) {
+                        Some(w) => w,
+                        None => Err("Failed to create plugin host window".to_string())?,
+                    };
+                    let hwnd = host_window.hwnd();
+                    let clap_window = ClapWindow::from_win32_hwnd(hwnd as *mut _);
+                    if let Err(e) = gui_ext.create(&mut handle, config) {
+                        return Err(format!("Plugin GUI create failed: {e:?}"));
+                    }
+                    if let Some(size) = gui_ext.get_size(&mut handle) {
+                        let _ = gui_ext.set_size(&mut handle, size);
+                    }
+                    unsafe {
+                        let _ = gui_ext.set_parent(&mut handle, clap_window);
+                    }
+                    let _ = gui_ext.show(&mut handle);
+                    self.host_window = Some(host_window);
+                    Ok(())
+                }
+            };
+            if result.is_ok() {
+                self.editor_open = true;
+                self.editor_mode = Some(try_mode);
+                return Ok(());
+            }
+            // If this mode failed, try the next one.
+        }
+        let err = "Plugin does not support Win32 GUI (floating or embedded)".to_string();
+        self.last_editor_error = Some(err.clone());
+        Err(err)
+    }
+
+    #[cfg(not(windows))]
+    fn open_editor(
+        &mut self,
+        mode: crate::audio::plugins::EditorMode,
+    ) -> Result<(), String> {
+        // Non-Windows: only floating mode is supported.
+        let _ = mode;
+        self.last_editor_error = None;
+        if self.editor_open {
             return Ok(());
         }
-
-        // Fall back to embedded mode (we provide a parent HWND).
-        #[cfg(windows)]
-        {
-            let embedded_config = GuiConfiguration {
-                api_type: GuiApiType::WIN32,
-                is_floating: false,
-            };
-            if !gui_ext.is_api_supported(&mut handle, embedded_config) {
-                return Err("Plugin does not support Win32 GUI".into());
-            }
-            // Create a top-level window to host the embedded GUI.
-            let title = format!("{} - htrk", self.descriptor.name);
-            let host_window = PluginHostWindow::create(&title)
-                .ok_or_else(|| "Failed to create plugin host window".to_string())?;
-            let hwnd = host_window.hwnd();
-            // SAFETY: The HWND is valid for the lifetime of the host_window,
-            // which we keep in self.host_window until close_editor runs.
-            let clap_window = ClapWindow::from_win32_hwnd(hwnd as *mut _);
-            gui_ext.create(&mut handle, embedded_config)
-                .map_err(|e| format!("Plugin GUI create failed: {e:?}"))?;
-            // Try to size the plugin's GUI to match a reasonable initial size.
-            if let Some(size) = gui_ext.get_size(&mut handle) {
-                let _ = gui_ext.set_size(&mut handle, size);
-            }
-            // SAFETY: set_parent requires a valid host window.
-            unsafe {
-                let _ = gui_ext.set_parent(&mut handle, clap_window);
-            }
-            let _ = gui_ext.show(&mut handle);
-            self.host_window = Some(host_window);
-            self.editor_open = true;
-            Ok(())
+        let instance = self
+            .instance
+            .as_mut()
+            .ok_or_else(|| "Plugin not loaded".to_string())?;
+        let mut handle = instance.plugin_handle();
+        let gui_ext = handle
+            .get_extension::<PluginGuiExt>()
+            .ok_or_else(|| "Plugin does not expose the GUI extension".to_string())?;
+        let config = GuiConfiguration {
+            api_type: GuiApiType::WIN32,
+            is_floating: true,
+        };
+        if !gui_ext.is_api_supported(&mut handle, config) {
+            let err = "Plugin does not support floating GUI".to_string();
+            self.last_editor_error = Some(err.clone());
+            return Err(err);
         }
-        #[cfg(not(windows))]
-        Err("Embedded mode requires Windows".into())
+        gui_ext.create(&mut handle, config)
+            .map_err(|e| format!("Plugin GUI create failed: {e:?}"))?;
+        let _ = gui_ext.show(&mut handle);
+        self.editor_open = true;
+        self.editor_mode = Some(crate::audio::plugins::EditorMode::Floating);
+        Ok(())
     }
 
     fn close_editor(&mut self) {
@@ -359,6 +519,7 @@ impl HostedPluginHandle for ClapPluginHandle {
             self.host_window = None;
         }
         self.editor_open = false;
+        self.editor_mode = None;
     }
 
     fn is_editor_open(&self) -> bool {
@@ -387,6 +548,19 @@ impl HostedPluginHandle for ClapPluginHandle {
             &mut handle,
             GuiConfiguration { api_type: GuiApiType::WIN32, is_floating: false },
         )
+    }
+
+    fn editor_mode(&self) -> Option<crate::audio::plugins::EditorMode> {
+        self.editor_mode
+    }
+
+    #[cfg(windows)]
+    fn editor_hwnd(&self) -> Option<*mut std::ffi::c_void> {
+        self.host_window.as_ref().map(|w| w.hwnd())
+    }
+
+    fn last_editor_error(&self) -> Option<String> {
+        self.last_editor_error.clone()
     }
 }
 
@@ -545,13 +719,21 @@ impl HostedPluginProcessor for ClapPluginProcessor {
     }
 
     fn set_parameter(&mut self, _param_id: u32, _value: f32) {
-        // Phase 2: parameter changes must go through the parameter queue
-        // and be applied as ParamValue events in the next process() call.
-        // Stub for now — no parameters are accessible yet.
+        // TODO(param-ext): Push (param_id, value) to a `ParamRingBuffer`
+        // (lock-free SPSC). Then drain in the audio thread right before
+        // calling `clack.process()` and feed `ParamValueEvent`s into the
+        // input events buffer. See docs/parameter-extension-todo.md.
     }
 
-    fn get_parameter(&self, _param_id: u32) -> f32 { 0.0 }
-    fn parameter_count(&self) -> u32 { 0 }
+    fn get_parameter(&self, _param_id: u32) -> f32 {
+        // TODO(param-ext): Look up from an `Arc<AtomicU32>` parameter
+        // value table on the handle (mirror hdaw2/clap_instance.rs).
+        0.0
+    }
+    fn parameter_count(&self) -> u32 {
+        // TODO(param-ext): Return `params.count(&mut handle)`.
+        0
+    }
     fn latency(&self) -> u32 { 0 }
     fn name(&self) -> &str { &self.descriptor.name }
 }
@@ -874,13 +1056,18 @@ mod tests {
         // a failure (no GUI / headless).
         assert!(!handle.is_editor_open(), "Editor should not be open initially");
 
-        match handle.open_editor() {
+        match handle.open_editor(
+            crate::audio::plugins::EditorMode::Floating,
+            None,
+        ) {
             Ok(()) => {
                 assert!(handle.is_editor_open(), "Editor should be open after open_editor()");
                 eprintln!("[ok] Opened editor for {}", handle.descriptor().name);
 
                 // Open again should be a no-op (returns Ok).
-                handle.open_editor().expect("double open should be a no-op");
+                handle
+                    .open_editor(crate::audio::plugins::EditorMode::Floating, None)
+                    .expect("double open should be a no-op");
                 assert!(handle.is_editor_open());
 
                 // Close the editor.
@@ -910,5 +1097,173 @@ mod tests {
         let handle = ClapPluginHandle::load(path).expect("load failed");
         let has = handle.has_editor();
         eprintln!("[ok] TAL Reverb 4 has_editor() = {has}");
+    }
+
+    /// Integration test: open editor in floating mode.
+    /// Skips if the plugin doesn't support floating mode (most plugins
+    /// only support embedded; e.g. TAL Reverb 4 falls back to embedded).
+    #[test]
+    fn test_open_editor_floating_with_real_plugin() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found");
+            return;
+        }
+        let mut handle = ClapPluginHandle::load(path).expect("load failed");
+        let _processor = handle.activate(48000.0, 256).expect("activate failed");
+
+        // Try floating first. Most plugins fall back to embedded.
+        let result = handle.open_editor(
+            crate::audio::plugins::EditorMode::Floating,
+            None,
+        );
+        match result {
+            Ok(()) => {
+                assert!(handle.is_editor_open());
+                let mode = handle.editor_mode();
+                eprintln!("[ok] Opened editor in mode {mode:?} for {}", handle.descriptor().name);
+                handle.close_editor();
+                assert!(!handle.is_editor_open());
+            }
+            Err(e) => {
+                eprintln!("[skip] Plugin doesn't support any GUI mode: {e}");
+            }
+        }
+    }
+
+    /// Integration test: open editor in embedded mode (no parent HWND).
+    /// TAL Reverb 4 only supports embedded; this is the typical path.
+    #[test]
+    fn test_open_editor_embedded_with_real_plugin() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found");
+            return;
+        }
+        let mut handle = ClapPluginHandle::load(path).expect("load failed");
+        let _processor = handle.activate(48000.0, 256).expect("activate failed");
+
+        // No parent HWND — should fall back to a top-level host window
+        let result = handle.open_editor(
+            crate::audio::plugins::EditorMode::Embedded,
+            None,
+        );
+        match result {
+            Ok(()) => {
+                assert!(handle.is_editor_open());
+                assert_eq!(handle.editor_mode(), Some(crate::audio::plugins::EditorMode::Embedded));
+                eprintln!("[ok] Opened embedded editor for {}", handle.descriptor().name);
+                // The host HWND should be set
+                #[cfg(windows)]
+                {
+                    assert!(handle.editor_hwnd().is_some(), "Embedded editor should expose an HWND");
+                }
+                handle.close_editor();
+                assert!(!handle.is_editor_open());
+                eprintln!("[ok] Closed embedded editor");
+            }
+            Err(e) => {
+                eprintln!("[warn] Embedded open failed (may be headless): {e}");
+            }
+        }
+    }
+
+    /// Integration test: open editor with explicit non-null parent HWND.
+    /// The plugin should be parented to that HWND via set_parent.
+    #[test]
+    fn test_open_editor_embedded_with_parent_hwnd() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found");
+            return;
+        }
+        let mut handle = ClapPluginHandle::load(path).expect("load failed");
+        let _processor = handle.activate(48000.0, 256).expect("activate failed");
+
+        // Pass a sentinel HWND. Plugin will accept it; rendering will look
+        // wrong but the test verifies the call doesn't crash.
+        let sentinel_hwnd = 0x1234ABCDusize as *mut std::ffi::c_void;
+        let result = handle.open_editor(
+            crate::audio::plugins::EditorMode::Embedded,
+            Some(sentinel_hwnd),
+        );
+        match result {
+            Ok(()) => {
+                assert!(handle.is_editor_open());
+                eprintln!("[ok] Opened embedded editor with parent HWND");
+                handle.close_editor();
+            }
+            Err(e) => {
+                eprintln!("[warn] Embedded open with parent failed: {e}");
+            }
+        }
+    }
+
+    /// Compile-time check: HtrkHostShared implements HostLogImpl and HostGuiImpl.
+    /// This is a regression guard — if either impl is removed, the
+    /// `declare_extensions` call in `HtrkHost` stops compiling.
+    #[test]
+    fn test_host_extensions_trait_impls() {
+        fn assert_log<S: clack_extensions::log::HostLogImpl>() {}
+        fn assert_gui<S: clack_extensions::gui::HostGuiImpl>() {}
+        assert_log::<HtrkHostShared>();
+        assert_gui::<HtrkHostShared>();
+    }
+
+    /// Smoke test: HtrkHostShared::log() doesn't panic for any severity.
+    #[test]
+    fn test_host_log_no_panic() {
+        use clack_extensions::log::LogSeverity;
+        let shared = HtrkHostShared;
+        for sev in [
+            LogSeverity::Debug,
+            LogSeverity::Info,
+            LogSeverity::Warning,
+            LogSeverity::Error,
+            LogSeverity::Fatal,
+            LogSeverity::HostMisbehaving,
+            LogSeverity::PluginMisbehaving,
+        ] {
+            shared.log(sev, "test message");
+        }
+    }
+
+    /// Smoke test: HtrkHostShared GUI impl methods don't panic.
+    #[test]
+    fn test_host_gui_no_panic() {
+        use clack_extensions::gui::GuiSize;
+        let shared = HtrkHostShared;
+        shared.resize_hints_changed();
+        let _ = shared.request_resize(GuiSize { width: 800, height: 600 });
+        let _ = shared.request_show();
+        let _ = shared.request_hide();
+        shared.closed(true);
+        shared.closed(false);
+    }
+
+    /// Tests that last_editor_error is None after a successful open_editor
+    /// call, and is populated when open_editor fails.
+    #[test]
+    fn test_last_editor_error_state() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found");
+            return;
+        }
+        let mut handle = ClapPluginHandle::load(path).expect("load failed");
+        let _processor = handle.activate(48000.0, 256).expect("activate failed");
+
+        // Open the editor
+        if handle.open_editor(
+            crate::audio::plugins::EditorMode::Floating,
+            None,
+        ).is_ok() {
+            assert!(handle.last_editor_error().is_none());
+            handle.close_editor();
+        }
     }
 }

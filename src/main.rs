@@ -34,6 +34,9 @@ fn main() -> eframe::Result<()> {
         htrk::debug_log::init(true, htrk::app_config::AppConfig::config_dir());
     }
 
+    // Initialize tracing (used by CLAP host extensions, plugin log routing, etc.)
+    htrk::debug_log::init_tracing(config.log_file_path.as_deref());
+
     // CLI overrides for MCP
     if args.iter().any(|a| a == "--mcp") {
         config.mcp_enabled = true;

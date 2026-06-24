@@ -38,6 +38,26 @@ pub enum PluginType {
     Analyzer,
 }
 
+/// Where the plugin's editor window should be hosted.
+///
+/// **Floating** (default): the plugin creates its own top-level OS window. The
+/// host doesn't need to provide a parent. This is the safest mode because
+/// many fixed-pixel plugins (Dexed, free synths) don't handle DPI scaling
+/// correctly when embedded in a host window.
+///
+/// **Embedded**: the plugin is parented to a host-provided HWND. The HWND
+/// is created by the host (a `WS_CHILD` of the eframe main window) and the
+/// plugin's child HWND is sized to fill the host's client area. This gives
+/// the best visual integration but may look bad with plugins that don't
+/// handle DPI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditorMode {
+    Floating,
+    /// The host HWND will be created (or reused) as a child of the eframe
+    /// main window. The plugin is parented to it via `set_parent`.
+    Embedded,
+}
+
 // ── Descriptor (discovered metadata) ──
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -199,10 +219,25 @@ pub trait HostedPluginHandle {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 
     /// Open the plugin's editor (if it has one). Called on the main thread.
-    /// The plugin's editor appears as a floating OS window managed by the plugin
-    /// itself (CLAP `is_floating=true`). Returns an error if the plugin has no
-    /// editor, the GUI extension is unavailable, or creation fails.
-    fn open_editor(&mut self) -> Result<(), String>;
+    ///
+    /// - `mode = EditorMode::Floating`: the plugin creates its own top-level
+    ///   OS window. The host doesn't need to provide a parent.
+    /// - `mode = EditorMode::Embedded`: the plugin is parented to a host-
+    ///   provided HWND (`parent_hwnd`). The HWND should be a child of the
+    ///   main application window. Ignored on non-Windows platforms.
+    ///
+    /// The implementation may fall back from one mode to the other if the
+    /// plugin doesn't support the requested mode.
+    #[cfg(windows)]
+    fn open_editor(
+        &mut self,
+        mode: EditorMode,
+        parent_hwnd: Option<*mut std::ffi::c_void>,
+    ) -> Result<(), String>;
+
+    /// Non-Windows fallback. Always uses floating mode.
+    #[cfg(not(windows))]
+    fn open_editor(&mut self, mode: EditorMode) -> Result<(), String>;
 
     /// Close the plugin's editor (if open). Called on the main thread.
     /// Safe to call even if the editor is not open.
@@ -213,6 +248,20 @@ pub trait HostedPluginHandle {
 
     /// Returns true if the plugin has an editor at all.
     fn has_editor(&self) -> bool;
+
+    /// Returns the current editor mode (only meaningful if `is_editor_open`).
+    /// Returns `None` if no editor is open.
+    fn editor_mode(&self) -> Option<EditorMode>;
+
+    /// Returns the host-side container HWND for an embedded-mode editor
+    /// (Windows only). Used by the UI to detect when the user X-closes the
+    /// window and update the button label.
+    #[cfg(windows)]
+    fn editor_hwnd(&self) -> Option<*mut std::ffi::c_void>;
+
+    /// Returns the last error message from `open_editor`, if any. Cleared
+    /// on the next `open_editor` call.
+    fn last_editor_error(&self) -> Option<String>;
 }
 
 // ── Plugin Slot (persistence model) ──

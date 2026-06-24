@@ -1460,7 +1460,7 @@ impl HtrkApp {
 }
 
 impl eframe::App for HtrkApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let devmcp = self.devmcp.clone();
         let _guard = FrameGuard::new(devmcp.as_ref(), &ctx);
@@ -1947,7 +1947,23 @@ impl eframe::App for HtrkApp {
                     }
                 }
                 AppView::SendFx => {
-                    self.sendfx_panel.ui(ui, &mut self.core.command_sender, &mut self.send_bus_handles);
+                    // Extract the eframe main-window HWND once per frame so
+                    // the Send FX view can offer "Edit (embedded)" mode
+                    // (parenting the plugin GUI inside htrk's window).
+                    #[cfg(windows)]
+                    let eframe_hwnd: Option<crate::ui::sendfx_panel::EframeHwnd> = {
+                        crate::audio::plugins::plugin_window::get_eframe_hwnd(frame)
+                            .map(|h| h as usize)
+                    };
+                    #[cfg(not(windows))]
+                    let eframe_hwnd: Option<crate::ui::sendfx_panel::EframeHwnd> = None;
+
+                    self.sendfx_panel.ui(
+                        ui,
+                        &mut self.core.command_sender,
+                        &mut self.send_bus_handles,
+                        eframe_hwnd,
+                    );
 
                     // Plugin browser dialog: shown when a bus requests it.
                     if let Some(si) = self.sendfx_panel.plugin_browser_open_for {

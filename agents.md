@@ -345,20 +345,27 @@ Use the SP_* constants instead of inline `.add_space()`:
 - `PluginSlot` struct in `mod.rs` (re-exported in sequencer module) holds `{ format, path, plugin_id, state }`.
 - Phase 2 send FX integration will add `send_bus_plugins: [Option<PluginSlot>; 4]` to `Module`.
 
-### CLAP Integration Status (Phases 1-5)
+### CLAP Integration Status (Phases 1-5.1)
 - **Phase 1-2 (done)**: trait, types, discovery, library, dependencies, real CLAP process() with AudioPorts/EventBuffer, send FX wiring, persistence (`Module.send_bus_plugins`), MCP tools.
-- **Phase 5 (done, Windows only)**: plugin editor windows. `open_editor()` probes floating mode first, falls back to embedded-with-top-level-HWND. macOS/Linux deferred.
-- **Phase 3-4, 6 (future)**: instrument plugins, parameter automation, VST3.
+- **Phase 5 (done, Windows only)**: plugin editor windows. `open_editor(mode, parent_hwnd)` probes floating first, falls back to embedded. macOS/Linux deferred.
+- **Phase 5.1 (done)**: `HtrkHostShared` implements `HostLog` + `HostGui`. `tracing` integration with stderr default and optional file via `AppConfig.log_file_path`. `EditorMode` enum (Floating | Embedded). X-close detection via `IsWindowVisible` polling. Editor errors surfaced as red labels. F6 = Send FX, F7 = Automation.
+- **Phase 3-4, 6 (future)**: instrument plugins, parameter automation, VST3. **Parameter extension** is the next sub-task — see `docs/parameter-extension-todo.md` for the full plan (TODO markers already in code at `clap_plugin.rs:337` and `clap_plugin.rs:721-732`).
 
 ### Editor Threading
 - `HostedPluginHandle` is `!Send` (CLAP `PluginInstance` is `!Send`). It must live on the main thread.
 - `HtrkApp.send_bus_handles: [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES]` stores them.
 - The audio thread only has the `HostedPluginProcessor` (which IS `Send`); the handle is never sent across threads.
 - The `ClapPluginHandle.host_window: Option<PluginHostWindow>` (Windows only) holds the embedded-mode top-level HWND. `Drop` calls `DestroyWindow`.
+- Embedded mode parent: `WindowMode::ChildOf(eframe_hwnd)` makes the host window a `WS_CHILD` of the eframe main window. The plugin is parented to it via `set_parent`.
+
+### Editor Modes
+- **Floating (default)**: plugin creates its own top-level window. No parent needed. Best for plugins that don't handle DPI.
+- **Embedded (opt-in)**: host provides an HWND as the plugin's parent. Best for plugins that handle DPI. Use the "Edit (in htrk)" button to enter this mode.
 
 ### Rule for Future Changes
 - When adding a new plugin format, create `vst3_plugin.rs` (or similar) implementing both `HostedPluginHandle` and `HostedPluginProcessor`.
 - All `process()` implementations must be allocation-free. Allocate all buffers in `activate()`.
 - Parameter changes from the UI thread go through the audio thread via an SPSC ring buffer; never set parameters directly on the audio-thread processor.
 - The PluginSlot is the only state that needs to be persisted to `.htk`; everything else is rebuilt on load.
-- Editor windows use a separate top-level OS window (not embedded in egui) — see `docs/plugin-hosting-plan.md` Phase 5 for rationale.
+- Editor windows default to floating; embedded is opt-in via "Edit (in htrk)" button.
+- Plugin log messages go through `tracing` (stderr default; configure via `RUST_LOG` or `AppConfig.log_file_path`).

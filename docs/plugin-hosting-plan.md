@@ -315,47 +315,65 @@ struct ParamChangeEvent {
 
 ## Phase 5 — Plugin Editor UI (DONE for Windows; macOS/Linux deferred)
 
-**Status:** Windows floating + embedded editors working (June 2026).
+**Status:** Windows floating + embedded editors + host extensions working
+(June 2026). Editor parameter UI deferred — see Phase 5.2.
 
 ### What ships
 
-- `HostedPluginHandle` trait gains `open_editor()`, `close_editor()`,
-  `is_editor_open()`, `has_editor()` methods (`src/audio/plugins/mod.rs`).
+- `HostedPluginHandle` trait gains `open_editor(mode, parent_hwnd)`,
+  `close_editor()`, `is_editor_open()`, `has_editor()`, `editor_mode()`,
+  `editor_hwnd()`, `last_editor_error()` methods
+  (`src/audio/plugins/mod.rs`).
 - `ClapPluginHandle` implements them via clack's GUI extension
   (`src/audio/plugins/clap_plugin.rs`).
 - `HtrkApp` stores main-thread plugin handles in
   `send_bus_handles: [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES]`
   (replaces the `std::mem::forget(handle)` hack in
   `load_and_install_plugin`).
-- `SendFxPanel` now has an "Edit..." / "Close" button per send bus that
-  toggles the editor. The "Remove" button also closes the editor.
-- `src/audio/plugins/plugin_window.rs` (Windows-only) creates a
-  top-level HWND via `windows-sys 0.59` for the embedded-fallback path.
-- Tests: 335 lib tests pass; `test_editor_open_close_real_plugin` opens
-  and closes TAL Reverb 4's editor and verifies the lifecycle.
+- `SendFxPanel` has "Edit..." (floating) and "Edit (in htrk)" (embedded)
+  buttons per send bus. Editor errors show as a red label below the
+  button row. The "Remove" button also closes the editor.
+- `src/audio/plugins/plugin_window.rs` (Windows-only) creates an
+  HWND via `windows-sys 0.59` for the embedded path. Supports
+  `WindowMode::TopLevel` (no parent) and `WindowMode::ChildOf(HWND)`
+  (parented to eframe). Forwards `WM_SIZE` to the plugin's child
+  HWND via `MoveWindow`.
+- `HtrkHost` now has a real shared handler `HtrkHostShared` that
+  implements `HostLogImpl` and `HostGuiImpl` (host-side extensions).
+  Plugin log messages route through `tracing` (stderr default,
+  optional file via `AppConfig.log_file_path`).
+- X-close detection: each frame, `IsWindowVisible` is polled on the
+  plugin's container HWND; if the user X-closed the floating window
+  externally, the UI's "Close" button updates immediately.
+- Tests: 343 lib tests pass; 6 new editor-mode + host-extension tests
+  added.
 
 ### Architecture
 
-1. `open_editor()` first probes floating mode
-   (`GuiApiType::WIN32, is_floating=true`). If the plugin supports it
-   (e.g. plugins that manage their own top-level window), the plugin
-   creates and shows its own window — no host HWND needed.
-2. If floating is unsupported, fall back to embedded mode
-   (`is_floating=false`). We create a top-level `WS_OVERLAPPEDWINDOW`
-   HWND, call `plugin_gui.set_parent(Window::from_win32_hwnd(hwnd))`,
-   then `set_size` and `show`.
-3. The `PluginHostWindow` is stored in the `ClapPluginHandle` and
+1. `open_editor(mode, parent_hwnd)` tries the requested mode first.
+   - `EditorMode::Floating` first: probe `is_api_supported(WIN32,
+     is_floating=true)`. If supported, plugin creates and shows its
+     own window — no host HWND needed.
+   - `EditorMode::Embedded`: probe `is_api_supported(WIN32,
+     is_floating=false)`. If supported, create a host window
+     (`WindowMode::ChildOf(eframe_hwnd)` if a parent was provided,
+     else `WindowMode::TopLevel`), call
+     `plugin_gui.set_parent(Window::from_win32_hwnd(hwnd))`, then
+     `set_size` and `show`.
+2. The `PluginHostWindow` is stored in the `ClapPluginHandle` and
    `Drop`-destroyed in `close_editor()`, which also calls
    `plugin_gui.destroy()`.
+3. The eframe main window's HWND is extracted once per frame via
+   `frame.window_handle()` (raw-window-handle 0.6).
 
-### Why a top-level HWND instead of an eframe child
+### Why floating is the default mode
 
-- eframe 0.34 on winit 0.30 doesn't expose a stable Win32 HWND API for
-  reparenting external windows inside the egui viewport.
-- A separate top-level window is simpler, has correct focus handling,
-  and matches what most CLAP hosts do.
-- The eframe process keeps pumping Win32 messages, so the plugin's
-  child HWND receives `WM_PAINT` and `WM_SIZE` naturally.
+Many CLAP plugins (especially free VST ports) don't handle DPI scaling
+well. Embedding them in a host window at non-100% scale can make them
+look broken. Most DAWs (Reaper, Bitwig, Ableton, Ardour) default to
+floating for the same reason. "Edit (in htrk)" is offered as an
+opt-in for users who want the integrated look (best with
+DPI-aware plugins).
 
 ### Future work
 
@@ -366,8 +384,30 @@ struct ParamChangeEvent {
   `clack_extensions::gui::Window::from_window_handle`).
 - Wayland: no embedded support in CLAP spec — must use floating
   mode. CLAP's `is_floating=true` is mandatory.
-- In-egui embedding: defer until eframe 0.35+ exposes a stable
-  `raw-window-handle` API on `Frame`.
+
+---
+
+## Phase 5.2 — Per-Plugin Parameter UI (DEFERRED)
+
+**Status:** TODO markers in code; full plan in
+`docs/parameter-extension-todo.md`. Reference implementation in
+hdaw2's `clap_instance.rs` and `param_ring.rs`.
+
+The next sub-task is exposing per-plugin parameter sliders in the Send
+FX view, routing parameter changes to the audio thread as
+`ParamValueEvent`s, and supporting plugin parameter automation lanes.
+The `HostedPluginProcessor::set_parameter` and
+`ClapPluginHandle::parameter_info` trait methods are currently stubs.
+
+This is the foundation for both
+- htrk-native parameter control (without opening the plugin's GUI), and
+- Plugin parameter automation lanes in the Automation view.
+
+Estimated scope: 300-500 LOC, 2-3 days.
+
+---
+
+## Phase 6 — VST3 Support & Polish (~3-5 days)
 
 ---
 

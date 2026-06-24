@@ -3,6 +3,10 @@ use crate::audio::plugins::HostedPluginHandle;
 use crate::audio::CommandSender;
 use crate::sequencer::effect::{NUM_SEND_BUSES, SendEffectType};
 
+/// Opaque token for the eframe main window HWND. Stored as a usize so the
+/// panel struct doesn't need `#[cfg(windows)]` everywhere.
+pub type EframeHwnd = usize;
+
 pub struct SendFxPanel {
     pub effect_types: [SendEffectType; NUM_SEND_BUSES],
     pub params: [[f32; 5]; NUM_SEND_BUSES],
@@ -43,6 +47,7 @@ impl SendFxPanel {
         ui: &mut egui::Ui,
         command_sender: &mut Option<CommandSender>,
         plugin_handles: &mut [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
+        eframe_hwnd: Option<EframeHwnd>,
     ) {
         crate::ui::sendfx_editor::draw_sendfx_view(
             ui,
@@ -53,6 +58,7 @@ impl SendFxPanel {
             &mut self.plugin_names,
             &mut self.plugin_browser_open_for,
             plugin_handles,
+            eframe_hwnd,
         );
     }
 }

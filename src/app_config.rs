@@ -188,6 +188,12 @@ pub struct AppConfig {
     /// Settings UI or MCP. Phase 2 plugin hosting.
     #[serde(default)]
     pub plugin_scan_paths: Vec<String>,
+
+    /// Optional path to a log file. When set, `tracing` output is also
+    /// written here in addition to stderr. Plugin log messages routed
+    /// through the CLAP `HostLog` extension land in this file.
+    #[serde(default)]
+    pub log_file_path: Option<String>,
 }
 
 fn default_col_vis() -> bool { true }
@@ -282,6 +288,7 @@ impl Default for AppConfig {
             mcp_http_port: default_mcp_http_port(),
             library_roots: Vec::new(),
             plugin_scan_paths: Vec::new(),
+            log_file_path: None,
         }
     }
 }
