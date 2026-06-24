@@ -3,9 +3,33 @@ use eguidev::DevUiExt;
 
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::ModuleFormat;
+use crate::ui::pattern_grid::SubColumn;
 
 use super::sample_palette::draw_waveform_thumbnail;
 use super::theme::TrackerTheme;
+
+/// Human-readable name for each sub-column. The status-bar breadcrumb
+/// and column-header tooltips both use this.
+pub fn sub_column_name(sub: SubColumn) -> &'static str {
+    match sub {
+        SubColumn::Note => "Note",
+        SubColumn::InstrumentTens | SubColumn::InstrumentOnes => "Inst",
+        SubColumn::VolumeTens | SubColumn::VolumeOnes => "Vol",
+        SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => "Fx",
+    }
+}
+
+/// Short hint shown next to the sub-column breadcrumb. Tells the user
+/// what characters are accepted and how to navigate.
+pub fn sub_column_hint(sub: SubColumn) -> &'static str {
+    match sub {
+        SubColumn::Note => "Z S X D ... / Q 2 W ... (preview)",
+        SubColumn::InstrumentTens | SubColumn::InstrumentOnes => "0-9 (decimal)",
+        SubColumn::VolumeTens | SubColumn::VolumeOnes => "0-9 (00-64)",
+        SubColumn::EffectType => "0-F / P Z S R X (hex)",
+        SubColumn::EffectParamHigh | SubColumn::EffectParamLow => "0-F (hex)",
+    }
+}
 
 pub fn draw_status_bar(
     ui: &mut egui::Ui,
@@ -21,6 +45,7 @@ pub fn draw_status_bar(
     selected_sample: usize,
     playback_state: &AtomicPlaybackState,
     edit_mode: bool,
+    sub_column: SubColumn,
     hint: &str,
     theme: &TrackerTheme,
 ) -> Option<i32> {
@@ -108,9 +133,29 @@ pub fn draw_status_bar(
 
         ui.separator();
 
+        // Sub-column breadcrumb. Shows where the cursor is sitting and
+        // what characters that column accepts. Acts as a status-bar
+        // substitute for the (easy to miss) cursor position when the
+        // user can't tell why their typing isn't being accepted.
+        let col_color = match sub_column {
+            SubColumn::Note => theme.fg_note,
+            SubColumn::InstrumentTens | SubColumn::InstrumentOnes => theme.fg_instrument,
+            SubColumn::VolumeTens | SubColumn::VolumeOnes => theme.fg_volume,
+            SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => theme.fg_effect,
+        };
+        ui.label(
+            egui::RichText::new(format!("Col:{}", sub_column_name(sub_column)))
+                .font(font.clone())
+                .color(col_color)
+                .strong(),
+        )
+        .on_hover_text(sub_column_hint(sub_column));
+
+        ui.separator();
+
         // Use more space for the hint
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(egui::RichText::new("F3: HELP ").font(font.clone()).color(theme.fg_instrument));
+            ui.label(egui::RichText::new("F1: HELP ").font(font.clone()).color(theme.fg_instrument));
             ui.separator();
             ui.label(egui::RichText::new(hint).font(font).color(theme.fg_note));
         });

@@ -960,3 +960,95 @@ fn set_effect_param(effect: &Effect, param: u8) -> Effect {
     fake_cell.effect = *effect;
     crate::sequencer::effect::set_effect_param_value(fake_cell, param).effect
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::AppView;
+    use crate::sequencer::pattern::Cell;
+    use crate::sequencer::Note;
+
+    /// Build a minimal HtrkApp for value-entry tests. We don't go through
+    /// the real `default` impl (which would load the user's AppConfig and
+    /// start an MCP server) — we build a headless app via `from_config`
+    /// with the same defaults used in tests, then disable features we
+    /// don't need.
+    fn test_app() -> HtrkApp {
+        let config = crate::app_config::AppConfig::default();
+        HtrkApp::from_config_for_tests(config)
+    }
+
+    /// On the VolumeTens sub-column, typing a digit should set the
+    /// cell's volume to d*10 (clamped to 64). The cursor then advances
+    /// to VolumeOnes.
+    #[test]
+    fn test_enter_volume_tens() {
+        let mut app = test_app();
+        app.core.new_song();
+        app.edit_mode = true;
+        app.current_view = AppView::Pattern;
+        app.core.cursor.sub_column = SubColumn::VolumeTens;
+        app.core.cursor.row = 0;
+        app.core.cursor.channel = 0;
+
+        handle_text_input(&mut app, '4');
+
+        let cell = app.core.get_cell_at_cursor();
+        assert_eq!(cell.volume, Some(40), "tens=4 should set volume=40");
+        // Cursor advances to ones position
+        assert_eq!(app.core.cursor.sub_column, SubColumn::VolumeOnes);
+    }
+
+    /// On the VolumeOnes sub-column, typing a digit should fill the ones
+    /// place of the existing volume.
+    #[test]
+    fn test_enter_volume_ones() {
+        let mut app = test_app();
+        app.core.new_song();
+        // Pre-set volume=40 to simulate the tens step having been done.
+        let mut pre = Cell::default();
+        pre.volume = Some(40);
+        app.core.set_cell_at_cursor(pre, &[], false);
+
+        app.edit_mode = true;
+        app.current_view = AppView::Pattern;
+        app.core.cursor.sub_column = SubColumn::VolumeOnes;
+        app.core.cursor.row = 0;
+        app.core.cursor.channel = 0;
+
+        handle_text_input(&mut app, '5');
+
+        let cell = app.core.get_cell_at_cursor();
+        assert_eq!(cell.volume, Some(45), "ones=5 on existing 40 should give 45");
+        // Cursor advances to effect column
+        assert_eq!(app.core.cursor.sub_column, SubColumn::EffectType);
+    }
+
+    /// Editing a cell should preserve the note + instrument set by an
+    /// earlier note entry (the user types a note, advances to volume,
+    /// and types digits — note must survive the volume write).
+    #[test]
+    fn test_volume_edit_preserves_note() {
+        let mut app = test_app();
+        app.core.new_song();
+        let mut pre = Cell::default();
+        pre.note = Note::On(60);
+        pre.instrument = Some(1);
+        app.core.set_cell_at_cursor(pre, &[], false);
+
+        app.edit_mode = true;
+        app.current_view = AppView::Pattern;
+        app.core.cursor.sub_column = SubColumn::VolumeTens;
+        app.core.cursor.row = 0;
+        app.core.cursor.channel = 0;
+
+        handle_text_input(&mut app, '4');
+        handle_text_input(&mut app, '0');
+
+        let cell = app.core.get_cell_at_cursor();
+        assert_eq!(cell.note, Note::On(60), "note must survive volume entry");
+        assert_eq!(cell.instrument, Some(1), "instrument must survive volume entry");
+        assert_eq!(cell.volume, Some(40));
+    }
+}

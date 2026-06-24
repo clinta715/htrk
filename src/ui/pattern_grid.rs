@@ -388,6 +388,21 @@ pub fn draw_pattern_grid(
         toggle_color,
     );
 
+    // Column header strip. Drawn in the same row as the toggle button
+    // (so it does not steal vertical space from the data rows) but to
+    // the right of the row-number column. Hovering any sub-column
+    // header shows a one-line description of that column and how to
+    // edit it, so first-time users can discover the volume column
+    // without reading the manual.
+    draw_column_header(
+        &painter,
+        ui,
+        rect,
+        metrics,
+        col_vis,
+        theme,
+    );
+
     let first_row = scroll_row;
     let last_row = (first_row + visible_rows).min(pattern.num_rows);
     let first_ch = scroll_channel;
@@ -948,6 +963,158 @@ fn draw_automation_cell(
     }
 }
 
+/// Draw the column header strip across the top of the pattern grid.
+///
+/// Renders a small label in each visible sub-column (Note / Inst / Vol
+/// / Fx) and makes each label hoverable so the user can discover what
+/// characters that sub-column accepts without opening the help screen.
+/// The labels are placed in the same row as the sample-length
+/// background toggle so they don't steal vertical space from the data
+/// rows.
+fn draw_column_header(
+    painter: &egui::Painter,
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    metrics: GridMetrics,
+    col_vis: ColumnVisibility,
+    theme: &TrackerTheme,
+) {
+    let font = egui::FontId::monospace(metrics.font_size * 0.78);
+    let y = rect.top() + metrics.row_height * 0.5;
+    let mut x = rect.left() + metrics.row_num_width;
+    let header_h = metrics.row_height;
+
+    // Each (label, color, tooltip, sub-column-1char, sub-column-2char)
+    // tuple maps to a single visual label. The label is wide enough to
+    // sit over both halves of the column (e.g. one "Note" label spans
+    // the whole note column rather than per-digit halves). For decimal
+    // columns (Inst/Vol) we draw one label per half, since each half
+    // accepts the same kind of digit and a "00" label over both would
+    // be misleading.
+    let note_label = "Note";
+    let inst_label = "I";
+    let vol_label = "V";
+
+    let tooltips = sub_column_tooltips(col_vis);
+
+        // Note column: single label centered.
+    if col_vis.note {
+        let cx = x + metrics.note_width * 0.5;
+        let label_rect = egui::Rect::from_min_size(
+            egui::pos2(x, rect.top()),
+            egui::vec2(metrics.note_width, header_h),
+        );
+        let r = ui.interact(label_rect, egui::Id::new("hdr_note"), egui::Sense::hover());
+        r.on_hover_text(&tooltips.note);
+        painter.text(
+            egui::pos2(cx, y),
+            egui::Align2::CENTER_CENTER,
+            note_label,
+            font.clone(),
+            theme.fg_note,
+        );
+        x += metrics.note_width + metrics.note_to_inst_gap;
+    }
+
+    // Instrument column: one label per half (tens / ones).
+    if col_vis.instrument {
+        let half = metrics.inst_width * 0.5;
+        let cx0 = x + half * 0.5;
+        let cx1 = x + half + half * 0.5;
+        for (cx, suffix) in [(cx0, "10s"), (cx1, "1s")] {
+            let label_rect = egui::Rect::from_min_size(
+                egui::pos2(cx - half * 0.5, rect.top()),
+                egui::vec2(half, header_h),
+            );
+            let r = ui.interact(label_rect, egui::Id::new(("hdr_inst", suffix)), egui::Sense::hover());
+            r.on_hover_text(&tooltips.inst);
+            painter.text(
+                egui::pos2(cx, y),
+                egui::Align2::CENTER_CENTER,
+                inst_label,
+                font.clone(),
+                theme.fg_instrument,
+            );
+        }
+        x += metrics.inst_width + metrics.inst_to_vol_gap;
+    }
+
+    // Volume column: one label per half (tens / ones).
+    if col_vis.volume {
+        let half = metrics.vol_width * 0.5;
+        let cx0 = x + half * 0.5;
+        let cx1 = x + half + half * 0.5;
+        for (cx, suffix) in [(cx0, "10s"), (cx1, "1s")] {
+            let label_rect = egui::Rect::from_min_size(
+                egui::pos2(cx - half * 0.5, rect.top()),
+                egui::vec2(half, header_h),
+            );
+            let r = ui.interact(label_rect, egui::Id::new(("hdr_vol", suffix)), egui::Sense::hover());
+            r.on_hover_text(&tooltips.vol);
+            painter.text(
+                egui::pos2(cx, y),
+                egui::Align2::CENTER_CENTER,
+                vol_label,
+                font.clone(),
+                theme.fg_volume,
+            );
+        }
+        x += metrics.vol_width + metrics.vol_to_effect_gap;
+    }
+
+    // Effect column: one label per third (type / param-hi / param-lo).
+    if col_vis.effect {
+        let third = metrics.effect_width / 3.0;
+        let cx0 = x + third * 0.5;
+        let cx1 = x + third * 1.5;
+        let cx2 = x + third * 2.5;
+        for (cx, label, kind) in [
+            (cx0, "Fx", "type"),
+            (cx1, "Ph", "param_hi"),
+            (cx2, "Pl", "param_lo"),
+        ] {
+            let label_rect = egui::Rect::from_min_size(
+                egui::pos2(cx - third * 0.5, rect.top()),
+                egui::vec2(third, header_h),
+            );
+            let r = ui.interact(label_rect, egui::Id::new(("hdr_fx", kind)), egui::Sense::hover());
+            r.on_hover_text(&tooltips.fx);
+            painter.text(
+                egui::pos2(cx, y),
+                egui::Align2::CENTER_CENTER,
+                label,
+                font.clone(),
+                theme.fg_effect,
+            );
+        }
+    }
+}
+
+struct ColumnHeaderTooltips {
+    note: String,
+    inst: String,
+    vol: String,
+    fx: String,
+}
+
+fn sub_column_tooltips(col_vis: ColumnVisibility) -> ColumnHeaderTooltips {
+    let mut s = ColumnHeaderTooltips {
+        note: "Note column\nType a note key (Z S X D C V G B H N J M, lower octave;\nQ 2 W 3 E R 5 T 6 Y 7 U, upper octave).\n`.` (period) inserts a note-off.\nRight-arrow: step to next sub-column.\n\nEdit-mode required (Esc to toggle).".to_string(),
+        inst: "Instrument column (00-99, decimal)\nCursor splits into two halves: tens (left) and ones (right).\nType a digit; cursor advances to the next half automatically.\n\n`.` (period): next sample    `,` (comma): prev sample\n\nHidden? Toggle with Ctrl+2.".to_string(),
+        vol: "Volume column (00-64, decimal, XM-style)\nCursor splits into two halves: tens (left) and ones (right).\nType a digit; cursor advances to the next half automatically.\n\n00 = silent, 40 = full, 64 = max.\n\nHidden? Toggle with Ctrl+3.".to_string(),
+        fx: "Effect column (hex)\nType a hex digit (0-F) for the effect type,\nthen two more hex digits for the param.\n\nP = set send bus param    Z = filter cutoff\nS = set send level         R = filter resonance\nX = filter type\n\nCtrl+click in this column: type an effect value even\nwhen an automation overlay is active (bypasses the\noverlay's click handler).\n\nHidden? Toggle with Ctrl+4.\n\nFull per-effect reference: htrk --list-effects, or\nF1 in-app.".to_string(),
+    };
+    // If a column is hidden, swap the tooltip for a "this column is
+    // hidden" hint so the user has a chance to find it via the header
+    // even after toggling it off.
+    if !col_vis.note { s.note = "Note column hidden. Toggle with Ctrl+1.".to_string(); }
+    if !col_vis.instrument { s.inst = "Instrument column hidden. Toggle with Ctrl+2.".to_string(); }
+    if !col_vis.volume { s.vol = "Volume column hidden. Toggle with Ctrl+3.".to_string(); }
+    if !col_vis.effect { s.fx = "Effect column hidden. Toggle with Ctrl+4.".to_string(); }
+    s
+}
+
+
 fn format_effect(effect: &Effect) -> (String, String) {
     match effect {
         Effect::None => (".".to_string(), "..".to_string()),
@@ -1046,84 +1213,235 @@ fn format_effect(effect: &Effect) -> (String, String) {
     }
 }
 
+/// Format the hover-popup for an effect at the cursor cell.
+///
+/// The popup has three lines:
+/// 1. The hex code + standard name (e.g. `4  Vibrato`)
+/// 2. The effect's current values and parameter range
+/// 3. (For E- and F-prefixed effects) the sub-effect name
 fn effect_tooltip_text(effect: &Effect) -> String {
-    match effect {
-        Effect::Arpeggio { note1, note2 } => format!("Arpeggio: +{} +{} semitones", note1, note2),
-        Effect::PortamentoUp { speed } => format!("Portamento Up: speed={}", speed),
-        Effect::PortamentoDown { speed } => format!("Portamento Down: speed={}", speed),
-        Effect::TonePortamento { speed } => format!("Tone Portamento: speed={}", speed),
-        Effect::Vibrato { speed, depth } => format!("Vibrato: speed={} depth={}", speed, depth),
-        Effect::TonePortamentoVolumeSlide { .. } => "Tone Porta + Vol Slide".to_string(),
-        Effect::VibratoVolumeSlide { .. } => "Vibrato + Vol Slide".to_string(),
-        Effect::Tremolo { speed, depth } => format!("Tremolo: speed={} depth={}", speed, depth),
+    let (hex, name, range, detail) = match effect {
+        Effect::Arpeggio { note1, note2 } => (
+            "0", "Arpeggio", "XY = two semitone offsets",
+            format!("cycle through note, +{} semitones, +{} semitones", note1, note2),
+        ),
+        Effect::PortamentoUp { speed } => (
+            "1", "Portamento Up", "XX = speed (00-FF)",
+            format!("pitch slides up; current speed = {}", speed),
+        ),
+        Effect::PortamentoDown { speed } => (
+            "2", "Portamento Down", "XX = speed (00-FF)",
+            format!("pitch slides down; current speed = {}", speed),
+        ),
+        Effect::TonePortamento { speed } => (
+            "3", "Tone Portamento", "XX = speed (00-FF)",
+            format!("slides toward the next note's pitch; current speed = {}", speed),
+        ),
+        Effect::Vibrato { speed, depth } => (
+            "4", "Vibrato", "X = speed (0-F), Y = depth (0-F)",
+            format!("current: speed={} depth={}", speed, depth),
+        ),
+        Effect::TonePortamentoVolumeSlide { up } => (
+            "5", "Tone Porta + Vol Slide", "X = porta speed, Y = vol slide",
+            format!("up/down = {}/{}", up.max(&0), (up.unsigned_abs() as i8).min(15)),
+        ),
+        Effect::VibratoVolumeSlide { up } => (
+            "6", "Vibrato + Vol Slide", "X = vib speed, Y = vol slide",
+            format!("up/down = {}/{}", up.max(&0), (up.unsigned_abs() as i8).min(15)),
+        ),
+        Effect::Tremolo { speed, depth } => (
+            "7", "Tremolo", "X = speed (0-F), Y = depth (0-F)",
+            format!("current: speed={} depth={}", speed, depth),
+        ),
         Effect::SetPanning { pan } => {
             let pct = (*pan as f32 / 255.0 * 100.0) as u8;
-            if *pan < 85 { format!("Pan: {} (left {}%)", pan, pct) }
-            else if *pan > 170 { format!("Pan: {} (right {}%)", pan, pct) }
-            else { format!("Pan: {} (center {}%)", pan, pct) }
+            let side = if *pan < 85 { "left" } else if *pan > 170 { "right" } else { "center" };
+            (
+                "8", "Set Panning", "XX = 00-FF (00=L, 80=center, FF=R)",
+                format!("current: {:02X} ({} {}%)", pan, side, pct),
+            )
         }
-        Effect::SetSampleOffset { offset } => format!("Sample Offset: {}", offset),
+        Effect::SetSampleOffset { offset } => (
+            "9", "Set Sample Offset", "XX = high byte of offset (× 65536)",
+            format!("current: {} (high byte = {:02X})", offset, offset >> 8),
+        ),
         Effect::VolumeSlide { up, down } => {
-            if *up > 0 { format!("Vol Slide Up: {}", up) }
-            else { format!("Vol Slide Down: {}", down) }
+            if *up > 0 {
+                ("A", "Volume Slide", "X = up per tick, Y = down per tick",
+                 format!("current: up = {}", up))
+            } else {
+                ("A", "Volume Slide", "X = up per tick, Y = down per tick",
+                 format!("current: down = {}", down))
+            }
         }
-        Effect::PositionJump { order } => format!("Position Jump: order {}", order),
-        Effect::SetVolume { volume } => format!("Set Volume: {}/64", (*volume).min(64)),
-        Effect::PatternBreak { row } => format!("Pattern Break: row {}", row),
+        Effect::PositionJump { order } => (
+            "B", "Position Jump", "XX = order index",
+            format!("current: order {}", order),
+        ),
+        Effect::SetVolume { volume } => (
+            "C", "Set Volume", "XX = 00-40 (00=silent, 40=full, >40 clamp)",
+            format!("current: {}/64", (*volume).min(64)),
+        ),
+        Effect::PatternBreak { row } => (
+            "D", "Pattern Break", "XX = row in next order (00-3F)",
+            format!("current: row {}", row),
+        ),
         Effect::ExtendedEffect { param } => {
             let sub = (param >> 4) & 0x0F;
             let val = param & 0x0F;
-            match sub {
-                0 => "Set Filter".to_string(),
-                1 => format!("Fine Porta Up: {}", val),
-                2 => format!("Fine Porta Down: {}", val),
-                3 => format!("Glissando: {}", if val > 0 { "On" } else { "Off" }),
-                4 => format!("Vibrato Waveform: {}", match val { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
-                5 => format!("Set Fine Tune: {}", val),
-                6 => format!("Pattern Loop: {}", if val == 0 { "Set marker".to_string() } else { format!("Loop {}x", val) }),
-                7 => format!("Tremolo Waveform: {}", match val { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
-                8 => format!("Set Panning (fine)"),
-                9 => format!("Retrigger: every {} ticks", val),
-                0xA => format!("Fine Vol Up: {}", val),
-                0xB => format!("Fine Vol Down: {}", val),
-                0xC => format!("Note Cut after {} ticks", val),
-                0xD => format!("Note Delay: {} ticks", val),
-                0xE => "Pattern Delay".to_string(),
-                _ => format!("Extended E{:X}{:02X}", sub, val),
-            }
+            let (sub_name, sub_range) = match sub {
+                0 => ("Set Filter", "00 = off, 01 = on"),
+                1 => ("Fine Porta Up", "Y = speed (0-F)"),
+                2 => ("Fine Porta Down", "Y = speed (0-F)"),
+                3 => ("Glissando", "0 = off, 1 = on"),
+                4 => ("Vibrato Waveform", "Y: 0=sine 1=ramp 2=square 3=random"),
+                5 => ("Set Fine Tune", "Y = -8..+7"),
+                6 => ("Pattern Loop", "Y = 0 set marker, 1-F loop count"),
+                7 => ("Tremolo Waveform", "Y: 0=sine 1=ramp 2=square 3=random"),
+                8 => ("Set Panning (fine)", "Y = 0-F"),
+                9 => ("Retrigger", "Y = ticks between retriggers"),
+                0xA => ("Fine Vol Up", "Y = amount"),
+                0xB => ("Fine Vol Down", "Y = amount"),
+                0xC => ("Note Cut", "Y = ticks before cut"),
+                0xD => ("Note Delay", "Y = ticks before trigger"),
+                0xE => ("Pattern Delay", "Y = extra ticks/row"),
+                _ => ("Reserved", ""),
+            };
+            let detail = if sub == 4 || sub == 7 {
+                let w = match val { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" };
+                format!("E{}{}: {} (current = {})", sub, val, sub_name, w)
+            } else if sub == 3 {
+                format!("E{}{}: {} (current = {})", sub, val, sub_name, if val > 0 { "On" } else { "Off" })
+            } else if sub == 6 {
+                format!("E{}{}: {} (current = {})", sub, val, sub_name,
+                        if val == 0 { "Set marker".to_string() } else { format!("Loop {}x", val) })
+            } else if sub == 0 {
+                format!("E{}{}: {} (current = {})", sub, val, sub_name, if val == 0 { "Off" } else { "On" })
+            } else {
+                format!("E{}{}: {} (current val = {})", sub, val, sub_name, val)
+            };
+            return format!("E  Extended Effects\n{}\n{}", sub_range, detail);
         }
-        Effect::SetSpeed { speed } => format!("Speed: {} ticks/row", speed),
-        Effect::SetTempo { bpm } => format!("Tempo: {} BPM", bpm),
-        Effect::SetGlobalVolume { volume } => format!("Global Volume: {}", volume),
-        Effect::GlobalVolumeSlide { .. } => "Global Volume Slide".to_string(),
-        Effect::SetEnvelopePosition { tick } => format!("Envelope Position: tick {}", tick),
-        Effect::Panbrello { speed, depth } => format!("Panbrello: speed={} depth={}", speed, depth),
-        Effect::PatternDelay { ticks } => format!("Pattern Delay: {} ticks", ticks),
-        Effect::SetPanPosition { pan } => format!("Pan Position: {}", pan),
-        Effect::GlissandoControl { on } => format!("Glissando: {}", if *on { "On" } else { "Off" }),
-        Effect::VibratoWaveform { waveform } => format!("Vibrato Waveform: {}", match waveform & 3 { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
-        Effect::SetFineTune { tune } => format!("Fine Tune: {}", tune),
-        Effect::PatternLoop { count } => format!("Pattern Loop: {}", if *count == 0 { "Set marker".to_string() } else { format!("Loop {}x", count) }),
-        Effect::TremoloWaveform { waveform } => format!("Tremolo Waveform: {}", match waveform & 3 { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
-        Effect::SetPanning16 { pan } => format!("Fine Panning: {}", pan),
-        Effect::Retrigger { interval } => format!("Retrigger: every {} ticks", interval),
-        Effect::NoteCutAfter { ticks } => format!("Note Cut after {} ticks", ticks),
-        Effect::NoteDelay { ticks } => format!("Note Delay: {} ticks", ticks),
-        Effect::ExtraFinePortamentoUp { speed } => format!("Extra Fine Porta Up: {}", speed),
-        Effect::ExtraFinePortamentoDown { speed } => format!("Extra Fine Porta Down: {}", speed),
-        Effect::FinePortamentoUp { speed } => format!("Fine Porta Up: {}", speed),
-        Effect::FinePortamentoDown { speed } => format!("Fine Porta Down: {}", speed),
-        Effect::FineVolumeSlideUp { amount } => format!("Fine Vol Up: {}", amount),
-        Effect::FineVolumeSlideDown { amount } => format!("Fine Vol Down: {}", amount),
-        Effect::Tremor { ontime, offtime } => format!("Tremor: on={} off={}", ontime, offtime),
-        Effect::SetFilterCutoff { cutoff } => format!("Filter Cutoff: {}", cutoff),
-        Effect::SetFilterResonance { resonance } => format!("Filter Resonance: {}", resonance),
-        Effect::SetFilterType { filter_type } => format!("Filter Type: {}", match filter_type { 0 => "LP", 1 => "HP", 2 => "BP", _ => "Notch" }),
-        Effect::FilterCutoffSlide { amount } => format!("Filter Cutoff Slide: {}", amount),
-        Effect::SetSendLevel { send_index, level } => format!("Send Level: bus {} at {}%", send_index, (*level as u16) * 100 / 15),
-        Effect::SetSendBusParam { bus, param, value } => format!("Send Param: bus {} param {} value {}", bus, param, value),
-        _ => String::new(),
-    }
+        Effect::SetSpeed { speed } => (
+            "F", "Set Speed", "XX < 20 = ticks/row, XX >= 20 = BPM",
+            format!("current: {} ticks/row", speed),
+        ),
+        Effect::SetTempo { bpm } => (
+            "F", "Set Tempo", "XX >= 20 = BPM",
+            format!("current: {} BPM", bpm),
+        ),
+        Effect::SetGlobalVolume { volume } => (
+            "G", "Global Volume", "XX = 00-80",
+            format!("current: {}", volume),
+        ),
+        Effect::GlobalVolumeSlide { up, down } => (
+            "H", "Global Vol Slide", "X = up per tick, Y = down per tick",
+            format!("up/down = {}/{}", up.max(&0), (down.unsigned_abs() as i8).min(15)),
+        ),
+        Effect::Tremor { ontime, offtime } => (
+            "I", "Tremor", "X = on-ticks, Y = off-ticks",
+            format!("current: on={} off={}", ontime, offtime),
+        ),
+        Effect::SetEnvelopePosition { tick } => (
+            "L", "Envelope Position", "XX = envelope tick",
+            format!("current: tick {}", tick),
+        ),
+        Effect::Panbrello { speed, depth } => (
+            "Y", "Panbrello", "X = speed (0-F), Y = depth (0-F)",
+            format!("current: speed={} depth={}", speed, depth),
+        ),
+        Effect::SetPanning16 { pan } => (
+            "P", "Panning Slide (16x)", "X = slide (signed), Y = unused",
+            format!("current: pan shift = {:+}", pan),
+        ),
+        Effect::GlissandoControl { on } => (
+            "E3", "Glissando", "30 = off, 3F = on",
+            format!("current: {}", if *on { "On" } else { "Off" }),
+        ),
+        Effect::VibratoWaveform { waveform } => (
+            "E4", "Vibrato Waveform", "40=sine 41=ramp 42=square 43=random",
+            format!("current: {}", match waveform & 3 { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
+        ),
+        Effect::SetFineTune { tune } => (
+            "E5", "Set Fine Tune", "Y = fine tune (signed nibble)",
+            format!("current: {:+}", tune),
+        ),
+        Effect::PatternLoop { count } => (
+            "E6", "Pattern Loop", "60 = set marker, 61-6F = loop count",
+            if *count == 0 { "current: Set marker".to_string() } else { format!("current: Loop {}x", count) },
+        ),
+        Effect::TremoloWaveform { waveform } => (
+            "E7", "Tremolo Waveform", "70=sine 71=ramp 72=square 73=random",
+            format!("current: {}", match waveform & 3 { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
+        ),
+        Effect::Retrigger { interval } => (
+            "E9", "Retrigger", "Y = ticks between retriggers",
+            format!("current: every {} ticks", interval),
+        ),
+        Effect::NoteCutAfter { ticks } => (
+            "EC", "Note Cut", "Y = ticks before cut (1-F)",
+            format!("current: cut after {} ticks", ticks),
+        ),
+        Effect::NoteDelay { ticks } => (
+            "ED", "Note Delay", "Y = ticks before triggering note",
+            format!("current: delay {} ticks", ticks),
+        ),
+        Effect::PatternDelay { ticks } => (
+            "EE", "Pattern Delay", "Y = extra ticks per row",
+            format!("current: +{} ticks", ticks),
+        ),
+        Effect::ExtraFinePortamentoUp { speed } => (
+            "F1", "Extra Fine Porta Up", "Y = speed (0-F)",
+            format!("current: {}", speed),
+        ),
+        Effect::ExtraFinePortamentoDown { speed } => (
+            "F2", "Extra Fine Porta Down", "Y = speed (0-F)",
+            format!("current: {}", speed),
+        ),
+        Effect::FinePortamentoUp { speed } => (
+            "E1", "Fine Porta Up", "Y = speed (0-F)",
+            format!("current: {}", speed),
+        ),
+        Effect::FinePortamentoDown { speed } => (
+            "E2", "Fine Porta Down", "Y = speed (0-F)",
+            format!("current: {}", speed),
+        ),
+        Effect::FineVolumeSlideUp { amount } => (
+            "EA", "Fine Vol Up", "Y = amount",
+            format!("current: +{}", amount),
+        ),
+        Effect::FineVolumeSlideDown { amount } => (
+            "EB", "Fine Vol Down", "Y = amount",
+            format!("current: -{}", amount),
+        ),
+        Effect::SetFilterCutoff { cutoff } => (
+            "Z", "Set Filter Cutoff", "XX = cutoff (0-FF)",
+            format!("current: 0x{:02X}", cutoff),
+        ),
+        Effect::SetFilterResonance { resonance } => (
+            "R", "Set Filter Resonance", "XX = resonance (0-FF)",
+            format!("current: 0x{:02X}", resonance),
+        ),
+        Effect::SetFilterType { filter_type } => (
+            "X", "Set Filter Type", "00=LP 01=HP 02=BP 03=Notch",
+            format!("current: {}", match filter_type { 0 => "LP", 1 => "HP", 2 => "BP", _ => "Notch" }),
+        ),
+        Effect::FilterCutoffSlide { amount } => (
+            "Y", "Filter Cutoff Slide", "XX = signed slide amount",
+            format!("current: {:+}", amount),
+        ),
+        Effect::SetSendLevel { send_index, level } => (
+            "S", "Set Send Level", "X = bus (0-3), Y = level (0-F)",
+            format!("current: bus {} at {}%", send_index, (*level as u16) * 100 / 15),
+        ),
+        Effect::SetSendBusParam { bus, param, value: _ } => (
+            "P", "Set Send Bus Param",
+            "X = bus (0-3), Y = param slot (0-3); value = volume col (00-FF)",
+            format!("current: bus {} param {}", bus, param),
+        ),
+        _ => return String::new(),
+    };
+    format!("{}  {}\n{}\n{}", hex, name, range, detail)
 }
 
 

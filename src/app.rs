@@ -130,6 +130,69 @@ impl Default for HtrkApp {
 }
 
 impl HtrkApp {
+    /// Test-only constructor that builds an HtrkApp without running the
+    /// default's MCP/audio side effects. Uses an in-memory atomic
+    /// playback state and skips the user-config restoration.
+    #[cfg(test)]
+    pub fn from_config_for_tests(config: AppConfig) -> Self {
+        let playback_state = std::sync::Arc::new(crate::audio::AtomicPlaybackState::default());
+        let devmcp = std::sync::Arc::new(DevMcp::new());
+        HtrkApp {
+            core: crate::core::HtrkCore::new(playback_state),
+            stream: None,
+            output_device_names: Vec::new(),
+            selected_device_name: None,
+            current_sample_rate: 0,
+            current_sample_format: String::new(),
+            pending_device_switch: None,
+            pending_reinit: false,
+            file_browser: crate::ui::file_browser::FileBrowser::default(),
+            browser_purpose: BrowserPurpose::General,
+            current_view: AppView::Pattern,
+            pattern_view: crate::ui::pattern_view::PatternView::default(),
+            current_octave: 4,
+            edit_mode: true,
+            follow_playback: false,
+            cursor_skip: 1,
+            alt_l_count: 0,
+            alt_l_last: None,
+            multichannel_enabled: false,
+            multichannel_channels: vec![false; crate::sequencer::module::DEFAULT_CHANNELS],
+            theme: TrackerTheme::from_preset(ThemePreset::DarkModern),
+            theme_preset: ThemePreset::DarkModern,
+            show_shortcuts: false,
+            show_about: false,
+            settings_state: crate::ui::settings_window::SettingsState::from_config(&config),
+            wav_export_state: crate::ui::wav_export_window::WavExportState::new(44100),
+            sample_export_dialog: None,
+            audio_init_failed: false,
+            sample_editor: crate::ui::sample_editor_panel::SampleEditor::default(),
+            col_vis: config.get_col_vis(),
+            config: config.clone(),
+            playback_view: crate::ui::playback_view_panel::PlaybackView::default(),
+            sendfx_panel: crate::ui::sendfx_panel::SendFxPanel::default(),
+            send_bus_handles: [None, None, None, None],
+            plugin_library: crate::audio::plugins::PluginLibrary::new(),
+            plugin_scan_done: false,
+            plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
+            automation_editor: crate::ui::automation_editor_panel::AutomationEditor::default(),
+            instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor {
+                list_width: config.instrument_list_width.unwrap_or(150.0),
+                envelope_height: config.instrument_envelope_height.unwrap_or(180.0),
+                ..crate::ui::instrument_editor_panel::InstrumentEditor::default()
+            },
+            devmcp,
+            pending_view_switch: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            show_exit_confirm: false,
+            exit_confirmed: false,
+            close_after_save: false,
+            show_phrase_generator: false,
+            slice_dialog_open: false,
+            slice_config: crate::actions::slice_to_instrument::SliceConfig::default(),
+            mcp_server: None,
+        }
+    }
+
     fn from_config(config: AppConfig) -> Self {
         let inst_list_w = config.instrument_list_width.unwrap_or(150.0);
         let inst_env_h = config.instrument_envelope_height.unwrap_or(180.0);
@@ -187,7 +250,7 @@ impl HtrkApp {
                 ..crate::ui::sample_editor_panel::SampleEditor::default()
             },
             col_vis: config.get_col_vis(),
-            config,
+            config: config.clone(),
             playback_view: crate::ui::playback_view_panel::PlaybackView::default(),
             sendfx_panel: crate::ui::sendfx_panel::SendFxPanel::default(),
             send_bus_handles: [None, None, None, None],
@@ -1768,6 +1831,7 @@ impl eframe::App for HtrkApp {
                     self.core.selected_sample,
                     &self.core.playback_state,
                     self.edit_mode,
+                    self.core.cursor.sub_column,
                     &hint,
                     &self.theme,
                 );
