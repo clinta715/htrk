@@ -6,7 +6,7 @@ use eframe::egui;
 
 use crate::audio::commands::AudioCommand;
 use crate::audio::plugins::clap_plugin::ClapPluginHandle;
-use crate::audio::plugins::{discovery, HostedPluginHandle, PluginDescriptor};
+use crate::audio::plugins::{HostedPluginHandle, PluginDescriptor};
 use crate::audio::CommandSender;
 use crate::ui::style::FONT_BODY;
 use crate::ui::theme::TrackerTheme;
@@ -23,8 +23,24 @@ pub enum PluginSelectResult {
     Cancelled,
 }
 
-/// Draw the plugin browser dialog. Returns a result when the user closes
-/// the dialog (either by selecting a plugin or cancelling).
+/// User actions emitted from the plugin browser dialog (e.g. Rescan button).
+/// Returned alongside the selection result.
+#[derive(Default)]
+pub struct PluginBrowserAction {
+    /// True if the user clicked "Rescan". Caller should run a rescan and
+    /// update the discovered list (and the PluginLibrary).
+    pub rescan_requested: bool,
+}
+
+impl PluginBrowserAction {
+    pub fn none() -> Self {
+        Self { rescan_requested: false }
+    }
+}
+
+/// Draw the plugin browser dialog. Returns `(result, action)` — `result` is
+/// the selection state (cancelled or selected), and `action` carries any
+/// side-channel requests (e.g. rescan) for the caller to process.
 pub fn draw_plugin_browser(
     ctx: &egui::Context,
     open: &mut bool,
@@ -33,8 +49,9 @@ pub fn draw_plugin_browser(
     _theme: &TrackerTheme,
     discovered: &[PluginDescriptor],
     status: &PluginBrowserStatus,
-) -> PluginSelectResult {
+) -> (PluginSelectResult, PluginBrowserAction) {
     let mut result = PluginSelectResult::Cancelled;
+    let mut action = PluginBrowserAction::none();
     let mut local_open = *open;
 
     let title = format!("CLAP Plugin Browser — Send Bus {}", bus_label);
@@ -118,8 +135,10 @@ pub fn draw_plugin_browser(
             ui.separator();
             ui.horizontal(|ui| {
                 if ui.button("Rescan").clicked() {
-                    // Trigger a filesystem rescan (blocking but quick)
-                    let _ = discovery::scan_default_paths();
+                    // Request a rescan from the caller. The caller will
+                    // call `HtrkApp::rescan_plugins()` and pass the new
+                    // discovered list on the next frame.
+                    action.rescan_requested = true;
                 }
                 if ui.button("Close").clicked() {
                     *open = false;
@@ -137,7 +156,7 @@ pub fn draw_plugin_browser(
         *open = false;
     }
 
-    result
+    (result, action)
 }
 
 /// Status of the plugin browser, displayed in the dialog.

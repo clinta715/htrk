@@ -111,42 +111,32 @@ pub fn cmd_plugin_scan(params: serde_json::Value, ctx: &ToolContext) -> CmdResul
     // Scan files (no actual load — just filesystem walk)
     let found_files = crate::audio::plugins::discovery::scan_paths(&scan_roots);
 
-    // Update the library cache: clear old descriptors and add new ones
+    // Update the library cache: clear old descriptors and add new ones.
+    // Use the real `extract_descriptor_for_browser` to get actual plugin
+    // metadata (name, vendor, version, plugin_id, audio I/O counts,
+    // has_editor, supports_state). This is the same path the UI uses,
+    // so MCP and UI see consistent data.
     let mut library = ctx.plugin_library.write().map_err(|e| format!("Library lock poisoned: {e}"))?;
     library.clear_cache();
-    // We only store descriptors here — actual plugin load happens on the
-    // main thread when the user assigns a plugin to a bus. For now, we
-    // just record the file paths as a "discovery complete" event.
     let mut found_count = 0;
+    let mut error_count = 0;
     for path in &found_files.clap_files {
-        // Quick descriptor extraction (no full plugin load)
-        // For Phase 2, we just record the path. Full descriptor extraction
-        // requires loading the plugin via the host, which is expensive.
-        // MCP clients should use plugin.info with a specific path to get
-        // the full descriptor (which triggers a full load).
-        if let Some(stem) = path.file_name().and_then(|s| s.to_str()) {
-            let descriptor = crate::audio::plugins::PluginDescriptor {
-                format: PluginFormat::Clap,
-                path: path.clone(),
-                plugin_id: stem.to_string(),
-                name: stem.replace(".clap", ""),
-                vendor: "Unknown (run plugin.info to load)".to_string(),
-                version: String::new(),
-                description: "Discovery stub — run plugin.info to get full metadata".to_string(),
-                plugin_type: crate::audio::plugins::PluginType::Both,
-                audio_inputs: 2,
-                audio_outputs: 2,
-                has_editor: false,
-                supports_state: true,
-            };
-            library.add_descriptor(descriptor);
-            found_count += 1;
+        match crate::audio::plugins::clap_plugin::extract_descriptor_for_browser(path) {
+            Ok(descriptor) => {
+                library.add_descriptor(descriptor);
+                found_count += 1;
+            }
+            Err(e) => {
+                eprintln!("[mcp plugin.scan] Failed to probe {}: {}", path.display(), e);
+                error_count += 1;
+            }
         }
     }
 
     Ok(json!({
         "scanned_roots": scan_roots.len(),
         "files_found": found_count,
+        "probe_errors": error_count,
         "errors": found_files.errors.len(),
     }))
 }

@@ -8,6 +8,7 @@ use crate::app_config::AppConfig;
 use crate::audio::commands::AudioCommand;
 use crate::audio::engine::create_engine_and_sender;
 use crate::audio::playback_state::AtomicPlaybackState;
+use crate::audio::plugins::PluginLibrary;
 
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::{DEFAULT_CHANNELS, MAX_CHANNELS};
@@ -87,6 +88,16 @@ pub struct HtrkApp {
     /// stay on the main thread alongside HtrkApp.
     /// Phase 5 plugin hosting.
     pub(crate) send_bus_handles: [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
+    /// Direct in-memory plugin library, independent of the MCP server.
+    /// Populated by `rescan_plugins()` at startup and on user request. The
+    /// Send FX plugin browser reads from this so plugins are visible
+    /// without enabling MCP. MCP's `plugin_library` mirrors this for the
+    /// read-only MCP tools.
+    pub(crate) plugin_library: PluginLibrary,
+    /// True after the initial plugin scan has run. The scan happens on
+    /// the first `update()` call so the constructor doesn't need to
+    /// mutate `self`.
+    pub(crate) plugin_scan_done: bool,
     /// Status of the plugin browser dialog (loading / error / loaded).
     /// Phase 2 plugin hosting.
     pub(crate) plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus,
@@ -180,6 +191,8 @@ impl HtrkApp {
             playback_view: crate::ui::playback_view_panel::PlaybackView::default(),
             sendfx_panel: crate::ui::sendfx_panel::SendFxPanel::default(),
             send_bus_handles: [None, None, None, None],
+            plugin_library: PluginLibrary::new(),
+            plugin_scan_done: false,
             plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
             automation_editor: crate::ui::automation_editor_panel::AutomationEditor::default(),
             instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor {
@@ -275,20 +288,99 @@ impl HtrkApp {
             } else {
                 None
             },
+            // Initial plugin scan is triggered from `update()` so the
+            // struct constructor doesn't need to mutate itself.
         }
     }
 }
 
 impl HtrkApp {
-    /// Returns the list of discovered CLAP plugins from the MCP server's
-    /// plugin library. Empty if MCP is disabled or no scan has been done.
+    /// Returns the list of discovered CLAP plugins. Reads from the direct
+    /// `plugin_library` field (populated at startup + on rescan). Always
+    /// works, regardless of whether MCP is enabled.
     pub fn discovered_plugins(&self) -> Vec<crate::audio::plugins::PluginDescriptor> {
-        if let Some(ref mcp) = self.mcp_server {
-            if let Ok(lib) = mcp.plugin_library.read() {
-                return lib.list_descriptors().into_iter().cloned().collect();
+        self.plugin_library.list_descriptors()
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Trigger a rescan of all configured plugin scan paths plus the system
+    /// default paths. For each `.clap` file found, extract the descriptor
+    /// (real metadata, not stubs) and store it in `self.plugin_library`.
+    ///
+    /// Returns a summary string suitable for displaying in the UI.
+    /// Also pushes the new descriptors into the MCP library (if MCP is
+    /// enabled) so MCP tools see the same data.
+    pub fn rescan_plugins(&mut self) -> String {
+        use crate::audio::plugins::{default_search_paths, discovery};
+        use std::path::PathBuf;
+
+        let mut scan_roots: Vec<PathBuf> = default_search_paths();
+        for p in &self.config.plugin_scan_paths {
+            scan_roots.push(PathBuf::from(p));
+        }
+
+        // De-dupe roots
+        scan_roots.sort();
+        scan_roots.dedup();
+
+        eprintln!("[plugins] Scanning {} root(s):", scan_roots.len());
+        for r in &scan_roots {
+            eprintln!("  - {}", r.display());
+        }
+
+        let scan = discovery::scan_paths(&scan_roots);
+        eprintln!("[plugins] Found {} .clap file(s) ({} errors)",
+            scan.clap_files.len(), scan.errors.len());
+
+        // Update the direct plugin library with REAL descriptors
+        self.plugin_library.set_scan_roots(scan_roots.clone());
+        self.plugin_library.clear_cache();
+
+        let mut found_count = 0;
+        let mut error_count = 0;
+        let mut sample_names: Vec<String> = Vec::new();
+        for path in &scan.clap_files {
+            match crate::audio::plugins::clap_plugin::extract_descriptor_for_browser(path) {
+                Ok(d) => {
+                    if sample_names.len() < 5 {
+                        sample_names.push(format!("{} ({})", d.name, d.vendor));
+                    }
+                    self.plugin_library.add_descriptor(d);
+                    found_count += 1;
+                }
+                Err(e) => {
+                    eprintln!("[plugins] Failed to probe {}: {}", path.display(), e);
+                    error_count += 1;
+                }
             }
         }
-        Vec::new()
+
+        // Mirror to MCP library if MCP is enabled, so MCP tools see the
+        // same data. The MCP library is read-only from MCP's perspective.
+        if let Some(ref mcp) = self.mcp_server {
+            if let Ok(mut mcp_lib) = mcp.plugin_library.write() {
+                mcp_lib.set_scan_roots(scan_roots.clone());
+                mcp_lib.clear_cache();
+                for path in &scan.clap_files {
+                    if let Ok(d) = crate::audio::plugins::clap_plugin::extract_descriptor_for_browser(path) {
+                        mcp_lib.add_descriptor(d);
+                    }
+                }
+            }
+        }
+
+        eprintln!(
+            "[plugins] Done: {} descriptor(s) loaded ({} probe errors). Sample: {}",
+            found_count, error_count,
+            if sample_names.is_empty() { "(none)".to_string() } else { sample_names.join(", ") }
+        );
+
+        format!(
+            "Scan complete: {} plugin(s) found, {} error(s), {} .clap file(s) on disk",
+            found_count, error_count, scan.clap_files.len()
+        )
     }
 
     pub fn refresh_output_devices(&mut self) {
@@ -1469,6 +1561,15 @@ impl eframe::App for HtrkApp {
         self.config.window_width = Some(vp_rect.width());
         self.config.window_height = Some(vp_rect.height());
 
+        // Initial plugin scan. Done on the first frame so the struct
+        // constructor doesn't need to mutate `self`. The scan blocks the
+        // main thread for ~1s on a typical install (50-100 plugins);
+        // for very large collections we can make this incremental later.
+        if !self.plugin_scan_done {
+            let _ = self.rescan_plugins();
+            self.plugin_scan_done = true;
+        }
+
         let (playback_row, playback_order, playback_pattern, playback_tick, playback_speed) =
             self.draw_preamble(&ctx);
 
@@ -1970,7 +2071,7 @@ impl eframe::App for HtrkApp {
                         let discovered = self.discovered_plugins();
                         let bus_letter = char::from(b'A' + si as u8);
                         let mut open = true;
-                        let result = crate::ui::plugin_browser::draw_plugin_browser(
+                        let (result, action) = crate::ui::plugin_browser::draw_plugin_browser(
                             &ctx,
                             &mut open,
                             si,
@@ -1979,6 +2080,11 @@ impl eframe::App for HtrkApp {
                             &discovered,
                             &self.plugin_browser_status,
                         );
+                        if action.rescan_requested {
+                            let summary = self.rescan_plugins();
+                            self.plugin_browser_status =
+                                crate::ui::plugin_browser::PluginBrowserStatus::Error(summary);
+                        }
                         match result {
                             crate::ui::plugin_browser::PluginSelectResult::Selected {
                                 descriptor,
