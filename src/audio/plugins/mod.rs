@@ -212,6 +212,14 @@ pub trait HostedPluginHandle {
     /// Get all parameter info. Called on the main thread.
     fn parameter_info(&self) -> Vec<ParamInfo>;
 
+    /// Read a parameter's current value. Returns 0.0 if the plugin
+    /// doesn't expose the param. Main thread only.
+    fn get_parameter(&self, param_id: u32) -> f32;
+
+    /// Set a parameter value (main thread only). The value is queued
+    /// for the audio thread; the plugin sees it on the next process().
+    fn set_parameter(&self, param_id: u32, value: f32);
+
     /// Returns self as Any for downcasting to a concrete type.
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;

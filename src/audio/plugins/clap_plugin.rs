@@ -417,66 +417,6 @@ impl HostedPluginHandle for ClapPluginHandle {
         Ok(())
     }
 
-    fn parameter_info(&self) -> Vec<ParamInfo> {
-        // Returns the cached parameter info. The cache is populated on
-        // the first call. Subsequent calls just return the cached copy.
-        // The param query requires a main-thread `plugin_handle()` call
-        // (FFI) which is relatively expensive, so caching matters.
-        if !self.cached_param_info.is_empty() {
-            return self.cached_param_info.clone();
-        }
-        let Some(instance) = self.instance.as_ref() else {
-            return Vec::new();
-        };
-        // `plugin_handle()` requires &mut self. Use a raw pointer trick
-        // (PluginInstance is !Send; this is main-thread-only).
-        let raw_ptr = instance as *const PluginInstance<HtrkHost>;
-        let Some(mut_instance) = (unsafe { (raw_ptr as *mut PluginInstance<HtrkHost>).as_mut() }) else {
-            return Vec::new();
-        };
-        let mut handle = mut_instance.plugin_handle();
-        let Some(params) = handle.get_extension::<PluginParams>() else {
-            return Vec::new();
-        };
-
-        let count = params.count(&mut handle);
-        if count == 0 {
-            return Vec::new();
-        }
-
-        let mut buf = ParamInfoBuffer::new();
-        let mut info_out: Vec<ParamInfo> = Vec::with_capacity(count as usize);
-        let mut index_to_id: Vec<u32> = Vec::with_capacity(count as usize);
-        for i in 0..count {
-            if let Some(info) = params.get_info(&mut handle, i, &mut buf) {
-                let id = info.id.get();
-                let name = String::from_utf8_lossy(info.name).into_owned();
-                let is_automatable = info.flags.contains(clack_extensions::params::ParamInfoFlags::IS_AUTOMATABLE);
-                let is_modulatable = info.flags.contains(clack_extensions::params::ParamInfoFlags::IS_MODULATABLE);
-                index_to_id.push(id);
-                info_out.push(ParamInfo {
-                    id,
-                    name,
-                    min: info.min_value as f32,
-                    max: info.max_value as f32,
-                    default: info.default_value as f32,
-                    is_automatable,
-                    is_modulatable,
-                });
-            }
-        }
-        // Update the cache. We can only mutate self through a mutable
-        // borrow; use a small unsafe block to update the cached fields.
-        // SAFETY: the cache fields are only ever written here and read
-        // from the main thread (this trait method is main-thread only).
-        let this = self as *const Self as *mut Self;
-        unsafe {
-            (*this).cached_param_info = info_out.clone();
-            (*this).param_index_to_id = index_to_id;
-        }
-        info_out
-    }
-
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -681,6 +621,64 @@ impl HostedPluginHandle for ClapPluginHandle {
 
     fn last_editor_error(&self) -> Option<String> {
         self.last_editor_error.clone()
+    }
+
+    fn parameter_info(&self) -> Vec<ParamInfo> {
+        // Same logic as the inherent method but inlined here to avoid
+        // method-name collision. Returns the cached parameter info;
+        // populates the cache on first call.
+        if !self.cached_param_info.is_empty() {
+            return self.cached_param_info.clone();
+        }
+        let Some(instance) = self.instance.as_ref() else {
+            return Vec::new();
+        };
+        let raw_ptr = instance as *const PluginInstance<HtrkHost>;
+        let Some(mut_instance) = (unsafe { (raw_ptr as *mut PluginInstance<HtrkHost>).as_mut() }) else {
+            return Vec::new();
+        };
+        let mut handle = mut_instance.plugin_handle();
+        let Some(params) = handle.get_extension::<PluginParams>() else {
+            return Vec::new();
+        };
+        let count = params.count(&mut handle);
+        if count == 0 { return Vec::new(); }
+        let mut buf = ParamInfoBuffer::new();
+        let mut info_out: Vec<ParamInfo> = Vec::with_capacity(count as usize);
+        let mut index_to_id: Vec<u32> = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            if let Some(info) = params.get_info(&mut handle, i, &mut buf) {
+                let id = info.id.get();
+                let name = String::from_utf8_lossy(info.name).into_owned();
+                let is_automatable = info.flags.contains(clack_extensions::params::ParamInfoFlags::IS_AUTOMATABLE);
+                let is_modulatable = info.flags.contains(clack_extensions::params::ParamInfoFlags::IS_MODULATABLE);
+                index_to_id.push(id);
+                info_out.push(ParamInfo {
+                    id, name,
+                    min: info.min_value as f32,
+                    max: info.max_value as f32,
+                    default: info.default_value as f32,
+                    is_automatable, is_modulatable,
+                });
+            }
+        }
+        // Cache update via raw pointer (same-thread, single-owner).
+        let this = self as *const Self as *mut Self;
+        unsafe {
+            (*this).cached_param_info = info_out.clone();
+            (*this).param_index_to_id = index_to_id;
+        }
+        info_out
+    }
+
+    fn get_parameter(&self, param_id: u32) -> f32 {
+        // Delegate to the inherent method.
+        self.get_parameter(param_id)
+    }
+
+    fn set_parameter(&self, param_id: u32, value: f32) {
+        // Delegate to the inherent method.
+        self.set_parameter(param_id, value);
     }
 }
 

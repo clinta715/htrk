@@ -218,6 +218,58 @@ pub fn draw_sendfx_view(
                     }
                 });
 
+                // ── Plugin Parameters (one Slider per param) ──
+                // When a CLAP plugin is loaded on this bus, list its
+                // exposed parameters and let the user set their values
+                // with a Slider. The slider's `set_parameter` call is
+                // queued to the audio-thread param ring; the plugin
+                // sees the new value on the next process() call.
+                if let Some(ref handle) = plugin_handles[si] {
+                    let params = handle.parameter_info();
+                    if !params.is_empty() {
+                        ui.collapsing(format!("Parameters ({})", params.len()), |ui| {
+                            for (idx, p) in params.iter().enumerate() {
+                                let mut value = handle.get_parameter(p.id);
+                                let min = p.min;
+                                let max = p.max;
+                                let range = if (max - min).abs() > f32::EPSILON {
+                                    (min, max)
+                                } else {
+                                    (0.0, 1.0)
+                                };
+                                let label = if p.is_automatable {
+                                    format!("{}  (A)", p.name)
+                                } else {
+                                    p.name.clone()
+                                };
+                                if ui
+                                    .add(egui::Slider::new(&mut value, range.0..=range.1)
+                                        .text(&label))
+                                    .changed()
+                                {
+                                    if let Some(ref handle) = plugin_handles[si] {
+                                        handle.set_parameter(p.id, value);
+                                        // Also send a SetSendPluginParam command so
+                                        // the engine's send_buses[si].plugin is
+                                        // updated (it should be the same instance
+                                        // pointed to by the handle's param ring,
+                                        // but this keeps the audio-thread ring
+                                        // in sync if the processor is swapped).
+                                        if let Some(ref mut sender) = command_sender {
+                                            sender.send(AudioCommand::SetSendPluginParam {
+                                                send_index: si,
+                                                param_id: p.id,
+                                                value,
+                                            });
+                                        }
+                                    }
+                                    let _ = idx; // suppress unused
+                                }
+                            }
+                        });
+                    }
+                }
+
                 ui.separator();
 
                 let params = &mut send_bus_params[si];
