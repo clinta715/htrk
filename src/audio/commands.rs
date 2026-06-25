@@ -72,4 +72,12 @@ pub enum AudioCommand {
         param_id: u32,
         value: f32,
     },
+    /// Install or remove a hosted plugin processor for an instrument slot.
+    /// Pass `None` to clear (unload). The processor is already activated by
+    /// the main thread. instrument_idx is the 1-based instrument index
+    /// matching `last_instrument`.
+    InstallInstrumentPlugin {
+        instrument_idx: usize,
+        processor: Option<Box<dyn HostedPluginProcessor>>,
+    },
 }

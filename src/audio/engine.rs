@@ -46,6 +46,10 @@ pub struct AudioEngine {
     /// same process() call). Phase 2 plugin hosting.
     plugin_out_left: Vec<f32>,
     plugin_out_right: Vec<f32>,
+    /// Array of hosted plugin processors for instrument-plugin instruments,
+    /// indexed by 1-based instrument index (matching `last_instrument`).
+    /// Size 255 covers all valid u8 instrument indices.
+    instrument_plugin_processors: [Option<Box<dyn crate::audio::plugins::HostedPluginProcessor>>; 255],
 }
 
 struct SendBus {
@@ -99,6 +103,7 @@ pub fn create_engine_and_sender(
         send_fx_right: vec![0.0; BUFFER_SIZE],
         plugin_out_left: vec![0.0; BUFFER_SIZE],
         plugin_out_right: vec![0.0; BUFFER_SIZE],
+        instrument_plugin_processors: { const NONE: Option<Box<dyn crate::audio::plugins::HostedPluginProcessor>> = None; [NONE; 255] },
         send_buses: {
             let configs = [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None];
             let returns = [0.5, 0.0, 0.0, 0.0];
@@ -556,6 +561,11 @@ impl AudioEngine {
                         if let Some(ref mut plugin) = self.send_buses[send_index].plugin {
                             plugin.set_parameter(param_id, value);
                         }
+                    }
+                }
+                AudioCommand::InstallInstrumentPlugin { instrument_idx, processor } => {
+                    if instrument_idx > 0 && instrument_idx < 255 {
+                        self.instrument_plugin_processors[instrument_idx] = processor;
                     }
                 }
             }
