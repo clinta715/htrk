@@ -50,6 +50,9 @@ pub struct AudioEngine {
     /// indexed by 1-based instrument index (matching `last_instrument`).
     /// Size 255 covers all valid u8 instrument indices.
     instrument_plugin_processors: [Option<Box<dyn crate::audio::plugins::HostedPluginProcessor>>; 255],
+    /// Scratch buffers for instrument plugin output (mixed into main output).
+    inst_plugin_out_left: Vec<f32>,
+    inst_plugin_out_right: Vec<f32>,
 }
 
 struct SendBus {
@@ -104,6 +107,8 @@ pub fn create_engine_and_sender(
         plugin_out_left: vec![0.0; BUFFER_SIZE],
         plugin_out_right: vec![0.0; BUFFER_SIZE],
         instrument_plugin_processors: { const NONE: Option<Box<dyn crate::audio::plugins::HostedPluginProcessor>> = None; [NONE; 255] },
+        inst_plugin_out_left: vec![0.0; BUFFER_SIZE],
+        inst_plugin_out_right: vec![0.0; BUFFER_SIZE],
         send_buses: {
             let configs = [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None];
             let returns = [0.5, 0.0, 0.0, 0.0];
@@ -150,6 +155,8 @@ impl AudioEngine {
             self.send_fx_right.resize(frame_count, 0.0);
             self.plugin_out_left.resize(frame_count, 0.0);
             self.plugin_out_right.resize(frame_count, 0.0);
+            self.inst_plugin_out_left.resize(frame_count, 0.0);
+            self.inst_plugin_out_right.resize(frame_count, 0.0);
             let num_ch = self.sequencer.state.channels.len();
             let total_size = num_ch * frame_count * 2;
             self.ch_mix.resize(total_size, 0.0);
@@ -367,6 +374,45 @@ impl AudioEngine {
         }
 
         self.apply_pending_send_params();
+
+        // ── Instrument plugin note dispatch + processing ──
+        let note_events = self.sequencer.collect_plugin_note_events();
+        for evt in &note_events {
+            let idx = evt.instrument_idx as usize;
+            if idx < 255 {
+                if let Some(ref mut proc) = self.instrument_plugin_processors[idx] {
+                    if evt.note_on {
+                        proc.send_note_on(evt.midi_channel, evt.key, evt.velocity);
+                    } else {
+                        proc.send_note_off(evt.midi_channel, evt.key);
+                    }
+                }
+            }
+        }
+        // Process all activated instrument plugins into the main mix
+        for proc in self.instrument_plugin_processors.iter_mut().flatten() {
+            for i in 0..frame_count {
+                self.inst_plugin_out_left[i] = 0.0;
+                self.inst_plugin_out_right[i] = 0.0;
+            }
+            proc.process(
+                &self.send_fx_left[..frame_count],
+                &self.send_fx_right[..frame_count],
+                &mut self.inst_plugin_out_left[..frame_count],
+                &mut self.inst_plugin_out_right[..frame_count],
+                frame_count,
+                &crate::audio::plugins::TransportInfo {
+                    bpm: self.sequencer.state.clock.bpm as f64,
+                    sample_rate: self.output_sample_rate,
+                    sample_position: 0,
+                    is_playing: self.sequencer.state.playing,
+                },
+            );
+            for i in 0..frame_count {
+                self.mix_left[i] += self.inst_plugin_out_left[i];
+                self.mix_right[i] += self.inst_plugin_out_right[i];
+            }
+        }
 
         match self.limiter_mode {
             LimiterMode::HardClip => {
