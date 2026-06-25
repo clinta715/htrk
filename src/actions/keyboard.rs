@@ -930,7 +930,18 @@ fn preview_note(app: &mut HtrkApp, key: egui::Key, note_key: u8) {
         let inst_idx = app.core.selected_instrument;
         if inst_idx > 0 && inst_idx < module.instruments.len() {
             if module.instruments[inst_idx].plugin.is_some() {
-                let midi_ch = module.instruments[inst_idx].midi_base_channel % 16;
+                // Route the preview through the same MIDI channel that
+                // pattern playback would use for the currently selected
+                // channel: midi_base_channel + selected_channel (mod 16).
+                // This way, multi-timbral pieces where channel 2 plays
+                // instrument 01 at MIDI channel 2 also preview correctly
+                // when the user moves the channel cursor to 2 and presses
+                // a key. See cell.rs: process_cell_unified for the matching
+                // pattern-playback routing.
+                let midi_ch = module.instruments[inst_idx]
+                    .midi_base_channel
+                    .wrapping_add(app.core.cursor.channel as u8)
+                    % 16;
 
                 // If a different preview note is already held for this
                 // instrument, release it first so the new note takes over
