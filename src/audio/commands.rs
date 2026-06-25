@@ -72,6 +72,14 @@ pub enum AudioCommand {
         param_id: u32,
         value: f32,
     },
+    /// Set a parameter on a hosted instrument plugin processor.
+    /// Routed to the audio thread's `instrument_plugin_processors[idx]`
+    /// via its param ring.
+    SetInstrumentPluginParam {
+        instrument_idx: usize,
+        param_id: u32,
+        value: f32,
+    },
     /// Install or remove a hosted plugin processor for an instrument slot.
     /// Pass `None` to clear (unload). The processor is already activated by
     /// the main thread. instrument_idx is the 1-based instrument index

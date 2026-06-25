@@ -2008,14 +2008,38 @@ impl HtrkApp {
     }
 
     fn handle_automation_tab(&mut self, ui: &mut egui::Ui) {
+        use crate::audio::plugins::ParamInfo;
         self.automation_editor.state.selected_order = self.core.selected_order as u16;
         self.core.ensure_module_ownership();
         if let Some(ref mut module) = self.core.module {
             if let Some(arc_module) = Arc::get_mut(module) {
+                // Capture the param_info lookups as closures so the
+                // automation editor can enumerate plugin params without
+                // needing a borrow of HtrkApp. The closures borrow
+                // disjoint fields of `self` so the borrow checker
+                // allows them alongside the `Arc::get_mut` borrow.
+                let send_bus_handles_ref = &self.send_bus_handles;
+                let instrument_plugin_handles_ref = &self.instrument_plugin_handles;
+                let get_send_bus_params = |si: usize| -> Vec<ParamInfo> {
+                    send_bus_handles_ref
+                        .get(si)
+                        .and_then(|h| h.as_ref())
+                        .map(|h| h.parameter_info())
+                        .unwrap_or_default()
+                };
+                let get_instrument_params = |inst: u8| -> Vec<ParamInfo> {
+                    instrument_plugin_handles_ref
+                        .get(inst as usize)
+                        .and_then(|h| h.as_ref())
+                        .map(|h| h.parameter_info())
+                        .unwrap_or_default()
+                };
                 let auto_resp = self.automation_editor.ui(
                     ui,
                     arc_module,
                     &self.theme,
+                    get_send_bus_params,
+                    get_instrument_params,
                 );
                 if let Some((target, channel)) = auto_resp.track_added {
                     let id = arc_module.next_automation_id;

@@ -35,6 +35,10 @@ pub struct SequencerEngine {
     /// via `collect_plugin_param_automation`. Each entry is
     /// `(send_bus, param_id, value)`.
     pub pending_plugin_param_changes: Vec<(u8, u32, f32)>,
+    /// Pending instrument-plugin param automation values. Each entry
+    /// is `(instrument_idx, param_id, value)`. Drained by the audio
+    /// engine alongside `pending_plugin_param_changes`.
+    pub pending_instrument_plugin_param_changes: Vec<(u8, u32, f32)>,
     /// Pending note events for instrument plugin processors, populated by
     /// `process_cell_unified` and drained by the audio engine via
     /// `collect_plugin_note_events`.
@@ -66,6 +70,7 @@ impl SequencerEngine {
             amiga_led_filter: false,
             pending_send_fx_params: Vec::new(),
             pending_plugin_param_changes: Vec::new(),
+            pending_instrument_plugin_param_changes: Vec::new(),
             pending_plugin_note_events: Vec::new(),
             processor,
         }
@@ -271,6 +276,15 @@ impl SequencerEngine {
         std::mem::take(&mut self.pending_plugin_param_changes)
     }
 
+    /// Collect pending instrument-plugin param automation values.
+    /// Drained alongside `collect_plugin_param_automation` by the
+    /// audio engine.
+    pub fn collect_instrument_plugin_param_automation(
+        &mut self,
+    ) -> Vec<(u8, u32, f32)> {
+        std::mem::take(&mut self.pending_instrument_plugin_param_changes)
+    }
+
     /// Drain all pending plugin note events. Called by the audio engine
     /// on each tick after process_tick().
     pub fn collect_plugin_note_events(&mut self) -> Vec<PluginNoteEvent> {
@@ -299,6 +313,9 @@ impl SequencerEngine {
             }
             AutomationTarget::PluginParam { send_bus, param_id, .. } => {
                 self.pending_plugin_param_changes.push((*send_bus, *param_id, value));
+            }
+            AutomationTarget::InstrumentPluginParam { instrument, param_id, .. } => {
+                self.pending_instrument_plugin_param_changes.push((*instrument, *param_id, value));
             }
             _ => {}
         }

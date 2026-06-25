@@ -1576,3 +1576,33 @@ fn test_collect_plugin_note_events_drains() {
     let events2 = engine.collect_plugin_note_events();
     assert_eq!(events2.len(), 0, "second collect must be empty");
 }
+
+/// Verifies the new InstrumentPluginParam automation variant is queued
+/// in `pending_instrument_plugin_param_changes` and drained by
+/// `collect_instrument_plugin_param_automation`. Mirrors the
+/// existing test for send-bus PluginParam automation.
+#[test]
+fn test_instrument_plugin_param_automation_queues_and_drains() {
+    let mut engine = SequencerEngine::new(48000.0);
+    let module = Module::default();
+    engine.load_module(Arc::new(module));
+
+    // Push a synthetic entry and drain to confirm the
+    // queueing + drain behavior. The actual queueing in the
+    // sequencer's per-tick pass goes through
+    // `apply_automation_to_channel` which has a match arm for
+    // `InstrumentPluginParam`; this test covers the
+    // queue/drain contract that the audio engine depends on.
+    let inst_idx: u8 = 1;
+    let param_id: u32 = 42;
+    let value: f32 = 0.5;
+    engine.pending_instrument_plugin_param_changes.push((inst_idx, param_id, value));
+    let drained = engine.collect_instrument_plugin_param_automation();
+    assert_eq!(drained.len(), 1, "expected one queued automation value");
+    assert_eq!(drained[0].0, inst_idx);
+    assert_eq!(drained[0].1, param_id);
+    assert!((drained[0].2 - value).abs() < 0.001);
+
+    let drained2 = engine.collect_instrument_plugin_param_automation();
+    assert!(drained2.is_empty(), "second drain must be empty");
+}

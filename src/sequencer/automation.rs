@@ -31,6 +31,15 @@ pub enum AutomationTarget {
     /// resolve the param name and range).
     #[serde(skip)] // not persisted; re-resolved on load from send_bus_plugins
     PluginParam { send_bus: u8, host_index: u32, param_id: u32 },
+
+    /// Automation on a CLAP instrument plugin parameter. The
+    /// `instrument` is the 1-based instrument index. The `param_id`
+    /// is the plugin's stable `ClapId`; the `host_index` is the
+    /// host-side index in the instrument's param_info cache.
+    /// Re-resolved on load by walking `module.instruments[instrument].plugin`
+    /// and re-enumerating the plugin's params.
+    #[serde(skip)]
+    InstrumentPluginParam { instrument: u8, host_index: u32, param_id: u32 },
 }
 
 impl AutomationTarget {
@@ -78,6 +87,10 @@ impl AutomationTarget {
             // PluginParam labels are computed dynamically (from the
             // param_info) so this static label is just a placeholder.
             AutomationTarget::PluginParam { .. } => "Plugin",
+            AutomationTarget::InstrumentPluginParam { instrument, .. } => match instrument {
+                0 => "Inst",
+                _ => "Inst",
+            },
         }
     }
 

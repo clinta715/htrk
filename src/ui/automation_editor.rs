@@ -1,5 +1,6 @@
 use eframe::egui;
 
+use crate::audio::plugins::ParamInfo;
 use crate::sequencer::automation::{
     AutomationPoint, AutomationTarget, AutomationTrack, InterpolationMode,
 };
@@ -49,6 +50,8 @@ pub fn draw_automation_editor(
     module: &mut Module,
     state: &mut AutomationEditorState,
     theme: &TrackerTheme,
+    get_send_bus_params: impl Fn(usize) -> Vec<ParamInfo>,
+    get_instrument_params: impl Fn(u8) -> Vec<ParamInfo>,
 ) -> AutomationEditorResponse {
     let mut resp = AutomationEditorResponse {
         track_added: None,
@@ -167,6 +170,81 @@ pub fn draw_automation_editor(
                     if ui.small_button(target.label()).clicked() {
                         resp.track_added = Some((target, None));
                     }
+                }
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("Plugin Params:").size(super::style::FONT_CAPTION).color(theme.fg_dim));
+
+                // Send-bus plugin params.
+                for si in 0..4 {
+                    let params = get_send_bus_params(si);
+                    if params.is_empty() {
+                        continue;
+                    }
+                    let bus_letter = char::from(b'A' + si as u8);
+                    ui.collapsing(
+                        egui::RichText::new(format!("Send Bus {}", bus_letter))
+                            .size(super::style::FONT_CAPTION),
+                        |ui| {
+                            for (host_index, p) in params.iter().enumerate() {
+                                if !p.is_automatable {
+                                    continue;
+                                }
+                                let host_index = host_index as u32;
+                                let btn = egui::Button::new(
+                                    egui::RichText::new(&p.name)
+                                        .color(theme.fg_instrument),
+                                );
+                                if ui.add(btn).clicked() {
+                                    resp.track_added = Some((
+                                        AutomationTarget::PluginParam {
+                                            send_bus: si as u8,
+                                            host_index,
+                                            param_id: p.id,
+                                        },
+                                        None,
+                                    ));
+                                }
+                            }
+                        },
+                    );
+                }
+
+                // Instrument plugin params.
+                let inst_count = module.instruments.len();
+                for inst_idx in 0..inst_count {
+                    if inst_idx == 0 {
+                        continue;
+                    }
+                    let params = get_instrument_params(inst_idx as u8);
+                    if params.is_empty() {
+                        continue;
+                    }
+                    ui.collapsing(
+                        egui::RichText::new(format!("Instrument {:02X}", inst_idx))
+                            .size(super::style::FONT_CAPTION),
+                        |ui| {
+                            for (host_index, p) in params.iter().enumerate() {
+                                if !p.is_automatable {
+                                    continue;
+                                }
+                                let host_index = host_index as u32;
+                                let btn = egui::Button::new(
+                                    egui::RichText::new(&p.name)
+                                        .color(theme.fg_instrument),
+                                );
+                                if ui.add(btn).clicked() {
+                                    resp.track_added = Some((
+                                        AutomationTarget::InstrumentPluginParam {
+                                            instrument: inst_idx as u8,
+                                            host_index,
+                                            param_id: p.id,
+                                        },
+                                        None,
+                                    ));
+                                }
+                            }
+                        },
+                    );
                 }
             });
         });

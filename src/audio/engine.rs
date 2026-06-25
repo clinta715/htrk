@@ -223,6 +223,13 @@ impl AudioEngine {
                             }
                         }
                     }
+                    for (instrument, param_id, value) in self.sequencer.collect_instrument_plugin_param_automation() {
+                        if (instrument as usize) < self.instrument_plugin_processors.len() {
+                            if let Some(ref mut plugin) = self.instrument_plugin_processors[instrument as usize] {
+                                plugin.set_parameter(param_id, value);
+                            }
+                        }
+                    }
 
                     if !self.sequencer.state.playing {
                         break;
@@ -605,6 +612,13 @@ impl AudioEngine {
                 AudioCommand::SetSendPluginParam { send_index, param_id, value } => {
                     if send_index < self.send_buses.len() {
                         if let Some(ref mut plugin) = self.send_buses[send_index].plugin {
+                            plugin.set_parameter(param_id, value);
+                        }
+                    }
+                }
+                AudioCommand::SetInstrumentPluginParam { instrument_idx, param_id, value } => {
+                    if instrument_idx < self.instrument_plugin_processors.len() {
+                        if let Some(ref mut plugin) = self.instrument_plugin_processors[instrument_idx] {
                             plugin.set_parameter(param_id, value);
                         }
                     }
