@@ -690,6 +690,76 @@ impl HtrkApp {
         }
     }
 
+    /// Reload any instrument plugin slots from the current module.
+    /// Called from `load_file` and `new_song` so that opening a saved
+    /// `.htk` with instrument plugin assignments brings the plugins
+    /// back to life automatically (with their saved state restored).
+    /// Slots whose path no longer matches a discovered plugin are
+    /// left in place but not loaded; the user can re-pick from the
+    /// browser to fix the path.
+    pub(crate) fn sync_instrument_plugin_state(&mut self) {
+        // Snapshot the list of (index, slot) pairs up front so we can
+        // mutate `self` inside the loop without aliasing.
+        let slots: Vec<(usize, String, String, Vec<u8>)> = match self.core.module.as_ref() {
+            Some(m) => m.instruments.iter().enumerate()
+                .filter_map(|(idx, inst)| inst.plugin.as_ref().map(|slot| {
+                    (idx, slot.format.clone(), slot.path.clone(), slot.state.clone())
+                }))
+                .filter(|(_, _, _, _)| true)  // any plugin slot, even with empty state
+                .collect(),
+            None => return,
+        };
+
+        if slots.is_empty() {
+            return;
+        }
+
+        // Index the discovered descriptors by (path, plugin_id) for fast lookup.
+        let discovered = self.discovered_plugins();
+        for (inst_idx, format, path, state) in slots {
+            // Find a matching descriptor.
+            let descriptor = discovered.iter().find(|d| {
+                d.format.as_str().eq_ignore_ascii_case(&format)
+                    && d.path.to_string_lossy() == path.as_str()
+            }).cloned();
+
+            let descriptor = match descriptor {
+                Some(d) => d,
+                None => {
+                    eprintln!(
+                        "[plugin] instrument {}: no discovered plugin at {} (id={})",
+                        inst_idx, path, format,
+                    );
+                    continue;
+                }
+            };
+
+            match self.load_and_install_instrument_plugin(
+                &descriptor,
+                inst_idx,
+                if state.is_empty() { None } else { Some(&state) },
+            ) {
+                Ok((handle, name)) => {
+                    if inst_idx < self.instrument_plugin_handles.len() {
+                        self.instrument_plugin_handles[inst_idx] = Some(handle);
+                    }
+                    // Reflect the loaded plugin in the instrument editor
+                    // UI so the user sees the name without having to
+                    // switch tabs.
+                    if self.core.selected_instrument == inst_idx {
+                        self.instrument_editor.plugin_name = name;
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[plugin] failed to auto-load instrument {} ({}): {}",
+                        inst_idx, descriptor.name, e,
+                    );
+                }
+            }
+        }
+    }
+
     fn apply_audio_settings_to_engine(&mut self) {
         let interp = match self.config.default_interpolation.as_str() {
             "Nearest" => crate::audio::commands::InterpolationType::Nearest,
@@ -730,6 +800,9 @@ impl HtrkApp {
         self.pattern_view.scroll_channel = 0;
         self.sync_channel_fields();
         self.sync_send_bus_state();
+        // A new song has no instruments with plugin slots, but call
+        // sync_instrument_plugin_state anyway for symmetry with load_file.
+        self.sync_instrument_plugin_state();
     }
 
 

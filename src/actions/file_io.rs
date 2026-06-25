@@ -34,6 +34,9 @@ pub(crate) fn load_file(app: &mut HtrkApp, path: &str) {
             app.pattern_view.scroll_channel = 0;
             app.core.sync_channel_fields();
             app.sync_send_bus_state();
+            // Restore any instrument plugin slots in the loaded module.
+            // The plugin files must be discoverable in the scan paths.
+            app.sync_instrument_plugin_state();
 
             add_recent_file(app, path);
         }
