@@ -4,6 +4,10 @@ use crate::sequencer::pattern::{Cell, Pattern};
 use crate::sequencer::Sample;
 use std::sync::Arc;
 
+// Re-export EnvelopeType from sequencer::instrument so existing
+// callers that do `use crate::edit::EnvelopeType` continue to work.
+pub use crate::sequencer::instrument::EnvelopeType;
+
 fn ensure_pattern_by_index(module: &mut crate::sequencer::Module, pat_idx: usize) {
     if pat_idx >= module.patterns.len() {
         module.patterns.resize_with(pat_idx + 1, || Pattern::new(64));
@@ -447,14 +451,6 @@ edit_cmd! {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum EnvelopeType {
-    Volume,
-    Panning,
-    Pitch,
-    Filter,
-}
-
 edit_cmd! {
     pub struct SetSampleDataCommand {
         sample_index: usize,
@@ -489,12 +485,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if envelope.is_none() {
             *envelope = Some(crate::sequencer::instrument::Envelope {
                 points: Vec::new(),
@@ -516,12 +507,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if let Some(env) = envelope {
             if let Some(pos) = env.points.iter().position(|p| p.tick == self.point.tick && p.value == self.point.value) {
                 env.points.remove(pos);
@@ -543,12 +529,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if let Some(env) = envelope {
             if self.point_index < env.points.len() {
                 env.points.remove(self.point_index);
@@ -560,12 +541,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if let Some(env) = envelope {
             env.points.insert(self.point_index, self.old_point);
         }
@@ -586,12 +562,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if let Some(env) = envelope {
             if self.point_index < env.points.len() {
                 env.points[self.point_index] = self.new_point;
@@ -603,12 +574,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if let Some(env) = envelope {
             if self.point_index < env.points.len() {
                 env.points[self.point_index] = self.old_point;
@@ -630,12 +596,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if let Some(env) = envelope {
             env.sustain_point = self.new_sustain;
         }
@@ -645,12 +606,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if let Some(env) = envelope {
             env.sustain_point = self.old_sustain;
         }
@@ -674,12 +630,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if let Some(env) = envelope {
             env.flags.loop_ = self.new_loop_enabled;
             env.loop_start = self.new_loop_start;
@@ -691,12 +642,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if let Some(env) = envelope {
             env.flags.loop_ = self.old_loop_enabled;
             env.loop_start = self.old_loop_start;
@@ -719,12 +665,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if envelope.is_none() {
             *envelope = Some(crate::sequencer::instrument::Envelope {
                 points: self.new_points.clone(),
@@ -744,12 +685,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if let Some(old_env) = &self.old_envelope {
             *envelope = Some(old_env.clone());
         } else if let Some(env) = envelope {
@@ -771,12 +707,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if let Some(env) = envelope {
             env.flags = self.new_flags;
         }
@@ -786,12 +717,7 @@ edit_cmd! {
         if self.instrument_index >= module.instruments.len() {
             return Err(EditError::NoSelection);
         }
-        let envelope = match self.envelope_type {
-            EnvelopeType::Volume => &mut module.instruments[self.instrument_index].volume_envelope,
-            EnvelopeType::Panning => &mut module.instruments[self.instrument_index].panning_envelope,
-            EnvelopeType::Pitch => &mut module.instruments[self.instrument_index].pitch_envelope,
-            EnvelopeType::Filter => &mut module.instruments[self.instrument_index].filter_envelope,
-        };
+        let envelope = module.instruments[self.instrument_index].envelope_mut(self.envelope_type);
         if let Some(env) = envelope {
             env.flags = self.old_flags;
         }

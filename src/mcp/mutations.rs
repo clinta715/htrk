@@ -979,24 +979,6 @@ fn parse_envelope_type(s: &str) -> Result<EnvelopeType, String> {
     }
 }
 
-fn get_envelope<'a>(inst: &'a Instrument, et: EnvelopeType) -> &'a Option<crate::sequencer::instrument::Envelope> {
-    match et {
-        EnvelopeType::Volume => &inst.volume_envelope,
-        EnvelopeType::Panning => &inst.panning_envelope,
-        EnvelopeType::Pitch => &inst.pitch_envelope,
-        EnvelopeType::Filter => &inst.filter_envelope,
-    }
-}
-
-fn get_envelope_mut<'a>(inst: &'a mut Instrument, et: EnvelopeType) -> &'a mut Option<crate::sequencer::instrument::Envelope> {
-    match et {
-        EnvelopeType::Volume => &mut inst.volume_envelope,
-        EnvelopeType::Panning => &mut inst.panning_envelope,
-        EnvelopeType::Pitch => &mut inst.pitch_envelope,
-        EnvelopeType::Filter => &mut inst.filter_envelope,
-    }
-}
-
 fn cmd_sample_library_import(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResult {
     let path = get_str!(params, "path").ok_or("Missing 'path'")?;
     let name_override = get_str!(params, "name");
@@ -1099,7 +1081,7 @@ fn cmd_envelope_set(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResul
                 return Err(format!("Instrument {inst_idx} out of range"));
             }
             let inst = &arc_module.instruments[inst_idx];
-            let old_env = get_envelope(inst, et).clone();
+            let old_env = inst.envelope(et).clone();
             let old_points = match &old_env {
                 Some(e) => e.points.clone(),
                 None => Vec::new(),
@@ -1116,7 +1098,7 @@ fn cmd_envelope_set(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResul
             // Apply sustain/loop settings if provided
             if let Some(inst2) = Arc::get_mut(module) {
                 if inst_idx < inst2.instruments.len() {
-                    let env = get_envelope_mut(&mut inst2.instruments[inst_idx], et);
+                    let env = inst2.instruments[inst_idx].envelope_mut(et);
                     if let Some(e) = env {
                         if let Some(sp) = params.get("sustain_point").and_then(|v| v.as_i64()) {
                             e.sustain_point = if sp >= 0 { Some(sp as usize) } else { None };
@@ -1185,7 +1167,7 @@ fn cmd_envelope_remove_point(core: &mut HtrkCore, params: &serde_json::Value) ->
             // Capture old_point for undo
             let old_point = {
                 let inst = &arc_module.instruments[inst_idx];
-                let env = get_envelope(inst, et);
+                let env = inst.envelope(et);
                 match env {
                     Some(e) => e.points.get(point_idx).copied(),
                     None => None,
@@ -1262,7 +1244,7 @@ fn cmd_envelope_generate(core: &mut HtrkCore, params: &serde_json::Value) -> Cmd
                 return Err(format!("Instrument {inst_idx} out of range"));
             }
             let inst = &arc_module.instruments[inst_idx];
-            let old_env = get_envelope(inst, et).clone();
+            let old_env = inst.envelope(et).clone();
             let old_points = match &old_env {
                 Some(e) => e.points.clone(),
                 None => Vec::new(),

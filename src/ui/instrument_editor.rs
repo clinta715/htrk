@@ -648,12 +648,7 @@ fn draw_envelope_section(
             });
         });
 
-    let envelope = match env_type {
-        EnvelopeType::Volume => &inst.volume_envelope,
-        EnvelopeType::Panning => &inst.panning_envelope,
-        EnvelopeType::Pitch => &inst.pitch_envelope,
-        EnvelopeType::Filter => &inst.filter_envelope,
-    };
+    let envelope = inst.envelope(*env_type);
 
     let env_hovered_id = ui.make_persistent_id("env_hovered");
 

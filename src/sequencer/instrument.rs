@@ -253,6 +253,40 @@ impl Default for Instrument {
 
 fn default_midi_channel() -> u8 { 0 }
 
+/// Identifies which of an instrument's four envelopes (volume, panning,
+/// pitch, filter) an operation targets. Lives here (next to `Envelope`
+/// and `Instrument`) rather than in `edit::commands` so that
+/// `Instrument::envelope` / `envelope_mut` can take it directly.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EnvelopeType {
+    Volume,
+    Panning,
+    Pitch,
+    Filter,
+}
+
+impl Instrument {
+    /// Borrow one of the instrument's four envelopes by type.
+    pub fn envelope(&self, et: EnvelopeType) -> &Option<Envelope> {
+        match et {
+            EnvelopeType::Volume => &self.volume_envelope,
+            EnvelopeType::Panning => &self.panning_envelope,
+            EnvelopeType::Pitch => &self.pitch_envelope,
+            EnvelopeType::Filter => &self.filter_envelope,
+        }
+    }
+
+    /// Mutably borrow one of the instrument's four envelopes by type.
+    pub fn envelope_mut(&mut self, et: EnvelopeType) -> &mut Option<Envelope> {
+        match et {
+            EnvelopeType::Volume => &mut self.volume_envelope,
+            EnvelopeType::Panning => &mut self.panning_envelope,
+            EnvelopeType::Pitch => &mut self.pitch_envelope,
+            EnvelopeType::Filter => &mut self.filter_envelope,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

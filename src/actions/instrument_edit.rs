@@ -94,12 +94,7 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
             old_property: InstrumentProperty::FilterRandomCutoff(inst.filter_random_cutoff),
         }),
         InstrumentEditEvent::EnvelopePointMoved(env_type, idx, t, v) => {
-            let env = match env_type {
-                EnvelopeType::Volume => &inst.volume_envelope,
-                EnvelopeType::Panning => &inst.panning_envelope,
-                EnvelopeType::Pitch => &inst.pitch_envelope,
-                EnvelopeType::Filter => &inst.filter_envelope,
-            };
+            let env = inst.envelope(env_type);
             let old_pt = env.as_ref().map(|e| e.points[idx]).unwrap_or_default();
             Box::new(SetEnvelopePointCommand {
                 instrument_index: inst_idx,
@@ -115,12 +110,7 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
             point: EnvelopePoint { tick: t, value: v },
         }),
         InstrumentEditEvent::EnvelopePointRemoved(env_type, idx) => {
-            let env = match env_type {
-                EnvelopeType::Volume => &inst.volume_envelope,
-                EnvelopeType::Panning => &inst.panning_envelope,
-                EnvelopeType::Pitch => &inst.pitch_envelope,
-                EnvelopeType::Filter => &inst.filter_envelope,
-            };
+            let env = inst.envelope(env_type);
             let old_pt = env.as_ref().map(|e| e.points[idx]).unwrap_or_default();
             Box::new(RemoveEnvelopePointCommand {
                 instrument_index: inst_idx,
@@ -130,12 +120,7 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
             })
         }
         InstrumentEditEvent::EnvelopeSustainChanged(env_type, new_sustain) => {
-            let env = match env_type {
-                EnvelopeType::Volume => &inst.volume_envelope,
-                EnvelopeType::Panning => &inst.panning_envelope,
-                EnvelopeType::Pitch => &inst.pitch_envelope,
-                EnvelopeType::Filter => &inst.filter_envelope,
-            };
+            let env = inst.envelope(env_type);
             Box::new(SetEnvelopeSustainCommand {
                 instrument_index: inst_idx,
                 envelope_type: env_type,
@@ -144,12 +129,7 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
             })
         }
         InstrumentEditEvent::EnvelopeLoopChanged(env_type, new_enabled, new_start, new_end) => {
-            let env = match env_type {
-                EnvelopeType::Volume => &inst.volume_envelope,
-                EnvelopeType::Panning => &inst.panning_envelope,
-                EnvelopeType::Pitch => &inst.pitch_envelope,
-                EnvelopeType::Filter => &inst.filter_envelope,
-            };
+            let env = inst.envelope(env_type);
             Box::new(SetEnvelopeLoopCommand {
                 instrument_index: inst_idx,
                 envelope_type: env_type,
@@ -162,12 +142,7 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
             })
         }
         InstrumentEditEvent::EnvelopeFlagsChanged(env_type, new_flags) => {
-            let env = match env_type {
-                EnvelopeType::Volume => &inst.volume_envelope,
-                EnvelopeType::Panning => &inst.panning_envelope,
-                EnvelopeType::Pitch => &inst.pitch_envelope,
-                EnvelopeType::Filter => &inst.filter_envelope,
-            };
+            let env = inst.envelope(env_type);
             Box::new(SetEnvelopeFlagsCommand {
                 instrument_index: inst_idx,
                 envelope_type: env_type,
