@@ -2,6 +2,43 @@
 
 All notable changes to htrk will be documented in this file.
 
+## [0.19.0] - 2026-06-25
+
+### Added
+
+- **CLAP instrument plugins (Phase 3)**: Instruments can now be backed by a CLAP plugin instead of a sample chain. New `plugin` and `midi_base_channel` fields on `Instrument`. Plugin slot loaded from the Instrument tab's "CLAP Instrument" strip (moved to the top of the editor for discoverability). Sequencer routes note-on/off events to instrument plugin processors via `PluginNoteEvent` queue, same tick-based dispatch used by send-bus plugins. Keyboard preview sends note-on/off with held-key release detection. `send_note_on/off` on `HostedPluginProcessor` trait. Instrument plugin browser dialog for selecting and loading plugins.
+
+- **Instrument plugin state persistence + auto-reload**: `load_and_install` restores saved state; `unload` saves state before dropping; `save_all_instrument_plugin_states()` captures patches on project save; `sync_instrument_plugin_state()` re-loads plugins from slots on `.htk` load. Send-bus plugins got the same treatment (`save_all_send_bus_plugin_states`, `sync_send_bus_plugin_state`). Round-trip test confirms state save/load works on real CLAP plugins.
+
+- **Instrument plugin editor window**: Open/close CLAP instrument plugin editor (floating or embedded) from the Instrument tab. Embedded editors are rendered in a global dock at the bottom of any tab. X-close detection polls `IsWindowVisible` every frame regardless of active tab.
+
+- **Parameter automation for instrument plugins**: New `AutomationTarget::InstrumentPluginParam` variant. Sequencer queues values in `pending_instrument_plugin_param_changes`; audio engine routes to the matching processor's param ring. UI shows automatable params in the Automation tab's "+Add Track" sidebar for both send-bus and instrument plugins.
+
+- **Instrument parameter macros**: `ParameterMacro { source, param_id, range_min, range_max }` on `Instrument`. Currently supports `MacroSource::Volume` — the cell's volume column (0-64) is normalized to 0.0-1.0 and linearly remapped to the plugin param's range. Queued through the same channel as automation values.
+
+- **Sample Library browser dialog**: In-app GUI dialog (Sample tab → "Library" button) for the MCP-driven SampleLibrary. Browse/search library roots, view WAV metadata (duration, sample rate, bit depth, root note, category), import samples into the current slot. Keyboard focus gate updated to block pattern editing while the dialog is open.
+
+- **Round-trip CLAP state test**: `test_state_save_load_round_trip` in `clap_plugin.rs` — loads TAL-Reverb-4, sets a parameter, saves state, drops, reloads, loads state, asserts the value matches.
+
+### Changed
+
+- **Version**: 0.18.0 → 0.19.0
+- **Refactored `Instrument::envelope()`/`envelope_mut()`**: Deletes 150 lines of 4-arm `EnvelopeType` → field dispatch boilerplate (23 call sites replaced).
+- **Refactored plugin load/save helpers**: `load_and_activate_clap_plugin`, `save_all_plugin_states`, `write_plugin_state_to_slot`, `sync_plugin_slots_from_module` — unifies the parallel send-bus and instrument plumbing.
+- **Sync functions abstraction**: `sync_instrument_plugin_state` and `sync_send_bus_plugin_state` share the same iteration/lookup/load pattern via `sync_plugin_slots_from_module`.
+- **Inline function split**: `handle_playback_tab`, `handle_mixer_tab`, `handle_sample_tab` extracted from `HtrkApp::ui()` (UI Shrink Phase 2).
+- **Sequencer engine module split**: Monolithic `sequencer_engine.rs` split into directory (`mod.rs`, `cell.rs`, `period.rs`, `helpers.rs`, `advance.rs`).
+
+### Fixed
+
+- **HTTP MCP transport**: Non-blocking event loop used `BufReader::new(stream.try_clone())` — the BufReader buffered the entire HTTP request into its internal buffer during first-line detection, then dropped the buffer. Replaced with blocking accept + per-thread HTTP handler.
+- **Context menu effect commands**: `SetEffect`/`ClearEffect` silently did nothing when no selection was active. Now falls back to the cursor cell as a single-cell "selection".
+- **Context menu missing items**: Added Copy, Paste, Cut, Select All, Transpose +1/-1 to the pattern grid's right-click menu.
+- **Sub-column click detection**: `InstrumentOnes`/`VolumeOnes` unreachable (first threshold exceeded column width). Fixed to midpoint split (`inst_width * 0.5`).
+- **Keyboard preview channel routing**: Plugin instrument preview now uses `midi_base_channel + selected_channel` matching the pattern playback routing.
+- **Compiler warnings**: Deprecated `egui::Rounding` → `CornerRadius`, `Frame::none()` → `Frame::NONE`, unused imports across `sequencer_engine/` submodules.
+- **`save_state` trait signature**: Changed `&self` to `&mut self` to satisfy CLAP's `plugin_handle()` requirement (new Rust 1.95 `invalid_reference_casting` lint). Added missing `MainThreadHandler` impl for `HtrkMainThread`.
+
 ## [0.18.0] - 2026-06-24
 
 ### Added
