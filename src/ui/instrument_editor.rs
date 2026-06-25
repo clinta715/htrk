@@ -195,6 +195,28 @@ pub fn draw_instrument_editor(
                 });
                 ui.separator();
 
+                // ── CLAP Plugin slot — prominent, above the scroll area ──
+                egui::Frame::group(ui.style())
+                    .fill(theme.status_bg)
+                    .inner_margin(egui::Margin::symmetric(8, 6))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("CLAP Instrument:").strong());
+                            if !instrument_editor.plugin_name.is_empty() {
+                                ui.label(egui::RichText::new(&instrument_editor.plugin_name).color(theme.fg_instrument));
+                                if ui.button("Unload").clicked() {
+                                    event = Some(InstrumentEditEvent::PluginUnload);
+                                }
+                            } else {
+                                ui.label(egui::RichText::new("(none — sample-based)").weak());
+                                if ui.button("Load CLAP Plugin…").clicked() {
+                                    instrument_editor.plugin_browser_open = true;
+                                }
+                            }
+                        });
+                    });
+                ui.add_space(4.0);
+
                     egui::ScrollArea::vertical()
                     .id_salt("instrument_central_scroll")
                     .auto_shrink([false, false])
@@ -209,21 +231,6 @@ pub fn draw_instrument_editor(
                         if let Some(e) = draw_maps_row(ui, inst, theme, module, &mut paint_sample_idx, &mut browser_open, playback_state, config) {
                             event = Some(e);
                         }
-                        ui.add_space(8.0);
-                        egui::CollapsingHeader::new("Plugin Backing")
-                            .default_open(true)
-                            .show(ui, |ui| {
-                                if !instrument_editor.plugin_name.is_empty() {
-                                    ui.label(&instrument_editor.plugin_name);
-                                    if ui.button("Unload").clicked() {
-                                        event = Some(InstrumentEditEvent::PluginUnload);
-                                    }
-                                } else {
-                                    if ui.button("Load Plugin...").clicked() {
-                                        instrument_editor.plugin_browser_open = true;
-                                    }
-                                }
-                            });
                     });
             } else {
                 ui.centered_and_justified(|ui| {

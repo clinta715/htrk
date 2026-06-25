@@ -54,9 +54,10 @@ pub fn draw_plugin_browser(
     let mut action = PluginBrowserAction::none();
     let mut local_open = *open;
 
-    let title = format!("CLAP Plugin Browser — Send Bus {}", bus_label);
+    let title = format!("CLAP Plugin Browser — {}", bus_label);
+    let window_id = egui::Id::new(format!("plugin_browser_{}_{}", bus_label, send_index));
     let _ = egui::Window::new(&title)
-        .id(egui::Id::new("plugin_browser"))
+        .id(window_id)
         .open(&mut local_open)
         .resizable(true)
         .default_size([480.0, 420.0])
