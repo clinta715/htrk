@@ -151,6 +151,16 @@ pub struct Instrument {
     pub vib_sweep: u8,
     pub vib_depth: u8,
     pub vib_rate: u8,
+
+    /// Optional plugin backing. `None` = traditional sample instrument.
+    #[serde(default)]
+    pub plugin: Option<crate::sequencer::plugin::PluginSlot>,
+
+    /// Base MIDI channel for multi-timbral routing (0–15).
+    /// When multiple sequencer channels use the same plugin instrument,
+    /// they are distinguished by `midi_base_channel + channel_index`.
+    #[serde(default = "default_midi_channel")]
+    pub midi_base_channel: u8,
 }
 
 impl Default for Instrument {
@@ -184,9 +194,13 @@ impl Default for Instrument {
             vib_sweep: 0,
             vib_depth: 0,
             vib_rate: 0,
+            plugin: None,
+            midi_base_channel: 0,
         }
     }
 }
+
+fn default_midi_channel() -> u8 { 0 }
 
 #[cfg(test)]
 mod tests {

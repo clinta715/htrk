@@ -290,6 +290,8 @@ let file_type = read_u8(data, &mut offset)?;
                     vib_sweep: vibrato_sweep,
                     vib_depth: vibrato_depth,
                     vib_rate: vibrato_rate,
+                    plugin: None,
+                    midi_base_channel: 0,
                 });
             } else {
                 instruments.push(Instrument {
