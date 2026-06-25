@@ -715,6 +715,12 @@ pub struct ClapPluginProcessor {
     // Scratch vector for drained param changes. Allocated once;
     // cleared between process() calls.
     param_scratch: Vec<ParamChange>,
+
+    /// Queued note-on/off events from the sequencer, drained in process().
+    /// Tuples: (note_on, midi_channel, key, velocity)
+    note_events: std::collections::VecDeque<(bool, u8, u8, u8)>,
+    /// Monotonically increasing note ID counter for CLAP note tracking.
+    next_note_id: u32,
 }
 
 impl ClapPluginProcessor {
@@ -741,6 +747,8 @@ impl ClapPluginProcessor {
             output_event_buffer: clack_host::events::io::EventBuffer::with_capacity(0),
             param_ring,
             param_scratch: Vec::with_capacity(64),
+            note_events: std::collections::VecDeque::new(),
+            next_note_id: 0,
         }
     }
 
@@ -749,6 +757,7 @@ impl ClapPluginProcessor {
     pub fn stop(self) -> clack_host::process::StoppedPluginAudioProcessor<HtrkHost> {
         self.processor.stop_processing()
     }
+
 }
 
 impl std::fmt::Debug for ClapPluginProcessor {
@@ -764,6 +773,14 @@ impl std::fmt::Debug for ClapPluginProcessor {
 impl HostedPluginProcessor for ClapPluginProcessor {
     fn stop(self: Box<Self>) -> Box<dyn std::any::Any> {
         Box::new(ClapPluginProcessor::stop(*self))
+    }
+
+    fn send_note_on(&mut self, midi_channel: u8, key: u8, velocity: u8) {
+        self.note_events.push_back((true, midi_channel, key, velocity));
+    }
+
+    fn send_note_off(&mut self, midi_channel: u8, key: u8) {
+        self.note_events.push_back((false, midi_channel, key, 0));
     }
 
     fn process(
@@ -828,56 +845,64 @@ impl HostedPluginProcessor for ClapPluginProcessor {
             ]),
         }]);
 
-        // Drain any pending parameter changes and feed them into the
-        // input events as `ParamValueEvent`s. The plugin sees the new
-        // values on this process() call. We use the audio thread's
-        // scratch buffer; events are pushed into the input_event_buffer
-        // and the buffer is then converted to InputEvents.
+        // Drain parameter ring and note queue, then build a single event
+        // buffer containing both param-value and note-on/off events.
         self.param_scratch.clear();
         let drained = self.param_ring.drain_into(&mut self.param_scratch, 64);
-        if drained > 0 {
-            use clack_common::events::event_types::ParamValueEvent;
-            use clack_common::events::Pckn;
-            use clack_common::utils::{ClapId, Cookie};
-            // We need a fresh event buffer for this block. Re-create
-            // it with capacity for the drained events.
-            let mut ev_buffer = clack_host::events::io::EventBuffer::with_capacity(drained);
-            let pckn = Pckn::new(0u8, 0u8, 0u8, 0u8);
-            let cookie = Cookie::default();
-            for change in self.param_scratch.iter() {
-                let ev = ParamValueEvent::new(
-                    0,
-                    ClapId::from(change.param_id),
-                    pckn,
-                    change.value,
-                    cookie,
+
+        use clack_common::events::event_types::{
+            NoteOffEvent, NoteOnEvent, ParamValueEvent,
+        };
+        use clack_common::events::{Match, Pckn};
+        use clack_common::utils::{ClapId, Cookie};
+
+        let total_events = drained + self.note_events.len();
+        let mut ev_buffer = clack_host::events::io::EventBuffer::with_capacity(total_events.max(1));
+        let cookie = Cookie::default();
+
+        // Push param changes
+        let pckn = Pckn::new(0u16, 0u16, 0u16, Match::All);
+        for change in self.param_scratch.iter() {
+            let ev = ParamValueEvent::new(
+                0,
+                ClapId::from(change.param_id),
+                pckn,
+                change.value,
+                cookie,
+            );
+            let _ = ev_buffer.push(&ev);
+        }
+
+        // Push note events
+        while let Some((note_on, midi_ch, key, velocity)) = self.note_events.pop_front() {
+            if note_on {
+                let note_id = self.next_note_id;
+                self.next_note_id = self.next_note_id.wrapping_add(1);
+                let note_pckn = Pckn::new(
+                    0u16,
+                    midi_ch as u16,
+                    key as u16,
+                    note_id,
                 );
+                let ev = NoteOnEvent::new(0, note_pckn, (velocity as f64) / 127.0);
+                let _ = ev_buffer.push(&ev);
+            } else {
+                let note_pckn = Pckn::new(0u16, midi_ch as u16, key as u16, Match::All);
+                let ev = NoteOffEvent::new(0, note_pckn, 0.0);
                 let _ = ev_buffer.push(&ev);
             }
-            let input_events = clack_host::events::io::InputEvents::from_buffer(&ev_buffer);
-            let mut output_events = clack_host::events::io::OutputEvents::from_buffer(&mut self.output_event_buffer);
-            let _ = self.processor.process(
-                &input_audio,
-                &mut output_audio,
-                &input_events,
-                &mut output_events,
-                None,
-                None,
-            );
-        } else {
-            // No pending param changes — use the empty buffer we
-            // pre-allocated at construction time.
-            let input_events = clack_host::events::io::InputEvents::from_buffer(&self.input_event_buffer);
-            let mut output_events = clack_host::events::io::OutputEvents::from_buffer(&mut self.output_event_buffer);
-            let _ = self.processor.process(
-                &input_audio,
-                &mut output_audio,
-                &input_events,
-                &mut output_events,
-                None,
-                None,
-            );
         }
+
+        let input_events = clack_host::events::io::InputEvents::from_buffer(&ev_buffer);
+        let mut output_events = clack_host::events::io::OutputEvents::from_buffer(&mut self.output_event_buffer);
+        let _ = self.processor.process(
+            &input_audio,
+            &mut output_audio,
+            &input_events,
+            &mut output_events,
+            None,
+            None,
+        );
 
         // Copy plugin output back to caller's buffers
         for i in 0..frame_count.min(n) {
