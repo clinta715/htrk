@@ -1664,6 +1664,45 @@ impl HtrkApp {
         );
     }
 
+    fn handle_playback_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        playback_pattern: Option<usize>,
+        playback_row: Option<usize>,
+        playback_tick: Option<u8>,
+        playback_speed: u8,
+    ) {
+        let num_channels = self.core.num_channels();
+        let current_pattern = playback_pattern
+            .and_then(|pat| self.core.module.as_ref()?.patterns.get(pat))
+            .or_else(|| {
+                let pat_idx = self.core.module.as_ref()
+                    .and_then(|m| m.order_list.get(self.core.selected_order))
+                    .copied().unwrap_or(0) as usize;
+                self.core.module.as_ref()?.patterns.get(pat_idx)
+            });
+        let current_module = self.core.module.as_ref().map(|m| &**m);
+        let grid_playback_row = playback_row;
+
+        self.playback_view.ui(
+            ui,
+            &self.core.playback_state,
+            &mut self.core.command_sender,
+            &self.theme,
+            num_channels,
+            current_pattern,
+            current_module,
+            self.config.row_highlight_minor,
+            self.config.row_highlight_major,
+            self.config.get_sample_length_bg(),
+            self.config.get_col_vis(),
+            grid_playback_row,
+            if grid_playback_row.is_some() { playback_tick } else { None },
+            playback_speed,
+            self.config.get_spacing_mode(),
+        );
+    }
+
 }
 
 impl eframe::App for HtrkApp {
@@ -2220,37 +2259,13 @@ impl eframe::App for HtrkApp {
                         }
                     }
                 }
-                AppView::Playback => {
-                    let num_channels = self.core.num_channels();
-                    let current_pattern = playback_pattern
-                        .and_then(|pat| self.core.module.as_ref()?.patterns.get(pat))
-                        .or_else(|| {
-                            let pat_idx = self.core.module.as_ref()
-                                .and_then(|m| m.order_list.get(self.core.selected_order))
-                                .copied().unwrap_or(0) as usize;
-                            self.core.module.as_ref()?.patterns.get(pat_idx)
-                        });
-                    let current_module = self.core.module.as_ref().map(|m| &**m);
-                    let grid_playback_row = playback_row;
-
-                    self.playback_view.ui(
-                        ui,
-                        &self.core.playback_state,
-                        &mut self.core.command_sender,
-                        &self.theme,
-                        num_channels,
-                        current_pattern,
-                        current_module,
-                        self.config.row_highlight_minor,
-                        self.config.row_highlight_major,
-                        self.config.get_sample_length_bg(),
-                        self.config.get_col_vis(),
-                        grid_playback_row,
-                        if grid_playback_row.is_some() { playback_tick } else { None },
-                        playback_speed,
-                        self.config.get_spacing_mode(),
-                    );
-                }
+                AppView::Playback => self.handle_playback_tab(
+                    ui,
+                    playback_pattern,
+                    playback_row,
+                    playback_tick,
+                    playback_speed,
+                ),
                 AppView::Automation => {
                     self.automation_editor.state.selected_order = self.core.selected_order as u16;
                     self.core.ensure_module_ownership();
