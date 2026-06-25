@@ -2014,6 +2014,11 @@ impl HtrkApp {
                 self.instrument_editor.plugin_browser_open = false;
             }
         }
+
+        // Render the egui rect for any instrument plugin whose editor is
+        // open in Embedded mode. Mirrors the send-bus embedded panel
+        // rendering in sendfx_editor.rs.
+        self.draw_embedded_instrument_editor_panels(ui);
     }
 
     fn handle_automation_tab(&mut self, ui: &mut egui::Ui) {
@@ -2810,6 +2815,54 @@ impl HtrkApp {
                         send_index, descriptor.name, e,
                     );
                 }
+            }
+        }
+    }
+
+    /// Render the egui rects that host any instrument plugin editor
+    /// currently open in Embedded mode. Mirrors the send-bus
+    /// `draw_embedded_editor_panels` in `sendfx_editor.rs`. Each
+    /// panel is a fixed-height egui frame; the plugin's child HWND
+    /// is resized to fit (Windows only). On non-Windows this is a
+    /// no-op.
+    fn draw_embedded_instrument_editor_panels(&mut self, ui: &mut egui::Ui) {
+        // Collect (idx, label) for instrument plugin handles that are
+        // open in Embedded mode. We can't borrow self in the inner
+        // loop, so we do the iteration outside.
+        let embedded_indices: Vec<(usize, String)> = self
+            .instrument_plugin_handles
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, opt)| {
+                let h = opt.as_ref()?;
+                if h.is_editor_open() && h.editor_mode() == Some(crate::audio::plugins::EditorMode::Embedded) {
+                    let name = h.descriptor().name.clone();
+                    Some((idx, format!("Instrument {:02X} — {} (embedded editor)", idx, name)))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if embedded_indices.is_empty() {
+            return;
+        }
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.label(
+            egui::RichText::new("Embedded Instrument Plugin Editors")
+                .strong()
+                .size(13.0),
+        );
+
+        for (idx, label) in embedded_indices {
+            if let Some(ref mut handle) = self.instrument_plugin_handles[idx] {
+                crate::ui::sendfx_editor::draw_embedded_editor_panel(
+                    ui,
+                    &label,
+                    handle.as_mut(),
+                );
             }
         }
     }

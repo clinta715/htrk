@@ -434,24 +434,8 @@ fn draw_embedded_editor_panels(
     for si in embedded_indices {
         if let Some(ref mut handle) = plugin_handles[si] {
             let bus_letter = char::from(b'A' + si as u8);
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.set_min_height(280.0);
-                ui.label(format!("Send Bus {} (embedded editor)", bus_letter));
-                // Reserve space for the plugin's child HWND. The actual
-                // sizing happens in app.rs after the UI pass — here we
-                // just draw the rect so egui allocates the space.
-                let rect = ui.available_rect_before_wrap();
-                let width = rect.width().max(100.0) as i32;
-                let height = rect.height().max(100.0) as i32;
-                if let Some(hwnd) = handle.editor_hwnd() {
-                    // SAFETY: hwnd is a valid HWND owned by the plugin handle.
-                    unsafe {
-                        use windows_sys::Win32::UI::WindowsAndMessaging::MoveWindow;
-                        MoveWindow(hwnd, 0, 0, width, height, 1);
-                    }
-                }
-                ui.allocate_space(egui::vec2(width as f32, height as f32));
-            });
+            let label = format!("Send Bus {} (embedded editor)", bus_letter);
+            draw_embedded_editor_panel(ui, &label, handle.as_mut());
         }
     }
 }
@@ -460,6 +444,44 @@ fn draw_embedded_editor_panels(
 fn draw_embedded_editor_panels(
     _ui: &mut egui::Ui,
     _plugin_handles: &mut [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
+) {
+    // No-op on non-Windows.
+}
+
+/// Render the egui rect for a single plugin's embedded editor. Reserves
+/// a fixed-height frame and resizes the plugin's child HWND to match.
+/// Shared between send-bus and instrument plugin embedded editors.
+#[cfg(windows)]
+pub(crate) fn draw_embedded_editor_panel(
+    ui: &mut egui::Ui,
+    label: &str,
+    handle: &mut dyn HostedPluginHandle,
+) {
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.set_min_height(280.0);
+        ui.label(label);
+        // Reserve space for the plugin's child HWND. The actual
+        // sizing happens here — MoveWindow positions and sizes the
+        // HWND to match the rect we allocate below.
+        let rect = ui.available_rect_before_wrap();
+        let width = rect.width().max(100.0) as i32;
+        let height = rect.height().max(100.0) as i32;
+        if let Some(hwnd) = handle.editor_hwnd() {
+            // SAFETY: hwnd is a valid HWND owned by the plugin handle.
+            unsafe {
+                use windows_sys::Win32::UI::WindowsAndMessaging::MoveWindow;
+                MoveWindow(hwnd, 0, 0, width, height, 1);
+            }
+        }
+        ui.allocate_space(egui::vec2(width as f32, height as f32));
+    });
+}
+
+#[cfg(not(windows))]
+pub(crate) fn draw_embedded_editor_panel(
+    _ui: &mut egui::Ui,
+    _label: &str,
+    _handle: &mut dyn HostedPluginHandle,
 ) {
     // No-op on non-Windows.
 }
