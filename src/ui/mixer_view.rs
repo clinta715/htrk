@@ -116,10 +116,10 @@ fn draw_channel_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, ch: u
     };
     let send_levels = core.send_levels.get(ch).copied().unwrap_or([0.0; 4]);
 
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(theme.status_bg)
         .stroke(egui::Stroke::new(1.0, theme.channel_header_bg))
-        .rounding(egui::Rounding::same(2))
+        .corner_radius(egui::CornerRadius::same(2))
         .inner_margin(egui::Margin::symmetric(4, 4))
         .show(ui, |ui| {
             ui.set_width(72.0);
@@ -213,10 +213,10 @@ fn draw_channel_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, ch: u
 }
 
 fn draw_send_bus_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, bus: usize, plugin_name: Option<&str>, return_level: f32, theme: &TrackerTheme) {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(theme.status_bg)
         .stroke(egui::Stroke::new(1.0, theme.channel_header_bg))
-        .rounding(egui::Rounding::same(2))
+        .corner_radius(egui::CornerRadius::same(2))
         .inner_margin(egui::Margin::symmetric(4, 4))
         .show(ui, |ui| {
             ui.set_width(110.0);
@@ -265,10 +265,10 @@ fn draw_master_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, theme:
         .as_ref()
         .map(|m| m.initial_global_volume)
         .unwrap_or(64);
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(theme.status_bg)
         .stroke(egui::Stroke::new(2.0, theme.fg_instrument))
-        .rounding(egui::Rounding::same(2))
+        .corner_radius(egui::CornerRadius::same(2))
         .inner_margin(egui::Margin::symmetric(4, 4))
         .show(ui, |ui| {
             ui.set_width(90.0);

@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 /// Holofonic Tracker command-line entry point.
 ///
 /// htrk is a cross-platform tracker with pattern editing, sample

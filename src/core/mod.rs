@@ -422,4 +422,20 @@ mod tests {
         core.copy_selection();
         assert!(core.clipboard.is_some());
     }
+
+    #[test]
+    fn headless_set_cell_preserves_volume() {
+        let mut core = make_headless_core();
+        core.new_song();
+        let cell = Cell {
+            note: crate::sequencer::note::Note::On(60),
+            instrument: Some(1),
+            volume: Some(40),
+            volume_effect: None,
+            effect: crate::sequencer::effect::Effect::None,
+        };
+        core.set_cell_at_cursor(cell, &[], false);
+        let retrieved = core.get_cell_at_cursor();
+        assert_eq!(retrieved.volume, Some(40), "volume column must round-trip through set_cell_at_cursor");
+    }
 }

@@ -1,13 +1,10 @@
-use std::sync::Arc;
 
 use super::helpers::calculate_sample_offset;
 use crate::audio::sequencer_engine::{PluginNoteEvent, SequencerEngine};
 
 use crate::sequencer::effect::Effect;
-use crate::sequencer::instrument::{DuplicateCheckAction, DuplicateCheckType, NewNoteAction};
 use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
-use crate::sequencer::player::ChannelState;
 use crate::sequencer::sample::Sample;
 
 impl SequencerEngine {

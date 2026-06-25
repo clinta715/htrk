@@ -7,9 +7,12 @@ use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::module::Module;
 use crate::sequencer::module::ModuleFormat;
 use crate::sequencer::player::{ChannelState, SequencerState};
-use crate::sequencer::sample::Sample;
-use crate::sequencer::pattern::Cell;
 use crate::debug_log;
+
+#[cfg(test)]
+use crate::sequencer::pattern::Cell;
+#[cfg(test)]
+use crate::sequencer::sample::Sample;
 
 // Sub-modules — one per major functional area
 mod helpers;
