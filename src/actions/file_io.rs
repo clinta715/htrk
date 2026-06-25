@@ -105,6 +105,9 @@ pub(crate) fn save_current_file(app: &mut HtrkApp) {
 }
 
 fn save_file_inner(app: &mut HtrkApp, path: &str) {
+    // Capture state from any loaded CLAP instrument plugins into the
+    // module's PluginSlot.state field so the file round-trips faithfully.
+    app.save_all_instrument_plugin_states();
     app.core.save_file(path);
 }
 

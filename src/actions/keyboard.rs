@@ -59,7 +59,8 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
         || app.show_exit_confirm
         || app.show_phrase_generator
         || app.slice_dialog_open
-        || app.sendfx_panel.plugin_browser_open_for.is_some();
+        || app.sendfx_panel.plugin_browser_open_for.is_some()
+        || app.instrument_editor.plugin_browser_open;
 
     // Text events: processed unconditionally so note preview works even during dialog input.
     // When a widget has focus or a dialog is open, only play audio; skip cell editing.
@@ -670,18 +671,18 @@ fn note_key_preview_only(app: &mut HtrkApp, ch: char) {
         .find_map(|(key, tone)| {
             let kc = key.name();
             (kc.len() == 1 && kc.chars().next() == Some(up))
-                .then(|| app.current_octave as u8 * 12 + tone)
+                .then(|| (*key, app.current_octave as u8 * 12 + tone))
         })
         .or_else(|| {
             NOTE_KEYS_UPPER.iter().find_map(|(key, tone)| {
                 let kc = key.name();
                 (kc.len() == 1 && kc.chars().next() == Some(up))
-                    .then(|| (app.current_octave as u8 + 1) * 12 + tone)
+                    .then(|| (*key, (app.current_octave as u8 + 1) * 12 + tone))
             })
         });
-    if let Some(nk) = note_key {
+    if let Some((key, nk)) = note_key {
         if !app.preview_browser_sample(nk) {
-            preview_note(app, nk);
+            preview_note(app, key, nk);
         }
     }
 }
@@ -757,13 +758,13 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
         .find_map(|(key, tone)| {
             let kc = key.name();
             (kc.len() == 1 && kc.chars().next() == Some(up))
-                .then(|| app.current_octave as u8 * 12 + tone)
+                .then(|| (*key, app.current_octave as u8 * 12 + tone))
         })
         .or_else(|| {
             NOTE_KEYS_UPPER.iter().find_map(|(key, tone)| {
                 let kc = key.name();
                 (kc.len() == 1 && kc.chars().next() == Some(up))
-                    .then(|| (app.current_octave as u8 + 1) * 12 + tone)
+                    .then(|| (*key, (app.current_octave as u8 + 1) * 12 + tone))
             })
         });
 
@@ -771,9 +772,9 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
 
     // Note keys always play a preview sound, regardless of edit mode or cursor column.
     // When value_consumed is true, the key also enters a value into the cell.
-    if let Some(nk) = note_key {
+    if let Some((key, nk)) = note_key {
         if !app.preview_browser_sample(nk) {
-            preview_note(app, nk);
+            preview_note(app, key, nk);
         }
         if !value_consumed {
             if is_pattern && on_note && app.edit_mode && has_pattern {
@@ -922,7 +923,50 @@ fn handle_text_input(app: &mut HtrkApp, ch: char) {
     }
 }
 
-fn preview_note(app: &mut HtrkApp, note_key: u8) {
+fn preview_note(app: &mut HtrkApp, key: egui::Key, note_key: u8) {
+    // Check if the selected instrument is a hosted plugin (CLAP) — preview by
+    // sending a MIDI note-on to the plugin processor instead of a sample voice.
+    if let Some(ref module) = app.core.module {
+        let inst_idx = app.core.selected_instrument;
+        if inst_idx > 0 && inst_idx < module.instruments.len() {
+            if module.instruments[inst_idx].plugin.is_some() {
+                let midi_ch = module.instruments[inst_idx].midi_base_channel % 16;
+
+                // If a different preview note is already held for this
+                // instrument, release it first so the new note takes over
+                // cleanly (no stuck notes when the user moves between keys).
+                let mut remaining = std::mem::take(&mut app.preview_held_notes);
+                remaining.retain(|(held_key, held_inst, held_ch, held_note)| {
+                    if *held_inst as usize == inst_idx
+                        && (*held_key != key || *held_ch != midi_ch || *held_note != note_key)
+                    {
+                        app.core.send_command(
+                            crate::audio::commands::AudioCommand::PreviewInstrumentPluginNoteOff {
+                                instrument_idx: inst_idx,
+                                midi_channel: *held_ch,
+                                note_key: *held_note,
+                            },
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                });
+                app.preview_held_notes = remaining;
+                app.preview_held_notes.push((key, inst_idx as u8, midi_ch, note_key));
+
+                app.core.send_command(crate::audio::commands::AudioCommand::PreviewInstrumentPlugin {
+                    instrument_idx: inst_idx,
+                    midi_channel: midi_ch,
+                    note_key,
+                    velocity: 100,
+                });
+                return;
+            }
+        }
+    }
+
+    // Sample-based instrument preview (existing behavior).
     let vol = 0.75;
     let sample_idx = if let Some(ref module) = app.core.module {
         let inst_idx = app.core.selected_instrument;

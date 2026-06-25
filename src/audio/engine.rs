@@ -614,6 +614,20 @@ impl AudioEngine {
                         self.instrument_plugin_processors[instrument_idx] = processor;
                     }
                 }
+                AudioCommand::PreviewInstrumentPlugin { instrument_idx, midi_channel, note_key, velocity } => {
+                    if instrument_idx > 0 && instrument_idx < 255 {
+                        if let Some(ref mut proc) = self.instrument_plugin_processors[instrument_idx] {
+                            proc.send_note_on(midi_channel, note_key, velocity);
+                        }
+                    }
+                }
+                AudioCommand::PreviewInstrumentPluginNoteOff { instrument_idx, midi_channel, note_key } => {
+                    if instrument_idx > 0 && instrument_idx < 255 {
+                        if let Some(ref mut proc) = self.instrument_plugin_processors[instrument_idx] {
+                            proc.send_note_off(midi_channel, note_key);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1205,5 +1219,88 @@ mod tests {
         assert!(engine.send_buses[0].plugin.is_none(),
             "Plugin should be removed after SetSendPlugin with None");
         eprintln!("[ok] Plugin removed from send bus 0");
+    }
+
+    /// Test that PreviewInstrumentPlugin / PreviewInstrumentPluginNoteOff
+    /// commands are routed to the matching instrument plugin processor.
+    /// Uses a mock processor to record the events without requiring a
+    /// real CLAP plugin to be installed.
+    #[test]
+    fn instrument_plugin_preview_note_on_off_wiring() {
+        use crate::audio::plugins::HostedPluginProcessor;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Debug, Default)]
+        struct MockState {
+            note_ons: Vec<(u8, u8, u8)>,  // (midi_ch, key, velocity)
+            note_offs: Vec<(u8, u8)>,     // (midi_ch, key)
+        }
+
+        #[derive(Debug, Default)]
+        struct MockProcessor {
+            state: Arc<Mutex<MockState>>,
+        }
+
+        impl HostedPluginProcessor for MockProcessor {
+            fn process(
+                &mut self,
+                _in_l: &[f32], _in_r: &[f32],
+                _out_l: &mut [f32], _out_r: &mut [f32],
+                _n: usize, _t: &crate::audio::plugins::TransportInfo,
+            ) {}
+            fn stop(self: Box<Self>) -> Box<dyn std::any::Any> { Box::new(()) }
+            fn set_parameter(&mut self, _: u32, _: f32) {}
+            fn get_parameter(&self, _: u32) -> f32 { 0.0 }
+            fn parameter_count(&self) -> u32 { 0 }
+            fn latency(&self) -> u32 { 0 }
+            fn name(&self) -> &str { "Mock" }
+            fn send_note_on(&mut self, midi_ch: u8, key: u8, velocity: u8) {
+                self.state.lock().unwrap().note_ons.push((midi_ch, key, velocity));
+            }
+            fn send_note_off(&mut self, midi_ch: u8, key: u8) {
+                self.state.lock().unwrap().note_offs.push((midi_ch, key));
+            }
+        }
+
+        let state = Arc::new(Mutex::new(MockState::default()));
+        let proc: Box<dyn HostedPluginProcessor> =
+            Box::new(MockProcessor { state: state.clone() });
+
+        let (mut engine, mut sender) = create_engine_and_sender(
+            Arc::new(crate::audio::playback_state::AtomicPlaybackState::default()),
+            48000, 2,
+        );
+
+        // Install the mock at instrument index 1.
+        sender.send(AudioCommand::InstallInstrumentPlugin {
+            instrument_idx: 1,
+            processor: Some(proc),
+        });
+        engine.process_callback(&mut [0.0f32; 64]);
+        assert!(engine.instrument_plugin_processors[1].is_some());
+
+        // Note-on
+        sender.send(AudioCommand::PreviewInstrumentPlugin {
+            instrument_idx: 1, midi_channel: 0, note_key: 60, velocity: 100,
+        });
+        engine.process_callback(&mut [0.0f32; 64]);
+
+        // Note-off
+        sender.send(AudioCommand::PreviewInstrumentPluginNoteOff {
+            instrument_idx: 1, midi_channel: 0, note_key: 60,
+        });
+        engine.process_callback(&mut [0.0f32; 64]);
+
+        // Note-on on a different instrument — must be ignored
+        sender.send(AudioCommand::PreviewInstrumentPlugin {
+            instrument_idx: 2, midi_channel: 0, note_key: 64, velocity: 90,
+        });
+        engine.process_callback(&mut [0.0f32; 64]);
+
+        let s = state.lock().unwrap();
+        assert_eq!(s.note_ons.len(), 1, "expected one note-on, got {}", s.note_ons.len());
+        assert_eq!(s.note_ons[0], (0, 60, 100));
+        assert_eq!(s.note_offs.len(), 1, "expected one note-off, got {}", s.note_offs.len());
+        assert_eq!(s.note_offs[0], (0, 60));
     }
 }

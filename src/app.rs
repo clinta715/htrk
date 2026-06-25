@@ -94,6 +94,11 @@ pub struct HtrkApp {
     /// must stay on the main thread alongside HtrkApp.
     /// Phase 3 plugin instruments.
     pub(crate) instrument_plugin_handles: Vec<Option<Box<dyn HostedPluginHandle>>>,
+    /// Notes currently held by the keyboard preview system for instrument
+    /// plugins. Each entry maps the egui key that triggered the note-on
+    /// to the (instrument, midi_channel, note_key) so the per-frame
+    /// release check can send note-off when the key is no longer down.
+    pub(crate) preview_held_notes: Vec<(egui::Key, u8, u8, u8)>,
     /// Direct in-memory plugin library, independent of the MCP server.
     /// Populated by `rescan_plugins()` at startup and on user request. The
     /// Send FX plugin browser reads from this so plugins are visible
@@ -180,6 +185,7 @@ impl HtrkApp {
             sendfx_panel: crate::ui::sendfx_panel::SendFxPanel::default(),
             send_bus_handles: [None, None, None, None],
             instrument_plugin_handles: (0..255).map(|_| None).collect(),
+            preview_held_notes: Vec::new(),
             plugin_library: crate::audio::plugins::PluginLibrary::new(),
             plugin_scan_done: false,
             plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
@@ -264,6 +270,7 @@ impl HtrkApp {
             sendfx_panel: crate::ui::sendfx_panel::SendFxPanel::default(),
             send_bus_handles: [None, None, None, None],
             instrument_plugin_handles: (0..255).map(|_| None).collect(),
+            preview_held_notes: Vec::new(),
             plugin_library: PluginLibrary::new(),
             plugin_scan_done: false,
             plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
@@ -1751,17 +1758,12 @@ impl HtrkApp {
                         self.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut self.config);
                     }
                     crate::ui::instrument_editor::InstrumentEditEvent::PluginUnload => {
+                        // Unload the running instance but KEEP the PluginSlot
+                        // (path/id/state) so the user can re-load the same
+                        // plugin later with their saved state preserved.
                         let instrument_idx = self.core.selected_instrument;
                         self.unload_instrument_plugin(instrument_idx);
                         self.instrument_editor.plugin_name.clear();
-                        self.core.ensure_module_ownership();
-                        if let Some(ref mut module) = self.core.module {
-                            if let Some(arc_module) = Arc::get_mut(module) {
-                                if instrument_idx < arc_module.instruments.len() {
-                                    arc_module.instruments[instrument_idx].plugin = None;
-                                }
-                            }
-                        }
                         self.core.sync_module_to_audio();
                     }
                     other => crate::actions::handle_instrument_edit(self, other),
@@ -1796,11 +1798,29 @@ impl HtrkApp {
                     send_index,
                 } => {
                     self.plugin_browser_status = crate::ui::plugin_browser::PluginBrowserStatus::Loading(descriptor.name.clone());
-                    match self.load_and_install_instrument_plugin(&descriptor, send_index) {
+                    // If the user picks the same plugin that was previously
+                    // loaded on this instrument, restore its saved state.
+                    // A different plugin path starts fresh (state cleared).
+                    let descriptor_path = descriptor.path.to_string_lossy().to_string();
+                    let initial_state: Option<Vec<u8>> = self.core.module.as_ref()
+                        .and_then(|m| m.instruments.get(send_index))
+                        .and_then(|i| i.plugin.as_ref())
+                        .filter(|slot| slot.path == descriptor_path && !slot.state.is_empty())
+                        .map(|slot| slot.state.clone());
+                    match self.load_and_install_instrument_plugin(
+                        &descriptor,
+                        send_index,
+                        initial_state.as_deref(),
+                    ) {
                         Ok((handle, name)) => {
                             self.instrument_plugin_handles[send_index] = Some(handle);
                             self.instrument_editor.plugin_name = name.clone();
                             self.instrument_editor.plugin_browser_open = false;
+
+                            // Capture the freshly-loaded plugin's state so
+                            // the very first project save persists the
+                            // plugin's default patch.
+                            self.save_all_instrument_plugin_states();
 
                             self.core.ensure_module_ownership();
                             if let Some(ref mut module) = self.core.module {
@@ -1826,7 +1846,8 @@ impl HtrkApp {
                     }
                 }
                 crate::ui::plugin_browser::PluginSelectResult::Cancelled => {
-                    self.instrument_editor.plugin_browser_open = false;
+                    // No selection this frame — keep the dialog open.
+                    // Only close when `open` becomes false (X button / Close).
                 }
             }
 
@@ -2342,6 +2363,7 @@ impl HtrkApp {
         &mut self,
         descriptor: &crate::audio::plugins::PluginDescriptor,
         instrument_idx: usize,
+        initial_state: Option<&[u8]>,
     ) -> Result<(Box<dyn HostedPluginHandle>, String), String> {
         let sample_rate = if self.current_sample_rate > 0 {
             self.current_sample_rate as f64
@@ -2352,6 +2374,17 @@ impl HtrkApp {
 
         let mut handle = crate::audio::plugins::clap_plugin::ClapPluginHandle::load(&descriptor.path)
             .map_err(|e| format!("Load failed: {e}"))?;
+
+        // Restore the saved plugin state (e.g. preset, patch, parameters)
+        // before activation, so the plugin starts with the user's patches.
+        if let Some(state) = initial_state {
+            if !state.is_empty() {
+                if let Err(e) = handle.load_state(state) {
+                    eprintln!("[plugin] instrument plugin state load failed: {e}");
+                }
+            }
+        }
+
         let processor = handle.activate(sample_rate, max_block)
             .map_err(|e| format!("Activate failed: {e}"))?;
         let name = processor.name().to_string();
@@ -2373,17 +2406,102 @@ impl HtrkApp {
         if instrument_idx >= self.instrument_plugin_handles.len() {
             return;
         }
-        // Drop the handle (plugin instance deallocated); send None to
-        // audio engine so the processor is dropped there too. A proper
-        // deactivation sequence would need a way to retrieve the stopped
-        // processor from the audio thread — deferred to Phase 4.
-        self.instrument_plugin_handles[instrument_idx] = None;
+        // Save state before dropping the handle. The handle's save_state()
+        // is &mut self so we need a temporary move out + back in.
+        if let Some(mut handle) = self.instrument_plugin_handles[instrument_idx].take() {
+            if let Ok(state) = handle.save_state() {
+                self.write_instrument_plugin_state(instrument_idx, state);
+            }
+            // Release any previewed note-off for this instrument so a
+            // reloaded plugin doesn't get a stale "note on" without off.
+            self.send_all_preview_note_offs_for_instrument(instrument_idx);
+            // Drop the handle (plugin instance deallocated); send None to
+            // audio engine so the processor is dropped there too. A proper
+            // deactivation sequence would need a way to retrieve the
+            // stopped processor from the audio thread — deferred to Phase 4.
+            drop(handle);
+        }
         if let Some(ref mut sender) = self.core.command_sender {
             sender.send(AudioCommand::InstallInstrumentPlugin {
                 instrument_idx,
                 processor: None,
             });
         }
+    }
+
+    /// Copy the given opaque state blob into the module's instrument slot
+    /// so the next save persists it. Does nothing if the slot is missing.
+    fn write_instrument_plugin_state(&mut self, instrument_idx: usize, state: Vec<u8>) {
+        self.core.ensure_module_ownership();
+        if let Some(ref mut module) = self.core.module {
+            if let Some(arc_module) = std::sync::Arc::get_mut(module) {
+                if instrument_idx < arc_module.instruments.len() {
+                    if let Some(ref mut slot) = arc_module.instruments[instrument_idx].plugin {
+                        slot.state = state;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Iterate all loaded instrument plugins, capture their state, and
+    /// write it into the module's `instrument.plugin.state` field. Call
+    /// this on project save so plugins reload with the same patches.
+    pub(crate) fn save_all_instrument_plugin_states(&mut self) {
+        for idx in 0..self.instrument_plugin_handles.len() {
+            if self.instrument_plugin_handles[idx].is_some() {
+                // Temporarily take the handle out so we can call save_state
+                // (which is &mut self) and put it back.
+                if let Some(mut handle) = self.instrument_plugin_handles[idx].take() {
+                    if let Ok(state) = handle.save_state() {
+                        self.write_instrument_plugin_state(idx, state);
+                    }
+                    self.instrument_plugin_handles[idx] = Some(handle);
+                }
+            }
+        }
+    }
+
+    /// Send note-off for all currently-held preview notes for the given
+    /// instrument. Called when the instrument is unloaded or the module
+    /// is replaced.
+    fn send_all_preview_note_offs_for_instrument(&mut self, instrument_idx: usize) {
+        let mut remaining = Vec::new();
+        for entry in self.preview_held_notes.drain(..) {
+            let (key, inst, midi_ch, note_key) = entry;
+            if inst as usize == instrument_idx {
+                self.core.send_command(AudioCommand::PreviewInstrumentPluginNoteOff {
+                    instrument_idx: inst as usize,
+                    midi_channel: midi_ch,
+                    note_key,
+                });
+            } else {
+                remaining.push((key, inst, midi_ch, note_key));
+            }
+        }
+        self.preview_held_notes = remaining;
+    }
+
+    /// Release any previewed instrument-plugin notes whose trigger key
+    /// is no longer held. Called every frame from `ui()`.
+    fn release_unheld_preview_notes(&mut self, ctx: &egui::Context) {
+        if self.preview_held_notes.is_empty() {
+            return;
+        }
+        let mut remaining = Vec::with_capacity(self.preview_held_notes.len());
+        for (key, inst, midi_ch, note_key) in self.preview_held_notes.drain(..) {
+            let still_held = ctx.input(|i| i.key_down(key));
+            if still_held {
+                remaining.push((key, inst, midi_ch, note_key));
+            } else {
+                self.core.send_command(AudioCommand::PreviewInstrumentPluginNoteOff {
+                    instrument_idx: inst as usize,
+                    midi_channel: midi_ch,
+                    note_key,
+                });
+            }
+        }
+        self.preview_held_notes = remaining;
     }
 }
 
@@ -2405,6 +2523,10 @@ impl eframe::App for HtrkApp {
             let _ = self.rescan_plugins();
             self.plugin_scan_done = true;
         }
+
+        // Release any previewed instrument-plugin notes whose trigger
+        // key is no longer held.
+        self.release_unheld_preview_notes(&ctx);
 
         let (playback_row, playback_order, playback_pattern, playback_tick, playback_speed) =
             self.draw_preamble(&ctx);

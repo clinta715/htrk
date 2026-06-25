@@ -80,4 +80,24 @@ pub enum AudioCommand {
         instrument_idx: usize,
         processor: Option<Box<dyn HostedPluginProcessor>>,
     },
+
+    /// Preview a note on a hosted instrument plugin (e.g. for keyboard
+    /// preview when a CLAP instrument is selected). Sends a MIDI note-on
+    /// to the processor at the given index. Pair with
+    /// `PreviewInstrumentPluginNoteOff` when the key is released.
+    PreviewInstrumentPlugin {
+        instrument_idx: usize,
+        midi_channel: u8,
+        note_key: u8,
+        velocity: u8,
+    },
+
+    /// Release a previously-previewed note on a hosted instrument plugin.
+    /// Sent when the user releases the key, when a different key takes
+    /// over the preview slot, or when the instrument is unloaded.
+    PreviewInstrumentPluginNoteOff {
+        instrument_idx: usize,
+        midi_channel: u8,
+        note_key: u8,
+    },
 }
