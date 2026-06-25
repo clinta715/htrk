@@ -6,6 +6,7 @@
 // filled in incrementally as we integrate with real CLAP plugins.
 
 use std::any::Any;
+use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -32,7 +33,17 @@ use super::{
 // `HostLog` and `HostGui` host-side extensions so plugins can talk back to us.
 
 pub struct HtrkHost;
-pub struct HtrkHostShared;
+pub struct HtrkHostShared {
+    pub(crate) state_ext: std::sync::OnceLock<Option<clack_extensions::state::PluginState>>,
+}
+
+impl HtrkHostShared {
+    pub fn new() -> Self {
+        HtrkHostShared {
+            state_ext: std::sync::OnceLock::new(),
+        }
+    }
+}
 
 impl<'a> SharedHandler<'a> for HtrkHostShared {
     fn request_restart(&self) {
@@ -43,6 +54,9 @@ impl<'a> SharedHandler<'a> for HtrkHostShared {
     }
     fn request_callback(&self) {
         tracing::debug!("CLAP plugin requested callback");
+    }
+    fn initializing(&self, instance: InitializingPluginHandle<'a>) {
+        let _ = self.state_ext.set(instance.get_extension());
     }
 }
 
@@ -81,15 +95,29 @@ impl HostGuiImpl for HtrkHostShared {
     }
 }
 
+/// Unit struct used as the main-thread handler type. Required so we can
+/// implement external traits (like `HostStateImpl`) without violating the
+/// orphan rule.
+pub struct HtrkMainThread;
+
+impl<'a> MainThreadHandler<'a> for HtrkMainThread {}
+
+impl clack_extensions::state::HostStateImpl for HtrkMainThread {
+    fn mark_dirty(&mut self) {
+        tracing::debug!("CLAP plugin marked state as dirty");
+    }
+}
+
 impl HostHandlers for HtrkHost {
     type Shared<'a> = HtrkHostShared;
-    type MainThread<'a> = ();
+    type MainThread<'a> = HtrkMainThread;
     type AudioProcessor<'a> = ();
 
     fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &Self::Shared<'_>) {
         builder
             .register::<HostLog>()
-            .register::<HostGui>();
+            .register::<HostGui>()
+            .register::<clack_extensions::state::HostState>();
     }
 }
 
@@ -126,6 +154,10 @@ pub struct ClapPluginHandle {
     /// a specific param (e.g. for automation targets). The underlying
     /// CLAP `ClapId` is opaque and not stable across rescans.
     param_index_to_id: Vec<u32>,
+    /// The plugin's state extension, if the plugin implements the CLAP
+    /// state extension. Populated during `load()`. Used by `save_state()`
+    /// and `load_state()`.
+    state_ext: Option<clack_extensions::state::PluginState>,
 }
 
 impl ClapPluginHandle {
@@ -179,13 +211,19 @@ impl ClapPluginHandle {
             .to_owned();
 
         let instance = PluginInstance::<HtrkHost>::new(
-            |_| HtrkHostShared,
-            |_| (),
+            |_| HtrkHostShared::new(),
+            |_| HtrkMainThread,
             &entry,
             &plugin_id,
             &host_info,
         )
         .map_err(|e| PluginError::LoadFailed(e.to_string()))?;
+
+        // Capture the plugin's state extension (if any) so we can
+        // save/restore state from the main thread without needing to
+        // access the instance's shared handler every time.
+        let state_ext: Option<clack_extensions::state::PluginState> = instance
+            .access_shared_handler(|h| h.state_ext.get().and_then(|o| o.as_ref().cloned()));
 
         let descriptor = extract_descriptor(path, &clap_descriptor);
 
@@ -201,6 +239,7 @@ impl ClapPluginHandle {
             cached_param_info: Vec::new(),
             param_ring: Arc::new(ParamRingBuffer::new(256)),
             param_index_to_id: Vec::new(),
+            state_ext,
         })
     }
 
@@ -407,13 +446,25 @@ impl HostedPluginHandle for ClapPluginHandle {
         Ok(())
     }
 
-    fn save_state(&self) -> Result<Vec<u8>, String> {
-        // State save requires the state extension and a live instance. Stub.
-        Ok(Vec::new())
+    fn save_state(&mut self) -> Result<Vec<u8>, String> {
+        let state_ext = self.state_ext.as_ref().ok_or("Plugin does not support state extension")?;
+        let instance = self.instance.as_mut().ok_or("No plugin instance")?;
+        let mut handle = instance.plugin_handle();
+        let mut buffer = Vec::new();
+        state_ext
+            .save(&mut handle, &mut buffer)
+            .map_err(|e| format!("State save failed: {e}"))?;
+        Ok(buffer)
     }
 
-    fn load_state(&mut self, _state: &[u8]) -> Result<(), String> {
-        // State restore requires the state extension. Stub.
+    fn load_state(&mut self, state: &[u8]) -> Result<(), String> {
+        let state_ext = self.state_ext.as_ref().ok_or("Plugin does not support state extension")?;
+        let instance = self.instance.as_mut().ok_or("No plugin instance")?;
+        let mut handle = instance.plugin_handle();
+        let mut reader = Cursor::new(state);
+        state_ext
+            .load(&mut handle, &mut reader)
+            .map_err(|e| format!("State load failed: {e}"))?;
         Ok(())
     }
 
@@ -704,7 +755,7 @@ pub struct ClapPluginProcessor {
     output_ports: AudioPorts,
 
     // Pre-allocated event buffers (allocated once at construction; RT-safe)
-    input_event_buffer: clack_host::events::io::EventBuffer,
+    _input_event_buffer: clack_host::events::io::EventBuffer,
     output_event_buffer: clack_host::events::io::EventBuffer,
 
     // SPSC parameter ring shared with the main-thread `ClapPluginHandle`.
@@ -743,7 +794,7 @@ impl ClapPluginProcessor {
             out_r: vec![0.0; max_block],
             input_ports: AudioPorts::with_capacity(2, 1),
             output_ports: AudioPorts::with_capacity(2, 1),
-            input_event_buffer: clack_host::events::io::EventBuffer::with_capacity(0),
+            _input_event_buffer: clack_host::events::io::EventBuffer::with_capacity(0),
             output_event_buffer: clack_host::events::io::EventBuffer::with_capacity(0),
             param_ring,
             param_scratch: Vec::with_capacity(64),
@@ -1418,7 +1469,7 @@ mod tests {
     #[test]
     fn test_host_log_no_panic() {
         use clack_extensions::log::LogSeverity;
-        let shared = HtrkHostShared;
+        let shared = HtrkHostShared { state_ext: Default::default() };
         for sev in [
             LogSeverity::Debug,
             LogSeverity::Info,
@@ -1436,7 +1487,7 @@ mod tests {
     #[test]
     fn test_host_gui_no_panic() {
         use clack_extensions::gui::GuiSize;
-        let shared = HtrkHostShared;
+        let shared = HtrkHostShared { state_ext: Default::default() };
         shared.resize_hints_changed();
         let _ = shared.request_resize(GuiSize { width: 800, height: 600 });
         let _ = shared.request_show();

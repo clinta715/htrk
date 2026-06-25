@@ -212,7 +212,7 @@ pub trait HostedPluginHandle {
     fn deactivate(&mut self, stopped: Box<dyn std::any::Any>) -> Result<(), String>;
 
     /// Save plugin state as opaque bytes. Called on the main thread.
-    fn save_state(&self) -> Result<Vec<u8>, String>;
+    fn save_state(&mut self) -> Result<Vec<u8>, String>;
 
     /// Load plugin state from opaque bytes. Called on the main thread.
     fn load_state(&mut self, state: &[u8]) -> Result<(), String>;
