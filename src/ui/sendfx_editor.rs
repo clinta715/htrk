@@ -67,18 +67,9 @@ pub fn draw_sendfx_view(
     // module's `send_bus_plugins[i].state` field).
     mut on_remove_plugin: impl FnMut(usize, Vec<u8>),
 ) {
-    // X-close poll: if any plugin's editor HWND is no longer visible
-    // (user X-closed the window externally), call close_editor to keep
-    // our state in sync with reality.
-    for si in 0..NUM_SEND_BUSES {
-        if let Some(ref mut handle) = plugin_handles[si] {
-            if handle.is_editor_open() {
-                if !is_editor_hwnd_visible(handle.as_ref()) {
-                    handle.close_editor();
-                }
-            }
-        }
-    }
+    // X-close poll and embedded editor panel rendering now happen in
+    // HtrkApp::tick_plugin_editors (called from the frame-level ui()
+    // pass) so they work regardless of which tab the user is in.
 
     ui.horizontal(|ui| {
         for si in 0..NUM_SEND_BUSES {
@@ -368,13 +359,9 @@ pub fn draw_sendfx_view(
     });
 
     // ── Embedded editor panel ──
-    //
-    // Below the bus cards, render a dedicated row for any plugin that is
-    // currently open in Embedded mode. The plugin's child HWND is already
-    // parented to our (invisible) host window, which is in turn a WS_CHILD
-    // of the eframe main window. We just need to make sure the host window
-    // is sized to fill the egui rect.
-    draw_embedded_editor_panels(ui, plugin_handles);
+    // Embedded editor panel rendering now happens in
+    // HtrkApp::tick_plugin_editors (called from the frame-level ui()
+    // pass) so editors are visible in any tab.
 }
 
 #[cfg(windows)]
@@ -396,58 +383,6 @@ pub(crate) fn is_editor_hwnd_visible(_handle: &dyn HostedPluginHandle) -> bool {
 }
 
 /// Render the embedded editor panel row. For each send bus whose plugin is
-/// currently open in Embedded mode, draw an egui frame whose rect will be
-/// the target for the plugin's child HWND. We use the same trick as
-/// hdaw2: query the plugin's preferred initial size, and resize the host
-/// window to match the egui rect.
-#[cfg(windows)]
-fn draw_embedded_editor_panels(
-    ui: &mut egui::Ui,
-    plugin_handles: &mut [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
-) {
-    // Find which buses are in Embedded mode.
-    let embedded_indices: Vec<usize> = plugin_handles
-        .iter()
-        .enumerate()
-        .filter_map(|(si, h)| {
-            let h = h.as_ref()?;
-            if h.is_editor_open() && h.editor_mode() == Some(EditorMode::Embedded) {
-                Some(si)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if embedded_indices.is_empty() {
-        return;
-    }
-
-    ui.add_space(8.0);
-    ui.separator();
-    ui.label(
-        egui::RichText::new("Embedded Plugin Editors")
-            .strong()
-            .size(13.0),
-    );
-
-    for si in embedded_indices {
-        if let Some(ref mut handle) = plugin_handles[si] {
-            let bus_letter = char::from(b'A' + si as u8);
-            let label = format!("Send Bus {} (embedded editor)", bus_letter);
-            draw_embedded_editor_panel(ui, &label, handle.as_mut());
-        }
-    }
-}
-
-#[cfg(not(windows))]
-fn draw_embedded_editor_panels(
-    _ui: &mut egui::Ui,
-    _plugin_handles: &mut [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
-) {
-    // No-op on non-Windows.
-}
-
 /// Render the egui rect for a single plugin's embedded editor. Reserves
 /// a fixed-height frame and resizes the plugin's child HWND to match.
 /// Shared between send-bus and instrument plugin embedded editors.

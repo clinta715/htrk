@@ -1809,18 +1809,9 @@ impl HtrkApp {
         #[cfg(not(windows))]
         let eframe_hwnd: Option<crate::ui::sendfx_panel::EframeHwnd> = None;
 
-        // X-close poll: if any instrument plugin's editor HWND is no
-        // longer visible (user X-closed the window externally), call
-        // close_editor to keep our cached state in sync with reality.
-        for handle_opt in self.instrument_plugin_handles.iter_mut() {
-            if let Some(ref mut handle) = handle_opt {
-                if handle.is_editor_open() {
-                    if !crate::ui::sendfx_editor::is_editor_hwnd_visible(handle.as_ref()) {
-                        handle.close_editor();
-                    }
-                }
-            }
-        }
+        // X-close poll and embedded editor panel rendering now happen
+        // in HtrkApp::tick_plugin_editors (called from the frame-level
+        // ui() pass) so editors stay alive in any tab.
 
         if let Some(module) = &self.core.module {
             // Cache the plugin editor state for the currently selected
@@ -2014,11 +2005,6 @@ impl HtrkApp {
                 self.instrument_editor.plugin_browser_open = false;
             }
         }
-
-        // Render the egui rect for any instrument plugin whose editor is
-        // open in Embedded mode. Mirrors the send-bus embedded panel
-        // rendering in sendfx_editor.rs.
-        self.draw_embedded_instrument_editor_panels(ui);
     }
 
     fn handle_automation_tab(&mut self, ui: &mut egui::Ui) {
@@ -2720,6 +2706,102 @@ impl HtrkApp {
         self.preview_held_notes = remaining;
     }
 
+    /// Frame-level pass for plugin editor X-close detection. Called
+    /// every frame from `ui()` regardless of which tab is active so
+    /// that editors don't get stuck "open" in our state when the user
+    /// X-closes them from another tab.
+    fn poll_plugin_editors(&mut self) {
+        // Send-bus plugins.
+        for si in 0..self.send_bus_handles.len() {
+            if let Some(ref mut handle) = self.send_bus_handles[si] {
+                if handle.is_editor_open()
+                    && !crate::ui::sendfx_editor::is_editor_hwnd_visible(handle.as_ref())
+                {
+                    handle.close_editor();
+                }
+            }
+        }
+        // Instrument plugins.
+        for handle_opt in self.instrument_plugin_handles.iter_mut() {
+            if let Some(ref mut handle) = handle_opt {
+                if handle.is_editor_open()
+                    && !crate::ui::sendfx_editor::is_editor_hwnd_visible(handle.as_ref())
+                {
+                    handle.close_editor();
+                }
+            }
+        }
+    }
+
+    /// Frame-level pass that renders a global "Embedded Plugin
+    /// Editors" dock at the bottom of the window. Every plugin whose
+    /// editor is currently open in Embedded mode (send-bus or
+    /// instrument) gets a panel here, visible in any tab. Called
+    /// every frame from `ui()`.
+    fn draw_embedded_plugin_dock(&mut self, ui: &mut egui::Ui) {
+        // Collect (label, &mut handle) pairs for every plugin with an
+        // open embedded editor. We can't borrow self in the inner
+        // loop, so we collect labels first.
+        let mut send_bus_labels: Vec<(usize, String)> = Vec::new();
+        for (si, opt) in self.send_bus_handles.iter().enumerate() {
+            if let Some(h) = opt.as_ref() {
+                if h.is_editor_open()
+                    && h.editor_mode() == Some(crate::audio::plugins::EditorMode::Embedded)
+                {
+                    let bus_letter = char::from(b'A' + si as u8);
+                    send_bus_labels.push((
+                        si,
+                        format!("Send Bus {} — {} (embedded)", bus_letter, h.descriptor().name),
+                    ));
+                }
+            }
+        }
+        let mut instrument_labels: Vec<(usize, String)> = Vec::new();
+        for (idx, opt) in self.instrument_plugin_handles.iter().enumerate() {
+            if let Some(h) = opt.as_ref() {
+                if h.is_editor_open()
+                    && h.editor_mode() == Some(crate::audio::plugins::EditorMode::Embedded)
+                {
+                    instrument_labels.push((
+                        idx,
+                        format!("Instrument {:02X} — {} (embedded)", idx, h.descriptor().name),
+                    ));
+                }
+            }
+        }
+
+        if send_bus_labels.is_empty() && instrument_labels.is_empty() {
+            return;
+        }
+
+        ui.add_space(4.0);
+        ui.separator();
+        ui.label(
+            egui::RichText::new("Embedded Plugin Editors")
+                .strong()
+                .size(13.0),
+        );
+
+        for (si, label) in send_bus_labels {
+            if let Some(ref mut handle) = self.send_bus_handles[si] {
+                crate::ui::sendfx_editor::draw_embedded_editor_panel(
+                    ui,
+                    &label,
+                    handle.as_mut(),
+                );
+            }
+        }
+        for (idx, label) in instrument_labels {
+            if let Some(ref mut handle) = self.instrument_plugin_handles[idx] {
+                crate::ui::sendfx_editor::draw_embedded_editor_panel(
+                    ui,
+                    &label,
+                    handle.as_mut(),
+                );
+            }
+        }
+    }
+
     // ─── Send-bus plugin state persistence (mirrors instrument side) ─────
 
     /// Write the opaque state blob into `module.send_bus_plugins[send_index]`
@@ -2818,54 +2900,6 @@ impl HtrkApp {
             }
         }
     }
-
-    /// Render the egui rects that host any instrument plugin editor
-    /// currently open in Embedded mode. Mirrors the send-bus
-    /// `draw_embedded_editor_panels` in `sendfx_editor.rs`. Each
-    /// panel is a fixed-height egui frame; the plugin's child HWND
-    /// is resized to fit (Windows only). On non-Windows this is a
-    /// no-op.
-    fn draw_embedded_instrument_editor_panels(&mut self, ui: &mut egui::Ui) {
-        // Collect (idx, label) for instrument plugin handles that are
-        // open in Embedded mode. We can't borrow self in the inner
-        // loop, so we do the iteration outside.
-        let embedded_indices: Vec<(usize, String)> = self
-            .instrument_plugin_handles
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, opt)| {
-                let h = opt.as_ref()?;
-                if h.is_editor_open() && h.editor_mode() == Some(crate::audio::plugins::EditorMode::Embedded) {
-                    let name = h.descriptor().name.clone();
-                    Some((idx, format!("Instrument {:02X} — {} (embedded editor)", idx, name)))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if embedded_indices.is_empty() {
-            return;
-        }
-
-        ui.add_space(8.0);
-        ui.separator();
-        ui.label(
-            egui::RichText::new("Embedded Instrument Plugin Editors")
-                .strong()
-                .size(13.0),
-        );
-
-        for (idx, label) in embedded_indices {
-            if let Some(ref mut handle) = self.instrument_plugin_handles[idx] {
-                crate::ui::sendfx_editor::draw_embedded_editor_panel(
-                    ui,
-                    &label,
-                    handle.as_mut(),
-                );
-            }
-        }
-    }
 }
 
 impl eframe::App for HtrkApp {
@@ -2890,6 +2924,12 @@ impl eframe::App for HtrkApp {
         // Release any previewed instrument-plugin notes whose trigger
         // key is no longer held.
         self.release_unheld_preview_notes(&ctx);
+
+        // Sync the cached state of any open plugin editors (X-close
+        // detection) regardless of which tab the user is in, so
+        // editors don't get stuck "open" in our state when the user
+        // X-closes them while looking at a different tab.
+        self.poll_plugin_editors();
 
         let (playback_row, playback_order, playback_pattern, playback_tick, playback_speed) =
             self.draw_preamble(&ctx);
@@ -2959,6 +2999,19 @@ impl eframe::App for HtrkApp {
         self.config.window_height = Some(size.y);
 
         self.draw_dialogs(&ctx);
+
+        // Global "Embedded Plugin Editors" dock at the bottom of the
+        // window, visible in any tab. Resizable; user can shrink to
+        // 0 height when no editors are open (which is the default
+        // since we render nothing in that case).
+        egui::Panel::bottom("embedded_plugin_dock")
+            .resizable(true)
+            .default_size(320.0)
+            .min_size(0.0)
+            .max_size(900.0)
+            .show_inside(ui, |ui| {
+                self.draw_embedded_plugin_dock(ui);
+            });
     }
 
     fn on_exit(&mut self) {
