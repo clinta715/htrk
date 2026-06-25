@@ -1518,4 +1518,131 @@ mod tests {
             handle.close_editor();
         }
     }
+
+    /// Round-trip state save/load test: load a real CLAP plugin, set a
+    /// parameter to a known value, save state, drop the handle, reload
+    /// the plugin fresh, set a different parameter value, load the
+    /// saved state, then read the parameter and assert it matches the
+    /// value we set in the first instance.
+    ///
+    /// This exercises the full save_state/load_state path that the
+    /// .htk round-trip relies on for both send-bus and instrument
+    /// plugin persistence. Skipped if no CLAP plugin with state
+    /// support is available.
+    #[test]
+    fn test_state_save_load_round_trip() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found at {}", path.display());
+            return;
+        }
+
+        // ── Phase 1: load, set a known value, save state, drop ─────
+        let mut handle1 = ClapPluginHandle::load(path).expect("load 1 failed");
+        let desc = handle1.descriptor();
+        if !desc.supports_state {
+            eprintln!("[skip] {} does not support state extension", desc.name);
+            return;
+        }
+        let param_info = handle1.parameter_info();
+        assert!(!param_info.is_empty(), "plugin must have at least 1 parameter for this test");
+        let param_id = param_info[0].id;
+        let target_value = 0.42_f32;
+
+        // Activate the plugin so set_parameter has a real audio thread
+        // to apply the change to. Without this, the param ring entry
+        // never gets drained and save_state captures the plugin's
+        // default state, not our target value.
+        let mut processor1 = handle1.activate(48000.0, 256).expect("activate 1 failed");
+
+        // Queue the target value through the param ring.
+        handle1.set_parameter(param_id, target_value);
+
+        // Process one block of silence to drain the ring and apply
+        // the param to the plugin's internal state.
+        let silence_in = vec![0.0f32; 256];
+        let mut out_l = vec![0.0f32; 256];
+        let mut out_r = vec![0.0f32; 256];
+        let transport = TransportInfo {
+            bpm: 120.0,
+            sample_rate: 48000.0,
+            sample_position: 0,
+            is_playing: false,
+        };
+        processor1.process(
+            &silence_in, &silence_in, &mut out_l, &mut out_r,
+            256, &transport,
+        );
+        // Sanity check: the value we set should now be visible via
+        // get_parameter. If this fails the rest of the test is
+        // meaningless (we'd be saving a different state than we
+        // thought).
+        let applied = handle1.get_parameter(param_id);
+        assert!(
+            (applied - target_value).abs() < 0.05,
+            "set_parameter did not take effect: expected ~{target_value}, got {applied}"
+        );
+
+        // Save the state. The plugin should capture the param value we
+        // just set along with everything else.
+        let saved_state = handle1.save_state().expect("save_state failed");
+        assert!(!saved_state.is_empty(), "saved state must be non-empty for a state-supporting plugin");
+        eprintln!("[ok] Saved {} bytes of state (param was {applied:.4})", saved_state.len());
+
+        // Stop the audio thread cleanly.
+        let stopped1 = processor1.stop();
+        handle1.deactivate(stopped1).expect("deactivate 1 failed");
+        drop(handle1);
+
+        // ── Phase 2: reload, set a DIFFERENT value, load saved state ──
+        let mut handle2 = ClapPluginHandle::load(path).expect("load 2 failed");
+        // Activate at the same sample rate / block size so the plugin
+        // is in a known state for load_state to apply to.
+        let mut processor = handle2.activate(48000.0, 256).expect("activate 2 failed");
+
+        // Set a deliberately different value so we can detect the
+        // load_state actually applies the saved state (not just no-ops
+        // back to whatever we set).
+        let different_value = 0.88_f32;
+        handle2.set_parameter(param_id, different_value);
+        processor.process(
+            &silence_in, &silence_in, &mut out_l, &mut out_r,
+            256, &transport,
+        );
+        // Now read the param back. After the process() flush, the
+        // audio thread has applied our set_parameter and we can read
+        // the current value via the main thread.
+        let pre_load = handle2.get_parameter(param_id);
+        eprintln!("[info] param value before load_state: {pre_load:.4} (expected ~{different_value})");
+
+        // Load the saved state. The plugin should restore param 0 to
+        // target_value (0.42), overwriting our 0.88.
+        handle2.load_state(&saved_state).expect("load_state failed");
+
+        // Process one more block so any audio-thread state the load
+        // touched gets applied (some plugins update their param
+        // values lazily on the next process tick).
+        processor.process(
+            &silence_in, &silence_in, &mut out_l, &mut out_r,
+            256, &transport,
+        );
+
+        let post_load = handle2.get_parameter(param_id);
+        eprintln!("[info] param value after load_state:  {post_load:.4} (expected ~{target_value})");
+
+        // The loaded value should match the originally-set target
+        // value (within float epsilon). We allow a tiny tolerance
+        // because CLAP params may be quantized to plugin-internal
+        // resolution, but the difference should be small.
+        let diff = (post_load - target_value).abs();
+        assert!(
+            diff < 0.05,
+            "loaded param {post_load} differs from saved {target_value} by {diff} (more than 0.05 tolerance)"
+        );
+
+        // Tear down the audio thread cleanly.
+        let stopped = processor.stop();
+        handle2.deactivate(stopped).expect("deactivate 2 failed");
+    }
 }
