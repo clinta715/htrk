@@ -2572,24 +2572,10 @@ impl HtrkApp {
         } else {
             48000.0
         };
-        let max_block = 512;
-
-        let mut handle = crate::audio::plugins::clap_plugin::ClapPluginHandle::load(&descriptor.path)
-            .map_err(|e| format!("Load failed: {e}"))?;
-
-        // Restore the saved plugin state (e.g. preset, patch, parameters)
-        // before activation, so the plugin starts with the user's patches.
-        if let Some(state) = initial_state {
-            if !state.is_empty() {
-                if let Err(e) = handle.load_state(state) {
-                    eprintln!("[plugin] instrument plugin state load failed: {e}");
-                }
-            }
-        }
-
-        let processor = handle.activate(sample_rate, max_block)
-            .map_err(|e| format!("Activate failed: {e}"))?;
-        let name = processor.name().to_string();
+        let (handle, processor, name) =
+            crate::ui::plugin_browser::load_and_activate_clap_plugin(
+                descriptor, sample_rate, 512, initial_state,
+            )?;
 
         if let Some(ref mut sender) = self.core.command_sender {
             sender.send(AudioCommand::InstallInstrumentPlugin {
@@ -2600,7 +2586,6 @@ impl HtrkApp {
             return Err("No command sender — audio engine not running?".into());
         }
 
-        let handle: Box<dyn HostedPluginHandle> = Box::new(handle);
         Ok((handle, name))
     }
 
@@ -2637,11 +2622,17 @@ impl HtrkApp {
         self.core.ensure_module_ownership();
         if let Some(ref mut module) = self.core.module {
             if let Some(arc_module) = std::sync::Arc::get_mut(module) {
-                if instrument_idx < arc_module.instruments.len() {
-                    if let Some(ref mut slot) = arc_module.instruments[instrument_idx].plugin {
-                        slot.state = state;
-                    }
-                }
+                crate::ui::plugin_browser::write_plugin_state_to_slot(
+                    arc_module,
+                    |m| {
+                        if instrument_idx < m.instruments.len() {
+                            m.instruments[instrument_idx].plugin.as_mut()
+                        } else {
+                            None
+                        }
+                    },
+                    state,
+                );
             }
         }
     }
@@ -2650,18 +2641,31 @@ impl HtrkApp {
     /// write it into the module's `instrument.plugin.state` field. Call
     /// this on project save so plugins reload with the same patches.
     pub(crate) fn save_all_instrument_plugin_states(&mut self) {
-        for idx in 0..self.instrument_plugin_handles.len() {
-            if self.instrument_plugin_handles[idx].is_some() {
-                // Temporarily take the handle out so we can call save_state
-                // (which is &mut self) and put it back.
-                if let Some(mut handle) = self.instrument_plugin_handles[idx].take() {
-                    if let Ok(state) = handle.save_state() {
-                        self.write_instrument_plugin_state(idx, state);
-                    }
-                    self.instrument_plugin_handles[idx] = Some(handle);
-                }
+        // Borrow the two pieces we need as separate locals so the
+        // closure passed to save_all_plugin_states can borrow them
+        // independently (avoids &mut self / &mut self conflict).
+        let core_module = &mut self.core.module;
+        let handles = std::mem::take(&mut self.instrument_plugin_handles);
+        let mut handles = handles;
+        crate::ui::plugin_browser::save_all_plugin_states(&mut handles, |idx, state| {
+            // Write the state into the module slot (if it still exists).
+            if let Some(arc_module) =
+                core_module.as_mut().and_then(|m| std::sync::Arc::get_mut(m))
+            {
+                crate::ui::plugin_browser::write_plugin_state_to_slot(
+                    arc_module,
+                    |m| {
+                        if idx < m.instruments.len() {
+                            m.instruments[idx].plugin.as_mut()
+                        } else {
+                            None
+                        }
+                    },
+                    state,
+                );
             }
-        }
+        });
+        self.instrument_plugin_handles = handles;
     }
 
     /// Send note-off for all currently-held preview notes for the given
@@ -2804,35 +2808,34 @@ impl HtrkApp {
 
     // ─── Send-bus plugin state persistence (mirrors instrument side) ─────
 
-    /// Write the opaque state blob into `module.send_bus_plugins[send_index]`
-    /// so the next save persists it. Does nothing if the slot is missing.
-    fn write_send_bus_plugin_state(&mut self, send_index: usize, state: Vec<u8>) {
-        self.core.ensure_module_ownership();
-        if let Some(ref mut module) = self.core.module {
-            if let Some(arc_module) = std::sync::Arc::get_mut(module) {
-                if send_index < arc_module.send_bus_plugins.len() {
-                    if let Some(ref mut slot) = arc_module.send_bus_plugins[send_index] {
-                        slot.state = state;
-                    }
-                }
-            }
-        }
-    }
-
     /// Iterate all loaded send-bus plugin handles, capture their state, and
     /// write it into the module's `send_bus_plugins[i].state` field. Call
     /// this on project save so plugins reload with the same patches.
     pub(crate) fn save_all_send_bus_plugin_states(&mut self) {
-        for idx in 0..self.send_bus_handles.len() {
-            if self.send_bus_handles[idx].is_some() {
-                if let Some(mut handle) = self.send_bus_handles[idx].take() {
-                    if let Ok(state) = handle.save_state() {
-                        self.write_send_bus_plugin_state(idx, state);
-                    }
-                    self.send_bus_handles[idx] = Some(handle);
-                }
+        // Borrow the two pieces we need as separate locals so the
+        // closure passed to save_all_plugin_states can borrow them
+        // independently (avoids &mut self / &mut self conflict).
+        let core_module = &mut self.core.module;
+        let handles = std::mem::take(&mut self.send_bus_handles);
+        let mut handles = handles;
+        crate::ui::plugin_browser::save_all_plugin_states(&mut handles, |idx, state| {
+            if let Some(arc_module) =
+                core_module.as_mut().and_then(|m| std::sync::Arc::get_mut(m))
+            {
+                crate::ui::plugin_browser::write_plugin_state_to_slot(
+                    arc_module,
+                    |m| {
+                        if idx < m.send_bus_plugins.len() {
+                            m.send_bus_plugins[idx].as_mut()
+                        } else {
+                            None
+                        }
+                    },
+                    state,
+                );
             }
-        }
+        });
+        self.send_bus_handles = handles;
     }
 
     /// Reload any send-bus plugin slots from the current module. Called

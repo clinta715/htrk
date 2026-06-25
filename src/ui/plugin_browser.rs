@@ -172,33 +172,39 @@ pub enum PluginBrowserStatus {
 
 // ── Plugin loading (main thread) ──
 
-/// Load a CLAP plugin and send it to the audio engine on a send bus.
-/// Returns the activated handle (main-thread side) and the plugin name.
-/// The handle MUST be kept on the main thread for editor operations.
+/// Load and activate a CLAP plugin. Returns the main-thread handle
+/// (caller keeps for editor operations) and the audio-thread processor
+/// (caller sends to the audio engine via the appropriate command).
 /// This is a blocking operation (typically <100ms for most plugins).
 ///
 /// If `initial_state` is `Some(non-empty)`, it's applied via the plugin's
 /// state-load extension before activation, so the plugin starts with the
 /// user's saved patch. Pass `None` (or an empty slice) for a fresh
 /// default-state load.
-pub fn load_and_install_plugin(
+///
+/// Shared by send-bus and instrument plugin loading. The caller decides
+/// which `AudioCommand` variant to send (`SetSendPlugin` or
+/// `InstallInstrumentPlugin`).
+pub fn load_and_activate_clap_plugin(
     descriptor: &PluginDescriptor,
-    send_index: usize,
     sample_rate: f64,
     max_block: u32,
-    command_sender: &mut Option<CommandSender>,
     initial_state: Option<&[u8]>,
-) -> Result<(Box<dyn HostedPluginHandle>, String), String> {
-    // Load and activate on the main thread
+) -> Result<
+    (
+        Box<dyn HostedPluginHandle>,
+        Box<dyn crate::audio::plugins::HostedPluginProcessor>,
+        String,
+    ),
+    String,
+> {
     let mut handle = ClapPluginHandle::load(&descriptor.path)
         .map_err(|e| format!("Load failed: {e}"))?;
 
-    // Restore the saved plugin state (e.g. preset, patch, parameters)
-    // before activation, so the plugin starts with the user's patches.
     if let Some(state) = initial_state {
         if !state.is_empty() {
             if let Err(e) = handle.load_state(state) {
-                eprintln!("[plugin] send-bus plugin state load failed: {e}");
+                eprintln!("[plugin] state load failed: {e}");
             }
         }
     }
@@ -207,7 +213,24 @@ pub fn load_and_install_plugin(
         .map_err(|e| format!("Activate failed: {e}"))?;
     let name = processor.name().to_string();
 
-    // Send the audio processor to the audio engine
+    let handle: Box<dyn HostedPluginHandle> = Box::new(handle);
+    Ok((handle, processor, name))
+}
+
+/// Load a CLAP plugin and send it to the audio engine on a send bus.
+/// Returns the activated handle (main-thread side) and the plugin name.
+/// The handle MUST be kept on the main thread for editor operations.
+pub fn load_and_install_plugin(
+    descriptor: &PluginDescriptor,
+    send_index: usize,
+    sample_rate: f64,
+    max_block: u32,
+    command_sender: &mut Option<CommandSender>,
+    initial_state: Option<&[u8]>,
+) -> Result<(Box<dyn HostedPluginHandle>, String), String> {
+    let (handle, processor, name) =
+        load_and_activate_clap_plugin(descriptor, sample_rate, max_block, initial_state)?;
+
     if let Some(ref mut sender) = command_sender {
         sender.send(AudioCommand::SetSendPlugin {
             send_index,
@@ -217,10 +240,42 @@ pub fn load_and_install_plugin(
         return Err("No command sender — audio engine not running?".into());
     }
 
-    // Erase the concrete type to a trait object so the caller can store it
-    // alongside other potential plugin formats in the future.
-    let handle: Box<dyn HostedPluginHandle> = Box::new(handle);
     Ok((handle, name))
+}
+
+/// Iterate `handles`, capture each one's state, and deliver the
+/// `(index, state)` pair to `on_state`. The handle is temporarily
+/// removed from its slot to satisfy `save_state`'s `&mut self`
+/// signature, then put back. Returns nothing; the caller decides
+/// what to do with each state blob (typically write to a module
+/// slot). Used by both send-bus and instrument save-all flows.
+pub fn save_all_plugin_states(
+    handles: &mut [Option<Box<dyn HostedPluginHandle>>],
+    mut on_state: impl FnMut(usize, Vec<u8>),
+) {
+    for i in 0..handles.len() {
+        if let Some(mut handle) = handles[i].take() {
+            if let Ok(state) = handle.save_state() {
+                on_state(i, state);
+            }
+            handles[i] = Some(handle);
+        }
+    }
+}
+
+/// Write `state` into the module's plugin slot via the caller-
+/// provided `slot_for` accessor. No-op if the slot is missing. Used
+/// by both send-bus and instrument write-state flows. The closure
+/// receives the `&mut Module` and is responsible for navigating
+/// to the right slot (instrument index vs send-bus index).
+pub fn write_plugin_state_to_slot(
+    module: &mut crate::sequencer::Module,
+    slot_for: impl FnOnce(&mut crate::sequencer::Module) -> Option<&mut crate::sequencer::plugin::PluginSlot>,
+    state: Vec<u8>,
+) {
+    if let Some(slot) = slot_for(module) {
+        slot.state = state;
+    }
 }
 
 #[cfg(test)]
