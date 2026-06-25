@@ -8,6 +8,8 @@ use crate::ui::instrument_editor::InstrumentEditEvent;
 pub struct InstrumentEditor {
     pub list_width: f32,
     pub envelope_height: f32,
+    pub plugin_browser_open: bool,
+    pub plugin_name: String,
 }
 
 impl Default for InstrumentEditor {
@@ -15,6 +17,8 @@ impl Default for InstrumentEditor {
         InstrumentEditor {
             list_width: 150.0,
             envelope_height: 180.0,
+            plugin_browser_open: false,
+            plugin_name: String::new(),
         }
     }
 }

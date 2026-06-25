@@ -241,6 +241,9 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
         InstrumentEditEvent::ImportInstrument => {
             return;
         }
+        InstrumentEditEvent::PluginUnload => {
+            return;
+        }
     };
 
     app.core.execute_edit_command(cmd);

@@ -271,6 +271,7 @@ impl HtrkApp {
             instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor {
                 list_width: inst_list_w,
                 envelope_height: inst_env_h,
+                ..crate::ui::instrument_editor_panel::InstrumentEditor::default()
             },
             mixer_state: crate::ui::mixer_view::MixerState::default(),
             pending_view_switch: pending_view_switch.clone(),
@@ -1749,8 +1750,88 @@ impl HtrkApp {
                         self.browser_purpose = BrowserPurpose::LoadInstrument;
                         self.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut self.config);
                     }
+                    crate::ui::instrument_editor::InstrumentEditEvent::PluginUnload => {
+                        let instrument_idx = self.core.selected_instrument;
+                        self.unload_instrument_plugin(instrument_idx);
+                        self.instrument_editor.plugin_name.clear();
+                        self.core.ensure_module_ownership();
+                        if let Some(ref mut module) = self.core.module {
+                            if let Some(arc_module) = Arc::get_mut(module) {
+                                if instrument_idx < arc_module.instruments.len() {
+                                    arc_module.instruments[instrument_idx].plugin = None;
+                                }
+                            }
+                        }
+                        self.core.sync_module_to_audio();
+                    }
                     other => crate::actions::handle_instrument_edit(self, other),
                 }
+            }
+        }
+
+        // Plugin browser dialog for instrument plugins
+        if self.instrument_editor.plugin_browser_open {
+            let instrument_idx = self.core.selected_instrument;
+            let discovered = self.discovered_plugins();
+            let mut open = true;
+            let (result, action) = crate::ui::plugin_browser::draw_plugin_browser(
+                &ui.ctx(),
+                &mut open,
+                instrument_idx,
+                &format!("Instr {:02X}", instrument_idx),
+                &self.theme,
+                &discovered,
+                &self.plugin_browser_status,
+            );
+
+            if action.rescan_requested {
+                let summary = self.rescan_plugins();
+                self.plugin_browser_status =
+                    crate::ui::plugin_browser::PluginBrowserStatus::Error(summary);
+            }
+
+            match result {
+                crate::ui::plugin_browser::PluginSelectResult::Selected {
+                    descriptor,
+                    send_index,
+                } => {
+                    self.plugin_browser_status = crate::ui::plugin_browser::PluginBrowserStatus::Loading(descriptor.name.clone());
+                    match self.load_and_install_instrument_plugin(&descriptor, send_index) {
+                        Ok((handle, name)) => {
+                            self.instrument_plugin_handles[send_index] = Some(handle);
+                            self.instrument_editor.plugin_name = name.clone();
+                            self.instrument_editor.plugin_browser_open = false;
+
+                            self.core.ensure_module_ownership();
+                            if let Some(ref mut module) = self.core.module {
+                                if let Some(arc_module) = Arc::get_mut(module) {
+                                    if send_index < arc_module.instruments.len() {
+                                        arc_module.instruments[send_index].plugin = Some(
+                                            crate::sequencer::plugin::PluginSlot::new(
+                                                "clap",
+                                                descriptor.path.to_string_lossy().to_string(),
+                                                descriptor.plugin_id,
+                                            )
+                                        );
+                                    }
+                                }
+                            }
+
+                            self.plugin_browser_status = crate::ui::plugin_browser::PluginBrowserStatus::Loaded(name);
+                        }
+                        Err(e) => {
+                            eprintln!("[plugin] instrument plugin load failed: {e}");
+                            self.plugin_browser_status = crate::ui::plugin_browser::PluginBrowserStatus::Error(e);
+                        }
+                    }
+                }
+                crate::ui::plugin_browser::PluginSelectResult::Cancelled => {
+                    self.instrument_editor.plugin_browser_open = false;
+                }
+            }
+
+            if !open {
+                self.instrument_editor.plugin_browser_open = false;
             }
         }
     }

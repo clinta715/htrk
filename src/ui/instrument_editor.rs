@@ -40,6 +40,7 @@ pub enum InstrumentEditEvent {
     LoadInstrument,
     ExportInstrument(usize),
     ImportInstrument,
+    PluginUnload,
 }
 
 pub fn draw_instrument_editor(
@@ -208,6 +209,21 @@ pub fn draw_instrument_editor(
                         if let Some(e) = draw_maps_row(ui, inst, theme, module, &mut paint_sample_idx, &mut browser_open, playback_state, config) {
                             event = Some(e);
                         }
+                        ui.add_space(8.0);
+                        egui::CollapsingHeader::new("Plugin Backing")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                if !instrument_editor.plugin_name.is_empty() {
+                                    ui.label(&instrument_editor.plugin_name);
+                                    if ui.button("Unload").clicked() {
+                                        event = Some(InstrumentEditEvent::PluginUnload);
+                                    }
+                                } else {
+                                    if ui.button("Load Plugin...").clicked() {
+                                        instrument_editor.plugin_browser_open = true;
+                                    }
+                                }
+                            });
                     });
             } else {
                 ui.centered_and_justified(|ui| {
