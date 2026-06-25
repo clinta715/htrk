@@ -292,6 +292,7 @@ let file_type = read_u8(data, &mut offset)?;
                     vib_rate: vibrato_rate,
                     plugin: None,
                     midi_base_channel: 0,
+                    macros: Vec::new(),
                 });
             } else {
                 instruments.push(Instrument {

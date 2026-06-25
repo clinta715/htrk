@@ -274,6 +274,7 @@ fn parse_it_instrument(data: &[u8], offset: usize) -> FormatResult<Instrument> {
         vib_rate: 0,
         plugin: None,
         midi_base_channel: 0,
+        macros: Vec::new(),
     })
 }
 

@@ -131,33 +131,52 @@ impl SequencerEngine {
             if let Note::On(key) = cell.note {
                 self.state.channels[channel].last_note = Note::On(key);
             }
-        } else {
-            match cell.note {
-                Note::On(key) => {
-                    self.state.channels[channel].last_note = Note::On(key);
+                } else {
+                    match cell.note {
+                        Note::On(key) => {
+                            self.state.channels[channel].last_note = Note::On(key);
 
-                    let has_plugin = has_instruments
-                        && instrument_idx > 0
-                        && instrument_idx < module.instruments.len()
-                        && module.instruments[instrument_idx].plugin.is_some();
+                            let has_plugin = has_instruments
+                                && instrument_idx > 0
+                                && instrument_idx < module.instruments.len()
+                                && module.instruments[instrument_idx].plugin.is_some();
 
-                    if has_plugin {
-                        let midi_ch = module.instruments[instrument_idx]
-                            .midi_base_channel
-                            .wrapping_add(channel as u8) % 16;
-                        self.pending_plugin_note_events.push(PluginNoteEvent {
-                            instrument_idx: instrument_idx as u8,
-                            midi_channel: midi_ch,
-                            key,
-                            velocity: 100,
-                            note_on: true,
-                        });
-                    } else if is_tone_portamento {
-                        self.with_processor_mut(|processor, engine| processor.setup_portamento(engine, channel, key, remapped_key, sample, sample_idx));
-                    } else {
-                        self.with_processor_mut(|processor, engine| processor.trigger_note(engine, channel, key, remapped_key, sample, sample_idx, cell, instrument_idx));
-                    }
-                }
+                            if has_plugin {
+                                let midi_ch = module.instruments[instrument_idx]
+                                    .midi_base_channel
+                                    .wrapping_add(channel as u8) % 16;
+                                self.pending_plugin_note_events.push(PluginNoteEvent {
+                                    instrument_idx: instrument_idx as u8,
+                                    midi_channel: midi_ch,
+                                    key,
+                                    velocity: 100,
+                                    note_on: true,
+                                });
+                                // Apply instrument parameter macros.
+                                // For each macro defined on this instrument,
+                                // read the source value (currently just the
+                                // cell's volume column), normalize to
+                                // 0.0–1.0, remap to the macro's range, and
+                                // queue a SetInstrumentPluginParam value.
+                                // The audio engine routes queued values to
+                                // the matching instrument_plugin_processors
+                                // slot on the next tick.
+                                if let Some(vol) = cell.volume {
+                                    let inst = &module.instruments[instrument_idx];
+                                    for m in &inst.macros {
+                                        let normalized = (vol as f32 / 64.0).clamp(0.0, 1.0);
+                                        let value = m.range_min
+                                            + normalized * (m.range_max - m.range_min);
+                                        self.pending_instrument_plugin_param_changes
+                                            .push((instrument_idx as u8, m.param_id, value));
+                                    }
+                                }
+                            } else if is_tone_portamento {
+                                self.with_processor_mut(|processor, engine| processor.setup_portamento(engine, channel, key, remapped_key, sample, sample_idx));
+                            } else {
+                                self.with_processor_mut(|processor, engine| processor.trigger_note(engine, channel, key, remapped_key, sample, sample_idx, cell, instrument_idx));
+                            }
+                        }
                 Note::Off => {
                     let has_plugin = has_instruments
                         && instrument_idx > 0

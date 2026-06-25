@@ -161,6 +161,56 @@ pub struct Instrument {
     /// they are distinguished by `midi_base_channel + channel_index`.
     #[serde(default = "default_midi_channel")]
     pub midi_base_channel: u8,
+
+    /// Parameter macros: tracker column values that drive instrument
+    /// plugin parameters. When the sequencer processes a cell that
+    /// uses this instrument and has a value for one of the macro
+    /// sources, the value is remapped to the macro's range and
+    /// written to the corresponding plugin parameter.
+    ///
+    /// Currently only the cell's volume column (0–64) is supported
+    /// as a macro source; the column is normalized to 0.0–1.0 and
+    /// linearly remapped to `[range_min, range_max]`. This lets
+    /// tracker composers use the volume column as a "modulation
+    /// wheel" for synth parameters (e.g. filter cutoff, resonance,
+    /// vibrato amount) without writing automation lanes.
+    #[serde(default)]
+    pub macros: Vec<ParameterMacro>,
+}
+
+/// Source of a value used by a `ParameterMacro`. Currently only
+/// the cell's volume column is supported, but the enum leaves
+/// room for additional sources (panning, filter cutoff, etc.)
+/// in future phases.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum MacroSource {
+    /// The cell's volume column value, 0–64.
+    Volume,
+}
+
+/// A single tracker-column → plugin-parameter mapping.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ParameterMacro {
+    pub source: MacroSource,
+    /// The plugin's stable `ClapId` for the parameter to drive.
+    pub param_id: u32,
+    /// Minimum value of the remapped range (typically the plugin
+    /// param's `min`).
+    pub range_min: f32,
+    /// Maximum value of the remapped range (typically the plugin
+    /// param's `max`).
+    pub range_max: f32,
+}
+
+impl Default for ParameterMacro {
+    fn default() -> Self {
+        Self {
+            source: MacroSource::Volume,
+            param_id: 0,
+            range_min: 0.0,
+            range_max: 1.0,
+        }
+    }
 }
 
 impl Default for Instrument {
@@ -196,6 +246,7 @@ impl Default for Instrument {
             vib_rate: 0,
             plugin: None,
             midi_base_channel: 0,
+            macros: Vec::new(),
         }
     }
 }

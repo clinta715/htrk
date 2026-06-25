@@ -1606,3 +1606,79 @@ fn test_instrument_plugin_param_automation_queues_and_drains() {
     let drained2 = engine.collect_instrument_plugin_param_automation();
     assert!(drained2.is_empty(), "second drain must be empty");
 }
+
+/// Verifies the parameter-macro flow: a cell with a volume column
+/// drives a queued instrument-plugin param value via a macro
+/// defined on the instrument. The audio engine would then route the
+/// queued value to the matching processor's param ring.
+#[test]
+fn test_instrument_parameter_macro_queues_param_value() {
+    use crate::sequencer::instrument::{MacroSource, ParameterMacro};
+    use crate::sequencer::plugin::PluginSlot;
+
+    let mut engine = SequencerEngine::new(48000.0);
+    let mut module = Module::default();
+    module.instruments[1].plugin = Some(PluginSlot::new("clap", "/dev/null", "test.plugin"));
+    // Define a macro: cell volume 0-64 -> plugin param range 0-1
+    module.instruments[1].macros.push(ParameterMacro {
+        source: MacroSource::Volume,
+        param_id: 42,
+        range_min: 0.0,
+        range_max: 1.0,
+    });
+    engine.load_module(Arc::new(module));
+
+    // Cell with volume column = 32 (half of 64). Expected remapped
+    // value: 0.0 + (32/64) * (1.0 - 0.0) = 0.5
+    let cell = Cell {
+        note: Note::On(60),
+        instrument: Some(1),
+        volume: Some(32),
+        ..Default::default()
+    };
+    engine.process_cell_unified(0, &cell);
+
+    let drained = engine.collect_instrument_plugin_param_automation();
+    assert_eq!(drained.len(), 1, "expected one macro value queued");
+    assert_eq!(drained[0].0, 1, "instrument_idx should be 1");
+    assert_eq!(drained[0].1, 42, "param_id should be 42");
+    assert!(
+        (drained[0].2 - 0.5).abs() < 0.01,
+        "remapped value should be ~0.5, got {}",
+        drained[0].2
+    );
+
+    // A cell with volume column = 0 should produce 0.0
+    let cell_zero = Cell {
+        note: Note::On(60),
+        instrument: Some(1),
+        volume: Some(0),
+        ..Default::default()
+    };
+    engine.process_cell_unified(0, &cell_zero);
+    let drained2 = engine.collect_instrument_plugin_param_automation();
+    assert_eq!(drained2.len(), 1);
+    assert!(drained2[0].2.abs() < 0.001, "vol=0 should map to 0.0, got {}", drained2[0].2);
+
+    // A cell with volume column = 64 should produce 1.0
+    let cell_max = Cell {
+        note: Note::On(60),
+        instrument: Some(1),
+        volume: Some(64),
+        ..Default::default()
+    };
+    engine.process_cell_unified(0, &cell_max);
+    let drained3 = engine.collect_instrument_plugin_param_automation();
+    assert_eq!(drained3.len(), 1);
+    assert!((drained3[0].2 - 1.0).abs() < 0.001, "vol=64 should map to 1.0, got {}", drained3[0].2);
+
+    // A cell with no volume column should produce no macro values
+    let cell_no_vol = Cell {
+        note: Note::On(60),
+        instrument: Some(1),
+        ..Default::default()
+    };
+    engine.process_cell_unified(0, &cell_no_vol);
+    let drained4 = engine.collect_instrument_plugin_param_automation();
+    assert!(drained4.is_empty(), "no volume column -> no macro queued");
+}
