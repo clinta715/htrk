@@ -1800,8 +1800,56 @@ impl HtrkApp {
         );
     }
 
-    fn handle_instrument_tab(&mut self, ui: &mut egui::Ui) {
+    fn handle_instrument_tab(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        #[cfg(windows)]
+        let eframe_hwnd: Option<crate::ui::sendfx_panel::EframeHwnd> = {
+            crate::audio::plugins::plugin_window::get_eframe_hwnd(frame)
+                .map(|h| h as usize)
+        };
+        #[cfg(not(windows))]
+        let eframe_hwnd: Option<crate::ui::sendfx_panel::EframeHwnd> = None;
+
+        // X-close poll: if any instrument plugin's editor HWND is no
+        // longer visible (user X-closed the window externally), call
+        // close_editor to keep our cached state in sync with reality.
+        for handle_opt in self.instrument_plugin_handles.iter_mut() {
+            if let Some(ref mut handle) = handle_opt {
+                if handle.is_editor_open() {
+                    if !crate::ui::sendfx_editor::is_editor_hwnd_visible(handle.as_ref()) {
+                        handle.close_editor();
+                    }
+                }
+            }
+        }
+
         if let Some(module) = &self.core.module {
+            // Cache the plugin editor state for the currently selected
+            // instrument so the editor UI can read it without needing
+            // a borrow of HtrkApp.
+            let inst_idx = self.core.selected_instrument;
+            self.instrument_editor.plugin_has_editor = self
+                .instrument_plugin_handles
+                .get(inst_idx)
+                .and_then(|h| h.as_ref())
+                .map(|h| h.has_editor())
+                .unwrap_or(false);
+            self.instrument_editor.plugin_editor_is_open = self
+                .instrument_plugin_handles
+                .get(inst_idx)
+                .and_then(|h| h.as_ref())
+                .map(|h| h.is_editor_open())
+                .unwrap_or(false);
+            self.instrument_editor.plugin_editor_mode = self
+                .instrument_plugin_handles
+                .get(inst_idx)
+                .and_then(|h| h.as_ref())
+                .and_then(|h| h.editor_mode());
+            self.instrument_editor.plugin_editor_error = self
+                .instrument_plugin_handles
+                .get(inst_idx)
+                .and_then(|h| h.as_ref())
+                .and_then(|h| h.last_editor_error());
+
             if let Some(event) = self.instrument_editor.ui(
                 ui,
                 module,
@@ -1810,6 +1858,7 @@ impl HtrkApp {
                 &self.theme,
                 &self.core.playback_state,
                 &mut self.config,
+                eframe_hwnd,
             ) {
                 match event {
                     crate::ui::instrument_editor::InstrumentEditEvent::SaveInstrument => {
@@ -1847,6 +1896,34 @@ impl HtrkApp {
                         self.unload_instrument_plugin(instrument_idx);
                         self.instrument_editor.plugin_name.clear();
                         self.core.sync_module_to_audio();
+                    }
+                    crate::ui::instrument_editor::InstrumentEditEvent::OpenPluginEditor { floating } => {
+                        let inst_idx = self.core.selected_instrument;
+                        let mode = if floating {
+                            crate::audio::plugins::EditorMode::Floating
+                        } else {
+                            crate::audio::plugins::EditorMode::Embedded
+                        };
+                        let parent: Option<*mut std::ffi::c_void> = if !floating {
+                            eframe_hwnd.map(|h| h as *mut _)
+                        } else {
+                            None
+                        };
+                        if let Some(handle) = self.instrument_plugin_handles.get_mut(inst_idx) {
+                            if let Some(ref mut h) = handle {
+                                if let Err(e) = h.open_editor(mode, parent) {
+                                    eprintln!("[plugin] instrument plugin open editor failed: {e}");
+                                }
+                            }
+                        }
+                    }
+                    crate::ui::instrument_editor::InstrumentEditEvent::ClosePluginEditor => {
+                        let inst_idx = self.core.selected_instrument;
+                        if let Some(handle) = self.instrument_plugin_handles.get_mut(inst_idx) {
+                            if let Some(ref mut h) = handle {
+                                h.close_editor();
+                            }
+                        }
                     }
                     other => crate::actions::handle_instrument_edit(self, other),
                 }
@@ -2810,7 +2887,7 @@ impl eframe::App for HtrkApp {
                     playback_speed,
                 ),
                 AppView::Sample => self.handle_sample_tab(ui),
-                AppView::Instrument => self.handle_instrument_tab(ui),
+                AppView::Instrument => self.handle_instrument_tab(ui, frame),
                 AppView::SendFx => self.handle_sendfx_tab(ui, frame, &ctx),
                 AppView::Playback => self.handle_playback_tab(
                     ui,

@@ -244,6 +244,12 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
         InstrumentEditEvent::PluginUnload => {
             return;
         }
+        InstrumentEditEvent::OpenPluginEditor { .. } => {
+            return;
+        }
+        InstrumentEditEvent::ClosePluginEditor => {
+            return;
+        }
     };
 
     app.core.execute_edit_command(cmd);

@@ -41,6 +41,13 @@ pub enum InstrumentEditEvent {
     ExportInstrument(usize),
     ImportInstrument,
     PluginUnload,
+    /// Open the loaded CLAP instrument plugin's editor in floating
+    /// (true) or embedded (false) mode. Caller is responsible for
+    /// looking up the handle and supplying the parent HWND for
+    /// embedded mode.
+    OpenPluginEditor { floating: bool },
+    /// Close the loaded CLAP instrument plugin's editor window.
+    ClosePluginEditor,
 }
 
 pub fn draw_instrument_editor(
@@ -52,6 +59,7 @@ pub fn draw_instrument_editor(
     playback_state: &AtomicPlaybackState,
     instrument_editor: &mut crate::ui::instrument_editor_panel::InstrumentEditor,
     config: &mut crate::app_config::AppConfig,
+    eframe_hwnd: Option<crate::ui::sendfx_panel::EframeHwnd>,
 ) -> Option<InstrumentEditEvent> {
     let mut event = None;
 
@@ -204,16 +212,55 @@ pub fn draw_instrument_editor(
                             ui.label(egui::RichText::new("CLAP Instrument:").strong());
                             if !instrument_editor.plugin_name.is_empty() {
                                 ui.label(egui::RichText::new(&instrument_editor.plugin_name).color(theme.fg_instrument));
+                            } else {
+                                ui.label(egui::RichText::new("(none — sample-based)").weak());
+                            }
+                        });
+                        if !instrument_editor.plugin_name.is_empty() {
+                            ui.horizontal(|ui| {
+                                if instrument_editor.plugin_has_editor {
+                                    if instrument_editor.plugin_editor_is_open {
+                                        if ui.button("Close Editor").clicked() {
+                                            event = Some(InstrumentEditEvent::ClosePluginEditor);
+                                        }
+                                        let mode_label = match instrument_editor.plugin_editor_mode {
+                                            Some(crate::audio::plugins::EditorMode::Floating) => "Floating",
+                                            Some(crate::audio::plugins::EditorMode::Embedded) => "Embedded",
+                                            None => "",
+                                        };
+                                        ui.label(
+                                            egui::RichText::new(mode_label)
+                                                .weak()
+                                                .size(10.0),
+                                        );
+                                    } else {
+                                        if ui.button("Edit...").clicked() {
+                                            event = Some(InstrumentEditEvent::OpenPluginEditor { floating: true });
+                                        }
+                                        if eframe_hwnd.is_some() {
+                                            if ui.button("Edit (in htrk)").clicked() {
+                                                event = Some(InstrumentEditEvent::OpenPluginEditor { floating: false });
+                                            }
+                                        }
+                                    }
+                                    if let Some(ref err) = instrument_editor.plugin_editor_error {
+                                        ui.colored_label(
+                                            egui::Color32::from_rgb(255, 100, 100),
+                                            err,
+                                        );
+                                    }
+                                }
                                 if ui.button("Unload").clicked() {
                                     event = Some(InstrumentEditEvent::PluginUnload);
                                 }
-                            } else {
-                                ui.label(egui::RichText::new("(none — sample-based)").weak());
+                            });
+                        } else {
+                            ui.horizontal(|ui| {
                                 if ui.button("Load CLAP Plugin…").clicked() {
                                     instrument_editor.plugin_browser_open = true;
                                 }
-                            }
-                        });
+                            });
+                        }
                     });
                 ui.add_space(4.0);
 

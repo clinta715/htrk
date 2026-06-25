@@ -378,7 +378,7 @@ pub fn draw_sendfx_view(
 }
 
 #[cfg(windows)]
-fn is_editor_hwnd_visible(handle: &dyn HostedPluginHandle) -> bool {
+pub(crate) fn is_editor_hwnd_visible(handle: &dyn HostedPluginHandle) -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible;
     let Some(hwnd) = handle.editor_hwnd() else {
         // No editor HWND = probably floating mode. Always "visible" (the
@@ -389,7 +389,7 @@ fn is_editor_hwnd_visible(handle: &dyn HostedPluginHandle) -> bool {
 }
 
 #[cfg(not(windows))]
-fn is_editor_hwnd_visible(_handle: &dyn HostedPluginHandle) -> bool {
+pub(crate) fn is_editor_hwnd_visible(_handle: &dyn HostedPluginHandle) -> bool {
     // Non-Windows: can't query the OS; assume visible. The plugin
     // manages its own window in floating mode.
     true
