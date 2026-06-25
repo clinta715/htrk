@@ -176,16 +176,33 @@ pub enum PluginBrowserStatus {
 /// Returns the activated handle (main-thread side) and the plugin name.
 /// The handle MUST be kept on the main thread for editor operations.
 /// This is a blocking operation (typically <100ms for most plugins).
+///
+/// If `initial_state` is `Some(non-empty)`, it's applied via the plugin's
+/// state-load extension before activation, so the plugin starts with the
+/// user's saved patch. Pass `None` (or an empty slice) for a fresh
+/// default-state load.
 pub fn load_and_install_plugin(
     descriptor: &PluginDescriptor,
     send_index: usize,
     sample_rate: f64,
     max_block: u32,
     command_sender: &mut Option<CommandSender>,
+    initial_state: Option<&[u8]>,
 ) -> Result<(Box<dyn HostedPluginHandle>, String), String> {
     // Load and activate on the main thread
     let mut handle = ClapPluginHandle::load(&descriptor.path)
         .map_err(|e| format!("Load failed: {e}"))?;
+
+    // Restore the saved plugin state (e.g. preset, patch, parameters)
+    // before activation, so the plugin starts with the user's patches.
+    if let Some(state) = initial_state {
+        if !state.is_empty() {
+            if let Err(e) = handle.load_state(state) {
+                eprintln!("[plugin] send-bus plugin state load failed: {e}");
+            }
+        }
+    }
+
     let processor = handle.activate(sample_rate, max_block)
         .map_err(|e| format!("Activate failed: {e}"))?;
     let name = processor.name().to_string();

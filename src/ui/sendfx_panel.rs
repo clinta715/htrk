@@ -48,6 +48,7 @@ impl SendFxPanel {
         command_sender: &mut Option<CommandSender>,
         plugin_handles: &mut [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
         eframe_hwnd: Option<EframeHwnd>,
+        on_remove_plugin: impl FnMut(usize, Vec<u8>),
     ) {
         crate::ui::sendfx_editor::draw_sendfx_view(
             ui,
@@ -59,6 +60,7 @@ impl SendFxPanel {
             &mut self.plugin_browser_open_for,
             plugin_handles,
             eframe_hwnd,
+            on_remove_plugin,
         );
     }
 }

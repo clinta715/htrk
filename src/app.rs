@@ -99,6 +99,12 @@ pub struct HtrkApp {
     /// to the (instrument, midi_channel, note_key) so the per-frame
     /// release check can send note-off when the key is no longer down.
     pub(crate) preview_held_notes: Vec<(egui::Key, u8, u8, u8)>,
+    /// Pending (send_index, state_blob) writes from the send-fx editor's
+    /// "Remove" button. The editor can't write to the module directly
+    /// because it doesn't own a `&mut HtrkApp`, so it pushes here and
+    /// `drain_send_bus_state_writes` flushes the queue right after the
+    /// editor's `ui()` call returns.
+    pub(crate) pending_send_bus_state_writes: Vec<(usize, Vec<u8>)>,
     /// Direct in-memory plugin library, independent of the MCP server.
     /// Populated by `rescan_plugins()` at startup and on user request. The
     /// Send FX plugin browser reads from this so plugins are visible
@@ -186,6 +192,7 @@ impl HtrkApp {
             send_bus_handles: [None, None, None, None],
             instrument_plugin_handles: (0..255).map(|_| None).collect(),
             preview_held_notes: Vec::new(),
+            pending_send_bus_state_writes: Vec::new(),
             plugin_library: crate::audio::plugins::PluginLibrary::new(),
             plugin_scan_done: false,
             plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
@@ -271,6 +278,7 @@ impl HtrkApp {
             send_bus_handles: [None, None, None, None],
             instrument_plugin_handles: (0..255).map(|_| None).collect(),
             preview_held_notes: Vec::new(),
+            pending_send_bus_state_writes: Vec::new(),
             plugin_library: PluginLibrary::new(),
             plugin_scan_done: false,
             plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
@@ -800,8 +808,9 @@ impl HtrkApp {
         self.pattern_view.scroll_channel = 0;
         self.sync_channel_fields();
         self.sync_send_bus_state();
-        // A new song has no instruments with plugin slots, but call
-        // sync_instrument_plugin_state anyway for symmetry with load_file.
+        // A new song has no plugin slots, but call these anyway for
+        // symmetry with load_file.
+        self.sync_send_bus_plugin_state();
         self.sync_instrument_plugin_state();
     }
 
@@ -2166,7 +2175,29 @@ impl HtrkApp {
             &mut self.core.command_sender,
             &mut self.send_bus_handles,
             eframe_hwnd,
+            |send_index, state| {
+                // The editor can't write to the module directly (it
+                // doesn't own a &mut HtrkApp), so push to a queue that
+                // gets drained immediately after the editor returns.
+                self.pending_send_bus_state_writes.push((send_index, state));
+            },
         );
+
+        // Flush any pending state writes from the editor's "Remove" button.
+        if !self.pending_send_bus_state_writes.is_empty() {
+            self.core.ensure_module_ownership();
+            if let Some(ref mut module) = self.core.module {
+                if let Some(arc_module) = std::sync::Arc::get_mut(module) {
+                    for (send_index, state) in self.pending_send_bus_state_writes.drain(..) {
+                        if send_index < arc_module.send_bus_plugins.len() {
+                            if let Some(ref mut slot) = arc_module.send_bus_plugins[send_index] {
+                                slot.state = state;
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         if let Some(si) = self.sendfx_panel.plugin_browser_open_for {
             let discovered = self.discovered_plugins();
@@ -2198,16 +2229,46 @@ impl HtrkApp {
                         48000.0
                     };
                     let max_block = 512;
+                    // If the user picks the same plugin that was previously
+                    // loaded on this bus, restore its saved state. A
+                    // different plugin path starts fresh.
+                    let descriptor_path = descriptor.path.to_string_lossy().to_string();
+                    let initial_state: Option<Vec<u8>> = self.core.module.as_ref()
+                        .and_then(|m| m.send_bus_plugins.get(send_index))
+                        .and_then(|opt| opt.as_ref())
+                        .filter(|slot| slot.path == descriptor_path && !slot.state.is_empty())
+                        .map(|slot| slot.state.clone());
                     match crate::ui::plugin_browser::load_and_install_plugin(
                         &descriptor,
                         send_index,
                         sample_rate,
                         max_block,
                         &mut self.core.command_sender,
+                        initial_state.as_deref(),
                     ) {
                         Ok((handle, name)) => {
                             self.send_bus_handles[send_index] = Some(handle);
                             self.sendfx_panel.plugin_names[send_index] = Some(name.clone());
+                            // Populate the module's send_bus_plugins slot so
+                            // the .htk file persists the assignment and the
+                            // plugin can auto-reload next time. Capture the
+                            // freshly-loaded state so the very first project
+                            // save persists the plugin's default patch.
+                            self.core.ensure_module_ownership();
+                            if let Some(ref mut module) = self.core.module {
+                                if let Some(arc_module) = std::sync::Arc::get_mut(module) {
+                                    if send_index < arc_module.send_bus_plugins.len() {
+                                        arc_module.send_bus_plugins[send_index] = Some(
+                                            crate::sequencer::plugin::PluginSlot::new(
+                                                descriptor.format.as_str(),
+                                                descriptor_path,
+                                                descriptor.plugin_id,
+                                            )
+                                        );
+                                    }
+                                }
+                            }
+                            self.save_all_send_bus_plugin_states();
                             self.plugin_browser_status = crate::ui::plugin_browser::PluginBrowserStatus::Loaded(name);
                         }
                         Err(e) => {
@@ -2575,6 +2636,105 @@ impl HtrkApp {
             }
         }
         self.preview_held_notes = remaining;
+    }
+
+    // ─── Send-bus plugin state persistence (mirrors instrument side) ─────
+
+    /// Write the opaque state blob into `module.send_bus_plugins[send_index]`
+    /// so the next save persists it. Does nothing if the slot is missing.
+    fn write_send_bus_plugin_state(&mut self, send_index: usize, state: Vec<u8>) {
+        self.core.ensure_module_ownership();
+        if let Some(ref mut module) = self.core.module {
+            if let Some(arc_module) = std::sync::Arc::get_mut(module) {
+                if send_index < arc_module.send_bus_plugins.len() {
+                    if let Some(ref mut slot) = arc_module.send_bus_plugins[send_index] {
+                        slot.state = state;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Iterate all loaded send-bus plugin handles, capture their state, and
+    /// write it into the module's `send_bus_plugins[i].state` field. Call
+    /// this on project save so plugins reload with the same patches.
+    pub(crate) fn save_all_send_bus_plugin_states(&mut self) {
+        for idx in 0..self.send_bus_handles.len() {
+            if self.send_bus_handles[idx].is_some() {
+                if let Some(mut handle) = self.send_bus_handles[idx].take() {
+                    if let Ok(state) = handle.save_state() {
+                        self.write_send_bus_plugin_state(idx, state);
+                    }
+                    self.send_bus_handles[idx] = Some(handle);
+                }
+            }
+        }
+    }
+
+    /// Reload any send-bus plugin slots from the current module. Called
+    /// from `load_file` and `new_song` so opening a saved `.htk` with
+    /// send-bus plugin assignments brings the plugins back to life
+    /// automatically (with their saved state restored). Slots whose path
+    /// is no longer in the discovered library are left in place but not
+    /// loaded; the user can re-pick from the browser to fix the path.
+    pub(crate) fn sync_send_bus_plugin_state(&mut self) {
+        let slots: Vec<(usize, String, String, Vec<u8>)> = match self.core.module.as_ref() {
+            Some(m) => m.send_bus_plugins.iter().enumerate()
+                .filter_map(|(idx, opt)| opt.as_ref().map(|slot| {
+                    (idx, slot.format.clone(), slot.path.clone(), slot.state.clone())
+                }))
+                .collect(),
+            None => return,
+        };
+        if slots.is_empty() {
+            return;
+        }
+
+        let discovered = self.discovered_plugins();
+        for (send_index, format, path, state) in slots {
+            let descriptor = discovered.iter().find(|d| {
+                d.format.as_str().eq_ignore_ascii_case(&format)
+                    && d.path.to_string_lossy() == path.as_str()
+            }).cloned();
+
+            let descriptor = match descriptor {
+                Some(d) => d,
+                None => {
+                    eprintln!(
+                        "[plugin] send bus {}: no discovered plugin at {} (id={})",
+                        send_index, path, format,
+                    );
+                    continue;
+                }
+            };
+
+            let sample_rate = if self.current_sample_rate > 0 {
+                self.current_sample_rate as f64
+            } else {
+                48000.0
+            };
+            let max_block = 512;
+
+            match crate::ui::plugin_browser::load_and_install_plugin(
+                &descriptor,
+                send_index,
+                sample_rate,
+                max_block,
+                &mut self.core.command_sender,
+                if state.is_empty() { None } else { Some(&state) },
+            ) {
+                Ok((handle, name)) => {
+                    self.send_bus_handles[send_index] = Some(handle);
+                    self.sendfx_panel.plugin_names[send_index] = Some(name);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[plugin] failed to auto-load send bus {} ({}): {}",
+                        send_index, descriptor.name, e,
+                    );
+                }
+            }
+        }
     }
 }
 

@@ -61,6 +61,11 @@ pub fn draw_sendfx_view(
     plugin_browser_open_for: &mut Option<usize>,
     plugin_handles: &mut [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
     eframe_hwnd: Option<EframeHwnd>,
+    // Called when the user clicks "Remove" on a plugin. The first arg is
+    // the send-bus index, the second is the plugin's saved state blob
+    // (caller decides what to do with it — typically write into the
+    // module's `send_bus_plugins[i].state` field).
+    mut on_remove_plugin: impl FnMut(usize, Vec<u8>),
 ) {
     // X-close poll: if any plugin's editor HWND is no longer visible
     // (user X-closed the window externally), call close_editor to keep
@@ -202,9 +207,14 @@ pub fn draw_sendfx_view(
                         }
 
                         if ui.button("Remove").clicked() {
-                            // Close the editor first, then remove the processor.
+                            // Close the editor first, then save the plugin
+                            // state via the callback, then remove the processor.
                             if let Some(ref mut handle) = plugin_handles[si] {
                                 handle.close_editor();
+                                // Capture state before the handle is dropped.
+                                if let Ok(state) = handle.save_state() {
+                                    on_remove_plugin(si, state);
+                                }
                             }
                             if let Some(ref mut sender) = command_sender {
                                 sender.send(AudioCommand::SetSendPlugin {

@@ -34,6 +34,9 @@ pub(crate) fn load_file(app: &mut HtrkApp, path: &str) {
             app.pattern_view.scroll_channel = 0;
             app.core.sync_channel_fields();
             app.sync_send_bus_state();
+            // Restore any send-bus plugin slots in the loaded module.
+            // The plugin files must be discoverable in the scan paths.
+            app.sync_send_bus_plugin_state();
             // Restore any instrument plugin slots in the loaded module.
             // The plugin files must be discoverable in the scan paths.
             app.sync_instrument_plugin_state();
@@ -108,8 +111,10 @@ pub(crate) fn save_current_file(app: &mut HtrkApp) {
 }
 
 fn save_file_inner(app: &mut HtrkApp, path: &str) {
-    // Capture state from any loaded CLAP instrument plugins into the
-    // module's PluginSlot.state field so the file round-trips faithfully.
+    // Capture state from any loaded CLAP send-bus and instrument plugins
+    // into the module's PluginSlot.state field so the file round-trips
+    // faithfully.
+    app.save_all_send_bus_plugin_states();
     app.save_all_instrument_plugin_states();
     app.core.save_file(path);
 }
