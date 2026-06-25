@@ -1617,6 +1617,28 @@ impl HtrkApp {
         ctx.request_repaint();
     }
 
+    fn handle_sample_tab(&mut self, ui: &mut egui::Ui) {
+        if let Some(module) = &self.core.module {
+            if let Some(event) = self.sample_editor.ui(
+                ui,
+                module,
+                &mut self.core.selected_sample,
+                &self.theme,
+                &self.core.playback_state,
+            ) {
+                if let Some(sel_update) = crate::actions::handle_sample_edit(self, event) {
+                    match sel_update {
+                        crate::actions::SelectionUpdate::Clear => {
+                            self.sample_editor.selection = None;
+                        }
+                        crate::actions::SelectionUpdate::Set(start, end) => {
+                            self.sample_editor.selection = Some((start, end));
+                        }
+                    }
+                }
+            }
+        }
+    }
 
 }
 
@@ -2052,28 +2074,7 @@ impl eframe::App for HtrkApp {
                         self.ensure_cursor_visible();
                     }
                 }
-                AppView::Sample => {
-                    if let Some(module) = &self.core.module {
-                        if let Some(event) = self.sample_editor.ui(
-                            ui,
-                            module,
-                            &mut self.core.selected_sample,
-                            &self.theme,
-                            &self.core.playback_state,
-                        ) {
-                            if let Some(sel_update) = crate::actions::handle_sample_edit(self, event) {
-                                match sel_update {
-                                    crate::actions::SelectionUpdate::Clear => {
-                                        self.sample_editor.selection = None;
-                                    }
-                                    crate::actions::SelectionUpdate::Set(start, end) => {
-                                        self.sample_editor.selection = Some((start, end));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                AppView::Sample => self.handle_sample_tab(ui),
                 AppView::Instrument => {
                     if let Some(module) = &self.core.module {
                         if let Some(event) = self.instrument_editor.ui(
