@@ -232,6 +232,9 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> O
             app.slice_dialog_open = true;
             return None;
         }
+        SampleEditEvent::OpenSampleLibrary => {
+            return None;
+        }
         SampleEditEvent::FadeIn(s, e) => {
             let s = s.min(e);
             let e = s.max(e);

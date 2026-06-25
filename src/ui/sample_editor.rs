@@ -32,6 +32,7 @@ pub enum SampleEditEvent {
     FadeOut(usize, usize),
     SliceToInstrument,
     DeleteSamples(Vec<usize>),
+    OpenSampleLibrary,
 }
 
 pub fn draw_sample_editor(
@@ -80,6 +81,9 @@ pub fn draw_sample_editor(
                     }
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.dev_button("sample.library", "Library").clicked() {
+                        event = Some(SampleEditEvent::OpenSampleLibrary);
+                    }
                     if ui.dev_button("sample.import", "Open...").clicked() {
                         event = Some(SampleEditEvent::ImportSample);
                     }

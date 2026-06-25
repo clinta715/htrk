@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::RwLock;
 
 use eframe::egui;
 use eguidev::{DevMcp, DevUiExt, FixtureSpec, FrameGuard};
@@ -9,6 +10,7 @@ use crate::audio::commands::AudioCommand;
 use crate::audio::engine::create_engine_and_sender;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::audio::plugins::PluginLibrary;
+use crate::mcp::library::SampleLibrary;
 
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::{DEFAULT_CHANNELS, MAX_CHANNELS};
@@ -130,6 +132,8 @@ pub struct HtrkApp {
     pub(crate) close_after_save: bool,
     pub(crate) show_phrase_generator: bool,
     pub(crate) slice_dialog_open: bool,
+    pub(crate) sample_library_state: crate::ui::sample_library::SampleLibraryState,
+    pub(crate) sample_library: Arc<RwLock<SampleLibrary>>,
     pub(crate) slice_config: crate::actions::slice_to_instrument::SliceConfig,
 
     pub(crate) mcp_server: Option<crate::mcp::McpServer>,
@@ -210,6 +214,8 @@ impl HtrkApp {
             close_after_save: false,
             show_phrase_generator: false,
             slice_dialog_open: false,
+            sample_library_state: crate::ui::sample_library::SampleLibraryState::default(),
+            sample_library: Arc::new(RwLock::new(SampleLibrary::new())),
             slice_config: crate::actions::slice_to_instrument::SliceConfig::default(),
             mcp_server: None,
         }
@@ -234,7 +240,7 @@ impl HtrkApp {
         let plugin_scan_paths: Vec<std::path::PathBuf> = config.plugin_scan_paths.iter()
             .map(std::path::PathBuf::from)
             .collect();
-        HtrkApp {
+        let app = HtrkApp {
             core: crate::core::HtrkCore::new(playback_state.clone()),
             stream: None,
             output_device_names: Vec::new(),
@@ -295,6 +301,8 @@ impl HtrkApp {
             close_after_save: false,
             show_phrase_generator: false,
             slice_dialog_open: false,
+            sample_library_state: crate::ui::sample_library::SampleLibraryState::default(),
+            sample_library: Arc::new(RwLock::new(SampleLibrary::new())),
             slice_config: crate::actions::slice_to_instrument::SliceConfig::default(),
             devmcp: {
                 let ps = pending_view_switch.clone();
@@ -380,7 +388,16 @@ impl HtrkApp {
             },
             // Initial plugin scan is triggered from `update()` so the
             // struct constructor doesn't need to mutate itself.
+        };
+
+        // Initialize the app's sample library roots from config
+        // (separate from the MCP server's library which is initialized above).
+        let lib_roots = library_roots;
+        if let Ok(mut lib) = app.sample_library.write() {
+            lib.set_roots(lib_roots);
         }
+
+        app
     }
 }
 
@@ -814,6 +831,37 @@ impl HtrkApp {
         let next = (self.core.selected_sample as i32 + delta).clamp(1, (len - 1) as i32);
         self.core.selected_sample = next as usize;
         self.sample_editor.selection = None;
+    }
+
+    /// Load a WAV file from the sample library into the currently
+    /// selected sample slot and map the current instrument to use it.
+    pub(crate) fn import_sample_from_library(&mut self, path: &str) {
+        use crate::formats::wav::import_wav;
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(e) => { self.sample_library_state.status_message = Some(format!("Read error: {e}")); return; }
+        };
+        match import_wav(&data) {
+            Ok(mut sample) => {
+                if let Some(name) = std::path::Path::new(path).file_stem().and_then(|s| s.to_str()) {
+                    sample.name = name.to_string();
+                }
+                let sample_idx = self.core.selected_sample;
+                self.core.import_wav_to_sample(sample_idx, sample);
+                self.core.ensure_module_ownership();
+                if let Some(ref mut module) = self.core.module {
+                    if let Some(arc_module) = std::sync::Arc::get_mut(module) {
+                        let inst_idx = self.core.selected_instrument;
+                        if inst_idx > 0 && inst_idx < arc_module.instruments.len() {
+                            for i in 0..120 { arc_module.instruments[inst_idx].sample_map[i] = sample_idx as u8; }
+                        }
+                    }
+                }
+                self.core.sync_module_to_audio();
+                self.sample_library_state.status_message = Some("Imported".to_string());
+            }
+            Err(e) => { self.sample_library_state.status_message = Some(format!("Failed: {e}")); }
+        }
     }
 
     pub(crate) fn change_selected_instrument(&mut self, delta: i32) {
@@ -1695,11 +1743,28 @@ impl HtrkApp {
             if !file_browser_open {
                 self.file_browser.close();
             }
-            if self.close_after_save && !self.core.module_dirty() {
-                self.close_after_save = false;
-                self.exit_confirmed = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+
+        // ── Sample Library dialog ──
+        if self.sample_library_state.open {
+            if let Some(module) = self.core.module.as_ref() {
+                let import_path = crate::ui::sample_library::draw_sample_library(
+                    ctx,
+                    &mut self.sample_library_state,
+                    &self.sample_library,
+                    module,
+                    &self.theme,
+                );
+                if let Some(path) = import_path {
+                    self.import_sample_from_library(&path);
+                }
             }
+        }
+
+        if self.close_after_save && !self.core.module_dirty() {
+            self.close_after_save = false;
+            self.exit_confirmed = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
 
         crate::actions::check_auto_backup(self);
@@ -1716,7 +1781,9 @@ impl HtrkApp {
                 &self.theme,
                 &self.core.playback_state,
             ) {
-                if let Some(sel_update) = crate::actions::handle_sample_edit(self, event) {
+                if matches!(event, crate::ui::sample_editor::SampleEditEvent::OpenSampleLibrary) {
+                    self.sample_library_state.open = true;
+                } else if let Some(sel_update) = crate::actions::handle_sample_edit(self, event) {
                     match sel_update {
                         crate::actions::SelectionUpdate::Clear => {
                             self.sample_editor.selection = None;
