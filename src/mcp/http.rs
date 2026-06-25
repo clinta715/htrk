@@ -4,6 +4,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread;
+use std::time::Duration;
 
 use crate::mcp::library::SampleLibrary;
 use crate::audio::plugins::PluginLibrary;
@@ -46,7 +47,7 @@ impl HttpServer {
             }
         };
         let actual_port = listener.local_addr().unwrap().port();
-        listener.set_nonblocking(true).ok();
+        listener.set_nonblocking(false).ok();  // blocking accept
 
         let shared = Arc::new(Shared {
             sessions: Mutex::new(HashMap::new()),
@@ -64,91 +65,51 @@ impl HttpServer {
             .name("htrk-mcp-http".into())
             .spawn(move || {
                 eprintln!("[mcph] HTTP server listening on 127.0.0.1:{actual_port}");
-                let mut connections: Vec<(TcpStream, u64)> = Vec::new();
                 let mut clean_counter = 0u64;
 
+                // For each accepted connection, spawn a blocking handler
+                // thread.  The raw `try_clone()` + BufReader approach
+                // that the original code used would buffer the entire
+                // HTTP request into the BufReader's internal buffer
+                // during the first-line read, discard it when the
+                // reader is dropped, and leave the handler thread with
+                // a stream whose OS read position was already advanced
+                // past the data — resulting in empty headers, zero
+                // content_length, and a silent parse failure.
                 loop {
                     if shared.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
                         break;
                     }
 
-                    match listener.accept() {
-                        Ok((stream, addr)) => {
-                            stream.set_nonblocking(true).ok();
-                            let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
-                            eprintln!("[mcph] Connection {id} from {addr}");
-                            connections.push((stream, id));
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    let (stream, addr) = match listener.accept() {
+                        Ok(s) => s,
                         Err(e) => {
+                            // Blocking listener only errors on real problems.
                             eprintln!("[mcph] Accept error: {e}");
+                            thread::sleep(Duration::from_millis(100));
+                            continue;
                         }
-                    }
+                    };
 
-                    let mut i = 0;
-                    while i < connections.len() {
-                        let conn_id = connections[i].1;
-                        let mut read_buf = Vec::new();
-                        let read_result = match connections.get(i) {
-                            Some(s) => {
-                                let mut reader = BufReader::new(s.0.try_clone().unwrap());
-                                reader.read_until(b'\n', &mut read_buf)
-                            }
-                            None => { i += 1; continue; }
-                        };
+                    let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
+                    eprintln!("[mcph] Connection {id} from {addr}");
 
-                        match read_result {
-                            Ok(0) => {
-                                connections.remove(i);
-                                continue;
-                            }
-                            Ok(_) => {
-                                let line = String::from_utf8_lossy(&read_buf).trim().to_string();
-                                if line.is_empty() { i += 1; continue; }
+                    let shared_clone = shared.clone();
+                    thread::Builder::new()
+                        .name(format!("htrk-http-{id}"))
+                        .spawn(move || {
+                            handle_http_connection(stream, shared_clone, id);
+                        })
+                        .ok();
 
-                                // Determine if this is an HTTP request by checking for GET/POST prefix
-                                let is_http = line.starts_with("GET ") || line.starts_with("POST ");
-
-                                if is_http {
-                                    // Read entire HTTP request from the connection
-                                    let stream = connections[i].0.try_clone().unwrap();
-                                    let shared_clone = shared.clone();
-                                    let conn_id_clone = conn_id;
-
-                                    // Spawn a dedicated thread to handle this HTTP request
-                                    // This is needed because SSE keeps the connection alive
-                                    thread::Builder::new()
-                                        .name(format!("htrk-http-{conn_id_clone}"))
-                                        .spawn(move || {
-                                            handle_http_connection(stream, &line, shared_clone, conn_id_clone);
-                                        })
-                                        .ok();
-
-                                    connections.remove(i);
-                                } else {
-                                    i += 1;
-                                }
-                            }
-                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                i += 1;
-                            }
-                            Err(e) => {
-                                eprintln!("[mcph] Read error on conn {conn_id}: {e}");
-                                connections.remove(i);
-                            }
-                        }
-                    }
-
-                    // Periodic session cleanup
+                    // Periodic session cleanup (every ~500 connections)
                     clean_counter += 1;
-                    if clean_counter % 600 == 0 {
+                    if clean_counter % 500 == 0 {
                         if let Ok(mut sessions) = shared.sessions.lock() {
                             sessions.retain(|_, tx| tx.send(String::new()).is_ok() == false);
                             drop(sessions);
                         }
                     }
-
-                    thread::sleep(std::time::Duration::from_millis(10));
                 }
                 eprintln!("[mcph] HTTP server shutting down");
             })
@@ -165,19 +126,30 @@ impl HttpServer {
 }
 
 fn handle_http_connection(
-    mut stream: TcpStream,
-    first_line: &str,
+    stream: TcpStream,
     shared: Arc<Shared>,
     conn_id: u64,
 ) {
-    // Blocking mode for HTTP handling
-    let _ = stream.set_nonblocking(false);
-
-    let request_line = first_line.to_string();
-
-    // Read headers using a BufReader on a cloned handle so we don't borrow `stream`
-    let read_stream = stream.try_clone().unwrap();
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
+    let (read_stream, mut write_stream) = match stream.try_clone() {
+        Ok(c) => (c, stream),
+        Err(_) => return,
+    };
     let mut reader = BufReader::new(read_stream);
+
+    // Read the request line.
+    let mut request_line = String::new();
+    if reader.read_line(&mut request_line).unwrap_or(0) == 0 {
+        return;
+    }
+    let request_line = request_line.trim().to_string();
+    if !request_line.starts_with("GET ") && !request_line.starts_with("POST ") {
+        let body = "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n";
+        let _ = write!(write_stream, "{body}");
+        return;
+    }
+
+    // Read headers.
     let mut headers = Vec::new();
     let mut content_length: usize = 0;
     loop {
@@ -201,12 +173,9 @@ fn handle_http_connection(
     }
 
     if request_line.starts_with("GET ") {
-        handle_sse_get(&mut stream, &request_line, &headers, shared, conn_id);
+        handle_sse_get(&mut write_stream, &request_line, &headers, shared, conn_id);
     } else if request_line.starts_with("POST ") {
-        handle_post(&mut stream, &request_line, &headers, content_length, &mut reader, shared);
-    } else {
-        let body = "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n";
-        let _ = write!(stream, "{body}");
+        handle_post(&mut write_stream, &request_line, &headers, content_length, &mut reader, shared);
     }
 }
 
