@@ -249,11 +249,6 @@ impl HtrkCore {
     }
 
     pub fn handle_context_menu_action(&mut self, action: crate::ui::pattern_grid::ContextMenuAction) {
-        let sel = match &self.selection {
-            Some(s) => s.clone(),
-            None => return,
-        };
-        let (min, max) = sel.normalized();
         let selected_order = self.selected_order;
 
         self.ensure_pattern_exists();
@@ -261,6 +256,18 @@ impl HtrkCore {
         if let Some(ref mut module) = self.module {
             if let Some(arc_module) = Arc::get_mut(module) {
                 let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
+
+                // Block operations and selection-dependent actions:
+                // if no selection is active, use the cursor as a
+                // single-cell "selection" (row:cursor.row, ch:cursor.channel).
+                let sel = match &self.selection {
+                    Some(s) => s.clone(),
+                    None => Selection {
+                        start: self.cursor,
+                        end: self.cursor,
+                    },
+                };
+                let (min, max) = sel.normalized();
 
                 match action {
                     crate::ui::pattern_grid::ContextMenuAction::FillInstrument => {
@@ -448,6 +455,10 @@ impl HtrkCore {
                         };
                         let _ = self.undo_manager.execute(Box::new(cmd), arc_module);
                     }
+                    // App-level actions (Copy/Paste/Cut/SelectAll/Transpose) are
+                    // handled in HtrkApp::handle_context_menu_action before this is
+                    // reached. Ignore them here.
+                    _ => {}
                 }
             }
         }

@@ -982,7 +982,16 @@ impl HtrkApp {
         if !self.edit_mode {
             return;
         }
-        self.core.handle_context_menu_action(action);
+        use crate::ui::pattern_grid::ContextMenuAction;
+        match action {
+            ContextMenuAction::CopySelection => self.core.copy_selection(),
+            ContextMenuAction::PasteClipboard => self.core.paste_at_cursor(),
+            ContextMenuAction::CutSelection => self.cut_selection(),
+            ContextMenuAction::SelectAll => self.core.select_all(),
+            ContextMenuAction::TransposeUp => self.core.transpose_selection(1),
+            ContextMenuAction::TransposeDown => self.core.transpose_selection(-1),
+            other => self.core.handle_context_menu_action(other),
+        }
     }
 
     fn handle_automation_interaction(&mut self, interaction: crate::ui::pattern_grid::AutomationInteraction) {

@@ -294,6 +294,12 @@ pub enum ContextMenuAction {
     /// Clear the effect command at the cursor position (or all selected
     /// cells if a selection is active).
     ClearEffect,
+    CopySelection,
+    PasteClipboard,
+    CutSelection,
+    SelectAll,
+    TransposeUp,
+    TransposeDown,
 }
 
 /// Identifies one of the named parameter-style effect commands that the
@@ -719,6 +725,22 @@ pub fn draw_pattern_grid(
         }
         ui.separator();
 
+        // ── Clipboard commands ──
+        ui.label(egui::RichText::new("Clipboard").strong());
+        if ui.button("Copy").clicked() {
+            context_menu_action = Some(ContextMenuAction::CopySelection);
+            ui.close();
+        }
+        if ui.button("Paste").clicked() {
+            context_menu_action = Some(ContextMenuAction::PasteClipboard);
+            ui.close();
+        }
+        if ui.button("Cut").clicked() {
+            context_menu_action = Some(ContextMenuAction::CutSelection);
+            ui.close();
+        }
+        ui.separator();
+
         // ── Block operations (selection-only) ──
         ui.label(egui::RichText::new("Block Operations").strong());
         ui.separator();
@@ -740,6 +762,20 @@ pub fn draw_pattern_grid(
         }
         if ui.add_enabled(has_selection, egui::Button::new("Randomize")).clicked() {
             context_menu_action = Some(ContextMenuAction::Randomize);
+            ui.close();
+        }
+        ui.separator();
+        ui.label(egui::RichText::new("Selection").strong());
+        if ui.button("Select All").clicked() {
+            context_menu_action = Some(ContextMenuAction::SelectAll);
+            ui.close();
+        }
+        if ui.add_enabled(has_selection, egui::Button::new("Transpose +1")).clicked() {
+            context_menu_action = Some(ContextMenuAction::TransposeUp);
+            ui.close();
+        }
+        if ui.add_enabled(has_selection, egui::Button::new("Transpose -1")).clicked() {
+            context_menu_action = Some(ContextMenuAction::TransposeDown);
             ui.close();
         }
     });
@@ -767,7 +803,7 @@ fn position_to_sub_column(x: f32, metrics: GridMetrics, col_vis: ColumnVisibilit
     }
 
     if col_vis.instrument {
-        if pos < metrics.inst_width + metrics.char_width * 0.5 {
+        if pos < metrics.inst_width * 0.5 {
             return SubColumn::InstrumentTens;
         }
         if pos < metrics.inst_width {
@@ -777,7 +813,7 @@ fn position_to_sub_column(x: f32, metrics: GridMetrics, col_vis: ColumnVisibilit
     }
 
     if col_vis.volume {
-        if pos < metrics.vol_width + metrics.char_width * 0.5 {
+        if pos < metrics.vol_width * 0.5 {
             return SubColumn::VolumeTens;
         }
         if pos < metrics.vol_width {
