@@ -1640,6 +1640,30 @@ impl HtrkApp {
         }
     }
 
+    fn handle_mixer_tab(&mut self, ui: &mut egui::Ui) {
+        let mut plugin_slots: [Option<crate::sequencer::plugin::PluginSlot>; 4] = Default::default();
+        let mut return_levels = [0.0f32; 4];
+        if let Some(ref module) = self.core.module {
+            for bus in 0..4 {
+                if let Some(slot) = module.send_bus_plugins[bus].clone() {
+                    plugin_slots[bus] = Some(slot);
+                }
+                return_levels[bus] = module
+                    .send_return_levels
+                    .get(bus)
+                    .copied()
+                    .unwrap_or(1.0);
+            }
+        }
+        self.mixer_state.ui(
+            ui,
+            &mut self.core,
+            &self.theme,
+            &plugin_slots,
+            &return_levels,
+        );
+    }
+
 }
 
 impl eframe::App for HtrkApp {
@@ -2280,32 +2304,7 @@ impl eframe::App for HtrkApp {
                         }
                     }
                 }
-                AppView::Mixer => {
-                    // Collect the per-bus plugin slot + return level
-                    // (read-only here; the Send FX view is the place
-                    // for plugin load / unload).
-                    let mut plugin_slots: [Option<crate::sequencer::plugin::PluginSlot>; 4] = Default::default();
-                    let mut return_levels = [0.0f32; 4];
-                    if let Some(ref module) = self.core.module {
-                        for bus in 0..4 {
-                            if let Some(slot) = module.send_bus_plugins[bus].clone() {
-                                plugin_slots[bus] = Some(slot);
-                            }
-                            return_levels[bus] = module
-                                .send_return_levels
-                                .get(bus)
-                                .copied()
-                                .unwrap_or(1.0);
-                        }
-                    }
-                    self.mixer_state.ui(
-                        ui,
-                        &mut self.core,
-                        &self.theme,
-                        &plugin_slots,
-                        &return_levels,
-                    );
-                }
+                AppView::Mixer => self.handle_mixer_tab(ui),
             }
         });
 
