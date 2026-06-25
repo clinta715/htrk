@@ -713,59 +713,43 @@ impl HtrkApp {
                 .filter_map(|(idx, inst)| inst.plugin.as_ref().map(|slot| {
                     (idx, slot.format.clone(), slot.path.clone(), slot.state.clone())
                 }))
-                .filter(|(_, _, _, _)| true)  // any plugin slot, even with empty state
                 .collect(),
             None => return,
         };
 
-        if slots.is_empty() {
-            return;
-        }
-
-        // Index the discovered descriptors by (path, plugin_id) for fast lookup.
         let discovered = self.discovered_plugins();
-        for (inst_idx, format, path, state) in slots {
-            // Find a matching descriptor.
-            let descriptor = discovered.iter().find(|d| {
-                d.format.as_str().eq_ignore_ascii_case(&format)
-                    && d.path.to_string_lossy() == path.as_str()
-            }).cloned();
 
-            let descriptor = match descriptor {
-                Some(d) => d,
-                None => {
-                    eprintln!(
-                        "[plugin] instrument {}: no discovered plugin at {} (id={})",
-                        inst_idx, path, format,
-                    );
-                    continue;
-                }
-            };
+        // Borrow the disjoint fields the two closures need as
+        // separate locals so the borrow checker doesn't see them as
+        // overlapping &mut self borrows.
+        let core_command_sender = &mut self.core.command_sender;
+        let core_selected_instrument = self.core.selected_instrument;
+        let instrument_plugin_handles = &mut self.instrument_plugin_handles;
+        let instrument_editor_plugin_name = &mut self.instrument_editor.plugin_name;
 
-            match self.load_and_install_instrument_plugin(
-                &descriptor,
-                inst_idx,
-                if state.is_empty() { None } else { Some(&state) },
-            ) {
-                Ok((handle, name)) => {
-                    if inst_idx < self.instrument_plugin_handles.len() {
-                        self.instrument_plugin_handles[inst_idx] = Some(handle);
-                    }
-                    // Reflect the loaded plugin in the instrument editor
-                    // UI so the user sees the name without having to
-                    // switch tabs.
-                    if self.core.selected_instrument == inst_idx {
-                        self.instrument_editor.plugin_name = name;
-                    }
+        crate::ui::plugin_browser::sync_plugin_slots_from_module(
+            slots,
+            &discovered,
+            "instrument",
+            |inst_idx, descriptor, initial_state| {
+                let sample_rate = if self.current_sample_rate > 0 {
+                    self.current_sample_rate as f64
+                } else {
+                    48000.0
+                };
+                crate::ui::plugin_browser::load_and_install_instrument_plugin(
+                    descriptor, inst_idx, initial_state, sample_rate, core_command_sender,
+                )
+            },
+            |inst_idx, handle, name| {
+                if inst_idx < instrument_plugin_handles.len() {
+                    instrument_plugin_handles[inst_idx] = Some(handle);
                 }
-                Err(e) => {
-                    eprintln!(
-                        "[plugin] failed to auto-load instrument {} ({}): {}",
-                        inst_idx, descriptor.name, e,
-                    );
+                if core_selected_instrument == inst_idx {
+                    *instrument_editor_plugin_name = name;
                 }
-            }
-        }
+            },
+        );
     }
 
     fn apply_audio_settings_to_engine(&mut self) {
@@ -2596,21 +2580,13 @@ impl HtrkApp {
         } else {
             48000.0
         };
-        let (handle, processor, name) =
-            crate::ui::plugin_browser::load_and_activate_clap_plugin(
-                descriptor, sample_rate, 512, initial_state,
-            )?;
-
-        if let Some(ref mut sender) = self.core.command_sender {
-            sender.send(AudioCommand::InstallInstrumentPlugin {
-                instrument_idx,
-                processor: Some(processor),
-            });
-        } else {
-            return Err("No command sender — audio engine not running?".into());
-        }
-
-        Ok((handle, name))
+        crate::ui::plugin_browser::load_and_install_instrument_plugin(
+            descriptor,
+            instrument_idx,
+            initial_state,
+            sample_rate,
+            &mut self.core.command_sender,
+        )
     }
 
     fn unload_instrument_plugin(&mut self, instrument_idx: usize) {
@@ -2877,55 +2853,42 @@ impl HtrkApp {
                 .collect(),
             None => return,
         };
-        if slots.is_empty() {
-            return;
-        }
-
         let discovered = self.discovered_plugins();
-        for (send_index, format, path, state) in slots {
-            let descriptor = discovered.iter().find(|d| {
-                d.format.as_str().eq_ignore_ascii_case(&format)
-                    && d.path.to_string_lossy() == path.as_str()
-            }).cloned();
 
-            let descriptor = match descriptor {
-                Some(d) => d,
-                None => {
-                    eprintln!(
-                        "[plugin] send bus {}: no discovered plugin at {} (id={})",
-                        send_index, path, format,
-                    );
-                    continue;
-                }
-            };
+        // Borrow the disjoint fields the two closures need.
+        let core_command_sender = &mut self.core.command_sender;
+        let send_bus_handles = &mut self.send_bus_handles;
+        let sendfx_panel_plugin_names = &mut self.sendfx_panel.plugin_names;
+        let sample_rate = if self.current_sample_rate > 0 {
+            self.current_sample_rate as f64
+        } else {
+            48000.0
+        };
 
-            let sample_rate = if self.current_sample_rate > 0 {
-                self.current_sample_rate as f64
-            } else {
-                48000.0
-            };
-            let max_block = 512;
-
-            match crate::ui::plugin_browser::load_and_install_plugin(
-                &descriptor,
-                send_index,
-                sample_rate,
-                max_block,
-                &mut self.core.command_sender,
-                if state.is_empty() { None } else { Some(&state) },
-            ) {
-                Ok((handle, name)) => {
-                    self.send_bus_handles[send_index] = Some(handle);
-                    self.sendfx_panel.plugin_names[send_index] = Some(name);
+        crate::ui::plugin_browser::sync_plugin_slots_from_module(
+            slots,
+            &discovered,
+            "send bus",
+            |send_index, descriptor, initial_state| {
+                let (handle, processor, name) =
+                    crate::ui::plugin_browser::load_and_activate_clap_plugin(
+                        descriptor, sample_rate, 512, initial_state,
+                    )?;
+                if let Some(ref mut sender) = core_command_sender {
+                    sender.send(AudioCommand::SetSendPlugin {
+                        send_index,
+                        processor: Some(processor),
+                    });
+                } else {
+                    return Err("No command sender — audio engine not running?".into());
                 }
-                Err(e) => {
-                    eprintln!(
-                        "[plugin] failed to auto-load send bus {} ({}): {}",
-                        send_index, descriptor.name, e,
-                    );
-                }
-            }
-        }
+                Ok((handle, name))
+            },
+            |send_index, handle, name| {
+                send_bus_handles[send_index] = Some(handle);
+                sendfx_panel_plugin_names[send_index] = Some(name);
+            },
+        );
     }
 }
 

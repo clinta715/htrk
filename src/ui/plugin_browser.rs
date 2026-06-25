@@ -243,6 +243,34 @@ pub fn load_and_install_plugin(
     Ok((handle, name))
 }
 
+/// Lower-level form of the instrument plugin install: takes the
+/// sample rate and command sender as parameters so the caller (the
+/// auto-reload path) can borrow disjoint fields of `self` without
+/// needing the whole `&mut self`. Pairs with `load_and_install_plugin`
+/// (send-bus) to provide a uniform install surface for both
+/// plugin locations.
+pub fn load_and_install_instrument_plugin(
+    descriptor: &PluginDescriptor,
+    instrument_idx: usize,
+    initial_state: Option<&[u8]>,
+    sample_rate: f64,
+    command_sender: &mut Option<CommandSender>,
+) -> Result<(Box<dyn HostedPluginHandle>, String), String> {
+    let (handle, processor, name) =
+        load_and_activate_clap_plugin(descriptor, sample_rate, 512, initial_state)?;
+
+    if let Some(ref mut sender) = command_sender {
+        sender.send(AudioCommand::InstallInstrumentPlugin {
+            instrument_idx,
+            processor: Some(processor),
+        });
+    } else {
+        return Err("No command sender — audio engine not running?".into());
+    }
+
+    Ok((handle, name))
+}
+
 /// Iterate `handles`, capture each one's state, and deliver the
 /// `(index, state)` pair to `on_state`. The handle is temporarily
 /// removed from its slot to satisfy `save_state`'s `&mut self`
@@ -275,6 +303,62 @@ pub fn write_plugin_state_to_slot(
 ) {
     if let Some(slot) = slot_for(module) {
         slot.state = state;
+    }
+}
+
+/// Re-load every plugin slot listed in `slots` from the discovered
+/// library. For each (index, format, path, state) entry, look up
+/// the matching descriptor; if found, call `load_and_install` to
+/// activate the plugin and apply its saved state; on success, hand
+/// the result to `store_handle`. Slots whose path is no longer
+/// discoverable are logged and skipped. Used by both the send-bus
+/// and instrument auto-reload paths (`sync_send_bus_plugin_state`,
+/// `sync_instrument_plugin_state`) so they share the slot
+/// collection, descriptor lookup, error logging, and iteration
+/// shape. The per-target differences (which command to send to
+/// the audio engine, where the handle + UI label get stored) live
+/// in the two closures.
+pub fn sync_plugin_slots_from_module(
+    slots: Vec<(usize, String, String, Vec<u8>)>,
+    discovered: &[crate::audio::plugins::PluginDescriptor],
+    location_label: &'static str,
+    mut load_and_install: impl FnMut(
+        usize,
+        &crate::audio::plugins::PluginDescriptor,
+        Option<&[u8]>,
+    ) -> Result<(Box<dyn crate::audio::plugins::HostedPluginHandle>, String), String>,
+    mut store_handle: impl FnMut(usize, Box<dyn crate::audio::plugins::HostedPluginHandle>, String),
+) {
+    if slots.is_empty() {
+        return;
+    }
+    for (idx, format, path, state) in slots {
+        let descriptor = discovered
+            .iter()
+            .find(|d| {
+                d.format.as_str().eq_ignore_ascii_case(&format)
+                    && d.path.to_string_lossy() == path.as_str()
+            })
+            .cloned();
+        let descriptor = match descriptor {
+            Some(d) => d,
+            None => {
+                eprintln!(
+                    "[plugin] {location_label} {idx}: no discovered plugin at {path} (id={format})",
+                );
+                continue;
+            }
+        };
+        let initial_state = if state.is_empty() { None } else { Some(&state[..]) };
+        match load_and_install(idx, &descriptor, initial_state) {
+            Ok((handle, name)) => store_handle(idx, handle, name),
+            Err(e) => {
+                eprintln!(
+                    "[plugin] failed to auto-load {location_label} {idx} ({}): {e}",
+                    descriptor.name,
+                );
+            }
+        }
     }
 }
 
