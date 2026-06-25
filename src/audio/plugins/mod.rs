@@ -180,6 +180,14 @@ pub trait HostedPluginProcessor: Send + std::fmt::Debug {
 
     /// Plugin name.
     fn name(&self) -> &str;
+
+    /// Send a MIDI-style note-on to the plugin. Queued for the next process().
+    /// Called from the sequencer tick (audio thread).
+    fn send_note_on(&mut self, midi_channel: u8, key: u8, velocity: u8);
+
+    /// Send a MIDI-style note-off to the plugin. Queued for the next process().
+    /// Called from the sequencer tick (audio thread).
+    fn send_note_off(&mut self, midi_channel: u8, key: u8);
 }
 
 // ── Main-Thread Trait ──
