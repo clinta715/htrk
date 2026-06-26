@@ -76,6 +76,11 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
         return;
     }
 
+    handle_plain_key(app, ctx, any_dialog_open, is_pattern, is_sample, modifiers);
+}
+
+/// Handle all remaining keys (arrows, F-keys, Delete, Escape, brackets, etc.)
+fn handle_plain_key(app: &mut HtrkApp, ctx: &egui::Context, any_dialog_open: bool, is_pattern: bool, is_sample: bool, modifiers: egui::Modifiers) {
     ctx.input(|i| {
         for event in &i.events {
             if let egui::Event::Key { key, pressed: true, .. } = event {
