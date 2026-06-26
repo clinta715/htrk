@@ -125,6 +125,9 @@ pub struct HtrkApp {
     pub(crate) preset_library: Arc<RwLock<PresetLibrary>>,
     /// True after the initial preset scan has run.
     pub(crate) preset_scan_done: bool,
+    /// True after the initial sample library cache load (or attempted
+    /// load) has run, so we don't try to read the cache file every frame.
+    pub(crate) sample_library_loaded: bool,
     /// Status of the plugin browser dialog (loading / error / loaded).
     /// Phase 2 plugin hosting.
     pub(crate) plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus,
@@ -211,6 +214,7 @@ impl HtrkApp {
                 crate::audio::plugins::PresetLibrary::new()
             )),
             preset_scan_done: false,
+            sample_library_loaded: false,
             plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
             automation_editor: crate::ui::automation_editor_panel::AutomationEditor::default(),
             instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor {
@@ -304,6 +308,7 @@ impl HtrkApp {
             plugin_scan_done: false,
             preset_library: preset_library.clone(),
             preset_scan_done: false,
+            sample_library_loaded: false,
             plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
             automation_editor: crate::ui::automation_editor_panel::AutomationEditor::default(),
             instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor {
@@ -3090,6 +3095,26 @@ impl eframe::App for HtrkApp {
             self.preset_scan_done = true;
         }
 
+        if !self.sample_library_loaded {
+            let cache_path = crate::app_config::AppConfig::config_dir()
+                .join("sample_library_cache.json");
+            if let Ok(cached) = crate::mcp::library::SampleLibrary::load_from_file(&cache_path) {
+                let cached_count = cached.cache_len();
+                eprintln!("[sample_library] Loaded {} entry/entries from cache", cached_count);
+                if let Ok(mut lib) = self.sample_library.write() {
+                    // Preserve the configured roots (from AppConfig) — the
+                    // cache's `roots` field reflects the state at save time
+                    // and may not match the current configuration.
+                    let configured_roots = lib.roots.clone();
+                    *lib = cached;
+                    if !configured_roots.is_empty() {
+                        lib.roots = configured_roots;
+                    }
+                }
+            }
+            self.sample_library_loaded = true;
+        }
+
         // Release any previewed instrument-plugin notes whose trigger
         // key is no longer held.
         self.release_unheld_preview_notes(&ctx);
@@ -3196,6 +3221,16 @@ impl eframe::App for HtrkApp {
         if let Ok(lib) = self.preset_library.read() {
             if lib.preset_count() > 0 {
                 let _ = lib.save_to_file(&cache_path);
+            }
+        }
+        // Persist the sample library cache so the next launch has instant
+        // directory browsing. Skipped if the library is empty (no roots
+        // configured) to avoid creating empty cache files on first run.
+        let sample_cache_path = crate::app_config::AppConfig::config_dir()
+            .join("sample_library_cache.json");
+        if let Ok(lib) = self.sample_library.read() {
+            if !lib.roots.is_empty() && lib.cache_len() > 0 {
+                let _ = lib.save_to_file(&sample_cache_path);
             }
         }
         crate::actions::save_config(self);

@@ -53,10 +53,20 @@ pub struct SearchResults {
 
 // ── SampleLibrary ──
 
+#[derive(Serialize, Deserialize)]
 pub struct SampleLibrary {
+    #[serde(default)]
     pub roots: Vec<PathBuf>,
+    #[serde(default)]
     cache: HashMap<PathBuf, LibraryEntry>,
+    #[serde(default)]
     dir_cache: HashMap<PathBuf, Vec<PathBuf>>,
+}
+
+impl Default for SampleLibrary {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SampleLibrary {
@@ -191,6 +201,48 @@ impl SampleLibrary {
 
     pub fn get_entry(&self, path: &Path) -> Option<&LibraryEntry> {
         self.cache.get(path)
+    }
+
+    pub fn cache_len(&self) -> usize {
+        self.cache.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cache.is_empty()
+    }
+
+    // ── Persistence ──
+
+    /// Serialize the library to a JSON string.
+    pub fn to_json(&self) -> Result<String, String> {
+        serde_json::to_string_pretty(self).map_err(|e| e.to_string())
+    }
+
+    /// Deserialize the library from a JSON string.
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        serde_json::from_str(json).map_err(|e| format!("Invalid sample library cache: {e}"))
+    }
+
+    /// Save the library to a JSON file at `path`.
+    ///
+    /// Writes to a `.tmp` sibling file first, then atomically renames it
+    /// into place. This avoids a half-written cache corrupting the file
+    /// if the process crashes mid-write.
+    pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
+        let json = self.to_json()?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, &json)
+            .map_err(|e| format!("Cannot write sample library cache: {e}"))?;
+        std::fs::rename(&tmp, path)
+            .map_err(|e| format!("Cannot rename sample library cache: {e}"))?;
+        Ok(())
+    }
+
+    /// Load the library from a JSON file at `path`.
+    pub fn load_from_file(path: &Path) -> Result<Self, String> {
+        let json = std::fs::read_to_string(path)
+            .map_err(|e| format!("Cannot read sample library cache: {e}"))?;
+        Self::from_json(&json)
     }
 
     // ── Internal helpers ──
@@ -970,5 +1022,97 @@ mod tests {
         };
         assert!(!f_stereo.matches(&mono));
         assert!(f_stereo.matches(&stereo));
+    }
+
+    #[test]
+    fn test_json_roundtrip() {
+        let mut lib = SampleLibrary::new();
+        lib.set_roots(vec![PathBuf::from("/samples")]);
+        let entry_a = LibraryEntry {
+            name: String::from("Kick_C4.wav"),
+            path: String::from("/samples/Kick_C4.wav"),
+            is_directory: false,
+            duration: Some(0.5),
+            sample_rate: Some(44100),
+            bit_depth: Some(16),
+            file_size: 44100,
+            modified: String::from("2026-06-01T00:00:00Z"),
+            category: None,
+            root_note: Some(String::from("C4")),
+            bpm: None,
+            channels: Some(1),
+            key: None,
+            tags: vec![String::from("kick")],
+            bpm_range: None,
+            tempo_marking: None,
+        };
+        let entry_b = LibraryEntry {
+            name: String::from("Cmaj_120bpm.wav"),
+            path: String::from("/samples/Cmaj_120bpm.wav"),
+            is_directory: false,
+            duration: Some(2.0),
+            sample_rate: Some(48000),
+            bit_depth: Some(24),
+            file_size: 288000,
+            modified: String::from("2026-06-02T00:00:00Z"),
+            category: None,
+            root_note: None,
+            bpm: Some(120.0),
+            channels: Some(2),
+            key: Some(String::from("Cmaj")),
+            tags: vec![],
+            bpm_range: Some((120, 130)),
+            tempo_marking: Some(String::from("Allegro")),
+        };
+        lib.cache.insert(PathBuf::from("/samples/Kick_C4.wav"), entry_a);
+        lib.cache.insert(PathBuf::from("/samples/Cmaj_120bpm.wav"), entry_b);
+
+        let json = lib.to_json().expect("serialize");
+        let lib2 = SampleLibrary::from_json(&json).expect("deserialize");
+
+        assert_eq!(lib2.cache.len(), 2);
+        assert_eq!(lib2.roots, vec![PathBuf::from("/samples")]);
+        let e_a = lib2.cache.get(&PathBuf::from("/samples/Kick_C4.wav")).expect("entry a");
+        assert_eq!(e_a.key, None);
+        assert_eq!(e_a.tags, vec![String::from("kick")]);
+        assert_eq!(e_a.root_note.as_deref(), Some("C4"));
+        let e_b = lib2.cache.get(&PathBuf::from("/samples/Cmaj_120bpm.wav")).expect("entry b");
+        assert_eq!(e_b.key.as_deref(), Some("Cmaj"));
+        assert_eq!(e_b.bpm_range, Some((120, 130)));
+        assert_eq!(e_b.tempo_marking.as_deref(), Some("Allegro"));
+    }
+
+    #[test]
+    fn test_json_backcompat_without_new_fields() {
+        // Old serialized data without the new key/tags/bpm_range/tempo_marking
+        // fields must still deserialize (the #[serde(default)] on each field
+        // gives them None / Vec::new() when missing).
+        let old_json = r#"{
+            "roots": ["/old"],
+            "cache": {
+                "/old/old.wav": {
+                    "name": "old.wav",
+                    "path": "/old/old.wav",
+                    "is_directory": false,
+                    "duration": null,
+                    "sample_rate": null,
+                    "bit_depth": null,
+                    "file_size": 0,
+                    "modified": "",
+                    "category": null,
+                    "root_note": null,
+                    "bpm": null,
+                    "channels": null
+                }
+            },
+            "dir_cache": {}
+        }"#;
+        let lib = SampleLibrary::from_json(old_json).expect("deserialize old shape");
+        assert_eq!(lib.cache.len(), 1);
+        let entry = lib.cache.get(&PathBuf::from("/old/old.wav")).unwrap();
+        assert_eq!(entry.key, None);
+        assert!(entry.tags.is_empty());
+        assert_eq!(entry.bpm_range, None);
+        assert_eq!(entry.tempo_marking, None);
     }
 }
