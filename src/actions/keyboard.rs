@@ -62,212 +62,13 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
     }
 
     if modifiers.ctrl && !modifiers.shift {
-        let mut handled = false;
-        ctx.input(|i| {
-            for event in &i.events {
-                if let egui::Event::Key { key, pressed: true, .. } = event {
-                    match key {
-                        egui::Key::Z if app.edit_mode && !any_dialog_open => {
-                            app.core.ensure_module_ownership();
-                            if let Some(ref mut module) = app.core.module {
-                                if let Some(arc_module) = Arc::get_mut(module) {
-                                    let _ = app.core.undo_manager.undo(arc_module);
-                                }
-                            }
-                            app.core.sync_module_to_audio();
-                            handled = true;
-                        }
-                        egui::Key::Y if app.edit_mode && !any_dialog_open => {
-                            app.core.ensure_module_ownership();
-                            if let Some(ref mut module) = app.core.module {
-                                if let Some(arc_module) = Arc::get_mut(module) {
-                                    let _ = app.core.undo_manager.redo(arc_module);
-                                }
-                            }
-                            app.core.sync_module_to_audio();
-                            handled = true;
-                        }
-                        egui::Key::C if is_pattern && !any_dialog_open => {
-                            app.core.copy_selection();
-                            handled = true;
-                        }
-                        egui::Key::C if is_sample && !any_dialog_open => {
-                            if let Some((s, e)) = app.sample_editor.selection {
-                                let start = s.min(e);
-                                let end = s.max(e);
-                                crate::actions::sample_edit::handle_sample_edit(app, SampleEditEvent::CopyRegion(start, end));
-                            }
-                            handled = true;
-                        }
-                        egui::Key::X if app.edit_mode && is_pattern && !any_dialog_open => {
-                            app.core.copy_selection();
-                            app.core.delete_selection();
-                            handled = true;
-                        }
-                        egui::Key::X if is_sample && !any_dialog_open => {
-                            if let Some((s, e)) = app.sample_editor.selection {
-                                let start = s.min(e);
-                                let end = s.max(e);
-                                crate::actions::sample_edit::handle_sample_edit(app, SampleEditEvent::CutRegion(start, end));
-                            }
-                            handled = true;
-                        }
-                        egui::Key::V if app.edit_mode && is_pattern && !any_dialog_open => {
-                            app.core.paste_at_cursor();
-                            handled = true;
-                        }
-                        egui::Key::V if is_sample && !any_dialog_open => {
-                            if app.sample_editor.clipboard.is_some() {
-                                if let Some(pos) = app.sample_editor.cursor_pos {
-                                    crate::actions::sample_edit::handle_sample_edit(app, SampleEditEvent::PasteRegion(pos));
-                                }
-                            }
-                            handled = true;
-                        }
-                        egui::Key::A if is_pattern && !any_dialog_open => {
-                            app.core.select_all();
-                            handled = true;
-                        }
-                        egui::Key::A if is_sample && !any_dialog_open => {
-                            if let Some(ref module) = app.core.module {
-                                let idx = app.core.selected_sample;
-                                if let Some(sample) = module.samples.get(idx) {
-                                    app.sample_editor.selection = Some((0, sample.data.len().saturating_sub(1)));
-                                }
-                            }
-                            handled = true;
-                        }
-                        egui::Key::N => {
-                            app.new_song();
-                            handled = true;
-                        }
-                        egui::Key::O => {
-                            match app.current_view {
-                                AppView::Sample => app.file_browser.open(BrowserMode::Samples, crate::ui::file_browser::DialogMode::Open, &mut app.config),
-                                AppView::Instrument => app.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut app.config),
-                                _ => app.open_file_dialog(),
-                            }
-                            handled = true;
-                        }
-                        egui::Key::I => {
-                            app.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut app.config);
-                            handled = true;
-                        }
-                        egui::Key::S => {
-                            crate::actions::save_current_file(app);
-                            handled = true;
-                        }
-                        egui::Key::Q => {
-                            if app.config.confirm_on_exit && app.core.module_dirty() {
-                                app.show_exit_confirm = true;
-                            } else {
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
-                            handled = true;
-                        }
-                        egui::Key::Num1 => {
-                            let mut col_vis = app.config.get_col_vis();
-                            col_vis.note = !col_vis.note;
-                            app.config.set_col_vis(col_vis);
-                            app.col_vis = app.config.get_col_vis();
-                            app.config.save();
-                            handled = true;
-                        }
-                        egui::Key::Num2 => {
-                            let mut col_vis = app.config.get_col_vis();
-                            col_vis.instrument = !col_vis.instrument;
-                            app.config.set_col_vis(col_vis);
-                            app.col_vis = app.config.get_col_vis();
-                            app.config.save();
-                            handled = true;
-                        }
-                        egui::Key::Num3 => {
-                            let mut col_vis = app.config.get_col_vis();
-                            col_vis.volume = !col_vis.volume;
-                            app.config.set_col_vis(col_vis);
-                            app.col_vis = app.config.get_col_vis();
-                            app.config.save();
-                            handled = true;
-                        }
-                        egui::Key::Num4 => {
-                            let mut col_vis = app.config.get_col_vis();
-                            col_vis.effect = !col_vis.effect;
-                            app.config.set_col_vis(col_vis);
-                            app.col_vis = app.config.get_col_vis();
-                            app.config.save();
-                            handled = true;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        });
-        if handled {
+        if handle_ctrl(app, ctx, any_dialog_open, is_pattern, is_sample) {
             return;
         }
     }
 
     if modifiers.ctrl && modifiers.shift {
-        ctx.input(|i| {
-            for event in &i.events {
-                if let egui::Event::Key { key, pressed: true, .. } = event {
-                    match key {
-                        egui::Key::S => app.save_as_dialog(),
-                        egui::Key::I => app.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut app.config),
-                        egui::Key::ArrowUp => {
-                            if app.current_octave < 9 { app.current_octave += 1; }
-                        }
-                        egui::Key::ArrowDown => {
-                            if app.current_octave > 0 { app.current_octave -= 1; }
-                        }
-                        egui::Key::ArrowLeft => {
-                            app.change_selected_sample(-1);
-                        }
-                        egui::Key::ArrowRight => {
-                            app.change_selected_sample(1);
-                        }
-                        egui::Key::Space if !any_dialog_open => {
-                            app.cycle_spacing_mode();
-                        }
-                        egui::Key::L => {
-                            app.config.toggle_sample_length_bg();
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        });
-
-        if app.current_view == AppView::Automation {
-            if let Some(tid) = app.automation_editor.state.selected_track_id {
-                let mode = ctx.input(|i| {
-                    for event in &i.events {
-                        if let egui::Event::Key { key, pressed: true, .. } = event {
-                            match key {
-                                egui::Key::Num5 => return Some(InterpolationMode::Hold),
-                                egui::Key::Num6 => return Some(InterpolationMode::Linear),
-                                egui::Key::Num7 => return Some(InterpolationMode::Smooth),
-                                egui::Key::Num8 => return Some(InterpolationMode::Exponential),
-                                _ => {}
-                            }
-                        }
-                    }
-                    None
-                });
-                if let Some(mode) = mode {
-                    app.core.ensure_module_ownership();
-                    if let Some(ref mut module) = app.core.module {
-                        if let Some(arc_module) = Arc::get_mut(module) {
-                            if let Some(t) = arc_module.automation_tracks.iter_mut().find(|t| t.id == tid) {
-                                t.default_interp = mode;
-                                app.core.sync_module_to_audio();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
+        handle_ctrl_shift(app, ctx, any_dialog_open);
         return;
     }
 
@@ -557,8 +358,215 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
     });
 }
 
-/// Preview-only note playback (no cell editing). Called when a widget has focus
-/// so the user can still hear notes while typing into a TextEdit.
+/// Handle Ctrl+ shortcuts (undo, redo, copy, paste, save, open, etc.)
+/// Returns true if a shortcut was handled.
+fn handle_ctrl(app: &mut HtrkApp, ctx: &egui::Context, any_dialog_open: bool, is_pattern: bool, is_sample: bool) -> bool {
+    let mut handled = false;
+    ctx.input(|i| {
+        for event in &i.events {
+            if let egui::Event::Key { key, pressed: true, .. } = event {
+                match key {
+                    egui::Key::Z if app.edit_mode && !any_dialog_open => {
+                        app.core.ensure_module_ownership();
+                        if let Some(ref mut module) = app.core.module {
+                            if let Some(arc_module) = Arc::get_mut(module) {
+                                let _ = app.core.undo_manager.undo(arc_module);
+                            }
+                        }
+                        app.core.sync_module_to_audio();
+                        handled = true;
+                    }
+                    egui::Key::Y if app.edit_mode && !any_dialog_open => {
+                        app.core.ensure_module_ownership();
+                        if let Some(ref mut module) = app.core.module {
+                            if let Some(arc_module) = Arc::get_mut(module) {
+                                let _ = app.core.undo_manager.redo(arc_module);
+                            }
+                        }
+                        app.core.sync_module_to_audio();
+                        handled = true;
+                    }
+                    egui::Key::C if is_pattern && !any_dialog_open => {
+                        app.core.copy_selection();
+                        handled = true;
+                    }
+                    egui::Key::C if is_sample && !any_dialog_open => {
+                        if let Some((s, e)) = app.sample_editor.selection {
+                            let start = s.min(e);
+                            let end = s.max(e);
+                            crate::actions::sample_edit::handle_sample_edit(app, SampleEditEvent::CopyRegion(start, end));
+                        }
+                        handled = true;
+                    }
+                    egui::Key::X if app.edit_mode && is_pattern && !any_dialog_open => {
+                        app.core.copy_selection();
+                        app.core.delete_selection();
+                        handled = true;
+                    }
+                    egui::Key::X if is_sample && !any_dialog_open => {
+                        if let Some((s, e)) = app.sample_editor.selection {
+                            let start = s.min(e);
+                            let end = s.max(e);
+                            crate::actions::sample_edit::handle_sample_edit(app, SampleEditEvent::CutRegion(start, end));
+                        }
+                        handled = true;
+                    }
+                    egui::Key::V if app.edit_mode && is_pattern && !any_dialog_open => {
+                        app.core.paste_at_cursor();
+                        handled = true;
+                    }
+                    egui::Key::V if is_sample && !any_dialog_open => {
+                        if app.sample_editor.clipboard.is_some() {
+                            if let Some(pos) = app.sample_editor.cursor_pos {
+                                crate::actions::sample_edit::handle_sample_edit(app, SampleEditEvent::PasteRegion(pos));
+                            }
+                        }
+                        handled = true;
+                    }
+                    egui::Key::A if is_pattern && !any_dialog_open => {
+                        app.core.select_all();
+                        handled = true;
+                    }
+                    egui::Key::A if is_sample && !any_dialog_open => {
+                        if let Some(ref module) = app.core.module {
+                            let idx = app.core.selected_sample;
+                            if let Some(sample) = module.samples.get(idx) {
+                                app.sample_editor.selection = Some((0, sample.data.len().saturating_sub(1)));
+                            }
+                        }
+                        handled = true;
+                    }
+                    egui::Key::N => {
+                        app.new_song();
+                        handled = true;
+                    }
+                    egui::Key::O => {
+                        match app.current_view {
+                            AppView::Sample => app.file_browser.open(BrowserMode::Samples, crate::ui::file_browser::DialogMode::Open, &mut app.config),
+                            AppView::Instrument => app.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut app.config),
+                            _ => app.open_file_dialog(),
+                        }
+                        handled = true;
+                    }
+                    egui::Key::I => {
+                        app.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut app.config);
+                        handled = true;
+                    }
+                    egui::Key::S => {
+                        crate::actions::save_current_file(app);
+                        handled = true;
+                    }
+                    egui::Key::Q => {
+                        if app.config.confirm_on_exit && app.core.module_dirty() {
+                            app.show_exit_confirm = true;
+                        } else {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        handled = true;
+                    }
+                    egui::Key::Num1 => {
+                        let mut col_vis = app.config.get_col_vis();
+                        col_vis.note = !col_vis.note;
+                        app.config.set_col_vis(col_vis);
+                        app.col_vis = app.config.get_col_vis();
+                        app.config.save();
+                        handled = true;
+                    }
+                    egui::Key::Num2 => {
+                        let mut col_vis = app.config.get_col_vis();
+                        col_vis.instrument = !col_vis.instrument;
+                        app.config.set_col_vis(col_vis);
+                        app.col_vis = app.config.get_col_vis();
+                        app.config.save();
+                        handled = true;
+                    }
+                    egui::Key::Num3 => {
+                        let mut col_vis = app.config.get_col_vis();
+                        col_vis.volume = !col_vis.volume;
+                        app.config.set_col_vis(col_vis);
+                        app.col_vis = app.config.get_col_vis();
+                        app.config.save();
+                        handled = true;
+                    }
+                    egui::Key::Num4 => {
+                        let mut col_vis = app.config.get_col_vis();
+                        col_vis.effect = !col_vis.effect;
+                        app.config.set_col_vis(col_vis);
+                        app.col_vis = app.config.get_col_vis();
+                        app.config.save();
+                        handled = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+    handled
+}
+
+/// Handle Ctrl+Shift+ shortcuts (save as, import, octave, sample bg, automation interpolation)
+fn handle_ctrl_shift(app: &mut HtrkApp, ctx: &egui::Context, any_dialog_open: bool) {
+    ctx.input(|i| {
+        for event in &i.events {
+            if let egui::Event::Key { key, pressed: true, .. } = event {
+                match key {
+                    egui::Key::S => app.save_as_dialog(),
+                    egui::Key::I => app.file_browser.open(BrowserMode::Instruments, crate::ui::file_browser::DialogMode::Open, &mut app.config),
+                    egui::Key::ArrowUp => {
+                        if app.current_octave < 9 { app.current_octave += 1; }
+                    }
+                    egui::Key::ArrowDown => {
+                        if app.current_octave > 0 { app.current_octave -= 1; }
+                    }
+                    egui::Key::ArrowLeft => {
+                        app.change_selected_sample(-1);
+                    }
+                    egui::Key::ArrowRight => {
+                        app.change_selected_sample(1);
+                    }
+                    egui::Key::Space if !any_dialog_open => {
+                        app.cycle_spacing_mode();
+                    }
+                    egui::Key::L => {
+                        app.config.toggle_sample_length_bg();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+
+    if app.current_view == AppView::Automation {
+        if let Some(tid) = app.automation_editor.state.selected_track_id {
+            let mode = ctx.input(|i| {
+                for event in &i.events {
+                    if let egui::Event::Key { key, pressed: true, .. } = event {
+                        match key {
+                            egui::Key::Num5 => return Some(InterpolationMode::Hold),
+                            egui::Key::Num6 => return Some(InterpolationMode::Linear),
+                            egui::Key::Num7 => return Some(InterpolationMode::Smooth),
+                            egui::Key::Num8 => return Some(InterpolationMode::Exponential),
+                            _ => {}
+                        }
+                    }
+                }
+                None
+            });
+            if let Some(mode) = mode {
+                app.core.ensure_module_ownership();
+                if let Some(ref mut module) = app.core.module {
+                    if let Some(arc_module) = Arc::get_mut(module) {
+                        if let Some(t) = arc_module.automation_tracks.iter_mut().find(|t| t.id == tid) {
+                            t.default_interp = mode;
+                            app.core.sync_module_to_audio();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Text events: processed unconditionally so note preview works even during dialog input.
 /// When a widget has focus or a dialog is open, only play audio; skip cell editing.
 fn handle_early_text(app: &mut HtrkApp, ctx: &egui::Context, has_focus: bool, any_dialog_open: bool) {
