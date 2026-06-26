@@ -119,7 +119,10 @@ pub struct HtrkApp {
     pub(crate) plugin_scan_done: bool,
     /// Direct in-memory preset library (CLAP preset-discovery cache).
     /// Populated by `rescan_presets()`; read by MCP tools and UI.
-    pub(crate) preset_library: PresetLibrary,
+    /// Shared with the MCP server via the same `Arc<RwLock<>>` so MCP
+    /// `preset.scan` writes are visible to the UI without any explicit
+    /// mirroring step.
+    pub(crate) preset_library: Arc<RwLock<PresetLibrary>>,
     /// True after the initial preset scan has run.
     pub(crate) preset_scan_done: bool,
     /// Status of the plugin browser dialog (loading / error / loaded).
@@ -204,7 +207,9 @@ impl HtrkApp {
             pending_send_bus_state_writes: Vec::new(),
             plugin_library: crate::audio::plugins::PluginLibrary::new(),
             plugin_scan_done: false,
-            preset_library: crate::audio::plugins::PresetLibrary::new(),
+            preset_library: Arc::new(RwLock::new(
+                crate::audio::plugins::PresetLibrary::new()
+            )),
             preset_scan_done: false,
             plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
             automation_editor: crate::ui::automation_editor_panel::AutomationEditor::default(),
@@ -247,6 +252,9 @@ impl HtrkApp {
         let plugin_scan_paths: Vec<std::path::PathBuf> = config.plugin_scan_paths.iter()
             .map(std::path::PathBuf::from)
             .collect();
+        // Shared with the MCP server so MCP `preset.scan` writes are
+        // visible to the UI without any explicit mirroring step.
+        let preset_library = Arc::new(RwLock::new(PresetLibrary::new()));
         let app = HtrkApp {
             core: crate::core::HtrkCore::new(playback_state.clone()),
             stream: None,
@@ -294,7 +302,7 @@ impl HtrkApp {
             pending_send_bus_state_writes: Vec::new(),
             plugin_library: PluginLibrary::new(),
             plugin_scan_done: false,
-            preset_library: PresetLibrary::new(),
+            preset_library: preset_library.clone(),
             preset_scan_done: false,
             plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
             automation_editor: crate::ui::automation_editor_panel::AutomationEditor::default(),
@@ -354,7 +362,11 @@ impl HtrkApp {
             },
             mcp_server: if mcp_enabled {
                 let http_port = if mcp_http_enabled { Some(mcp_http_port) } else { None };
-                let server = crate::mcp::McpServer::start(mcp_port, http_port);
+                let server = crate::mcp::McpServer::start(
+                    mcp_port,
+                    http_port,
+                    preset_library.clone(),
+                );
                 eprintln!("[app] MCP server enabled (TCP port {})", server.port);
                 if let Some(hp) = server.http_port {
                     eprintln!("[app] MCP HTTP SSE transport enabled (port {hp})");
@@ -519,23 +531,21 @@ impl HtrkApp {
         let (entries, errors) = preset_discovery::scan_plugins_for_presets(&paths);
 
         let elapsed = start.elapsed();
-        self.preset_library.clear();
-        self.preset_library.add_presets(entries);
-        self.preset_library
-            .set_last_scan_time(std::time::SystemTime::now());
-
-        // Mirror to MCP library if MCP is enabled
-        if let Some(ref mcp) = self.mcp_server {
-            if let Ok(mut mcp_lib) = mcp.preset_library.write() {
-                mcp_lib.clear();
-                mcp_lib.add_presets(self.preset_library.list_presets().into_iter().cloned().collect());
-                mcp_lib.set_last_scan_time(std::time::SystemTime::now());
-            }
-        }
+        // The preset_library Arc is shared with the MCP server, so this
+        // single write is visible to both the UI and MCP tools — no
+        // explicit mirror step is needed.
+        let count = if let Ok(mut lib) = self.preset_library.write() {
+            lib.clear();
+            lib.add_presets(entries);
+            lib.set_last_scan_time(std::time::SystemTime::now());
+            lib.preset_count()
+        } else {
+            0
+        };
 
         eprintln!(
             "[presets] Done: {} preset(s) from {} plugin(s), {} error(s) in {:.1}s",
-            self.preset_library.preset_count(),
+            count,
             paths.len(),
             errors.len(),
             elapsed.as_secs_f32()
@@ -543,7 +553,7 @@ impl HtrkApp {
 
         format!(
             "Preset scan complete: {} preset(s) found from {} plugin(s), {} error(s) in {:.1}s",
-            self.preset_library.preset_count(),
+            count,
             paths.len(),
             errors.len(),
             elapsed.as_secs_f32()

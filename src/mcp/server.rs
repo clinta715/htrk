@@ -32,7 +32,15 @@ impl McpServer {
     /// Start an MCP server on the given port.
     /// If `port` is 0, the OS assigns an ephemeral port; the actual port is returned in the `port` field.
     /// If `http_port` is Some, also start an HTTP SSE transport server on that port.
-    pub fn start(port: u16, http_port: Option<u16>) -> Self {
+    ///
+    /// `preset_library` MUST be the same `Arc<RwLock<PresetLibrary>>` shared
+    /// with the application so MCP `preset.scan` writes are visible to the
+    /// UI without any explicit mirroring step.
+    pub fn start(
+        port: u16,
+        http_port: Option<u16>,
+        preset_library: Arc<RwLock<PresetLibrary>>,
+    ) -> Self {
         let addr = format!("127.0.0.1:{port}");
         let listener = match TcpListener::bind(&addr) {
             Ok(l) => l,
@@ -51,7 +59,7 @@ impl McpServer {
                     channels_snapshot: Arc::new(RwLock::new(ChannelsSnapshot::default())),
                     library: Arc::new(RwLock::new(SampleLibrary::new())),
                     plugin_library: Arc::new(RwLock::new(PluginLibrary::new())),
-                    preset_library: Arc::new(RwLock::new(PresetLibrary::new())),
+                    preset_library,
                     shutdown: Arc::new(AtomicBool::new(true)),
                 };
             }
@@ -65,7 +73,6 @@ impl McpServer {
         let channels_snapshot = Arc::new(RwLock::new(ChannelsSnapshot::default()));
         let library = Arc::new(RwLock::new(SampleLibrary::new()));
         let plugin_library = Arc::new(RwLock::new(PluginLibrary::new()));
-        let preset_library = Arc::new(RwLock::new(PresetLibrary::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let snapshot_clone = snapshot.clone();

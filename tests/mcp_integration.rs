@@ -1,5 +1,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 /// Helper: send a JSON-RPC request line and read the response line.
@@ -14,9 +15,15 @@ fn jsonrpc(port: u16, request: &str) -> String {
     line
 }
 
+/// Each test gets its own fresh `Arc<RwLock<PresetLibrary>>`, mirroring how
+/// `HtrkApp::from_config` shares the same Arc with the MCP server.
+fn fresh_preset_library() -> Arc<RwLock<htrk::audio::plugins::PresetLibrary>> {
+    Arc::new(RwLock::new(htrk::audio::plugins::PresetLibrary::new()))
+}
+
 #[test]
 fn test_mcp_ping() {
-    let mut server = htrk::mcp::McpServer::start(0, None);
+    let mut server = htrk::mcp::McpServer::start(0, None, fresh_preset_library());
     assert!(server.join_handle.is_some(), "server should bind");
     let port = server.port;
     assert!(port > 0);
@@ -29,7 +36,7 @@ fn test_mcp_ping() {
 
 #[test]
 fn test_mcp_tools_list() {
-    let mut server = htrk::mcp::McpServer::start(0, None);
+    let mut server = htrk::mcp::McpServer::start(0, None, fresh_preset_library());
     assert!(server.join_handle.is_some());
     let port = server.port;
 
@@ -44,7 +51,7 @@ fn test_mcp_tools_list() {
 
 #[test]
 fn test_mcp_resources_list() {
-    let mut server = htrk::mcp::McpServer::start(0, None);
+    let mut server = htrk::mcp::McpServer::start(0, None, fresh_preset_library());
     assert!(server.join_handle.is_some());
     let port = server.port;
 
@@ -57,7 +64,7 @@ fn test_mcp_resources_list() {
 
 #[test]
 fn test_mcp_read_state_resource() {
-    let mut server = htrk::mcp::McpServer::start(0, None);
+    let mut server = htrk::mcp::McpServer::start(0, None, fresh_preset_library());
     assert!(server.join_handle.is_some());
     let port = server.port;
 
@@ -87,7 +94,7 @@ fn test_mcp_read_state_resource() {
 
 #[test]
 fn test_mcp_unknown_method() {
-    let mut server = htrk::mcp::McpServer::start(0, None);
+    let mut server = htrk::mcp::McpServer::start(0, None, fresh_preset_library());
     assert!(server.join_handle.is_some());
     let port = server.port;
 
@@ -99,7 +106,7 @@ fn test_mcp_unknown_method() {
 
 #[test]
 fn test_mcp_invalid_json() {
-    let mut server = htrk::mcp::McpServer::start(0, None);
+    let mut server = htrk::mcp::McpServer::start(0, None, fresh_preset_library());
     let port = server.port;
 
     let resp = jsonrpc(port, "not-json");
