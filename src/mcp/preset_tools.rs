@@ -195,51 +195,11 @@ pub fn cmd_preset_status(_params: serde_json::Value, ctx: &ToolContext) -> CmdRe
 }
 
 fn format_iso8601(unix_secs: u64) -> String {
-    let secs = unix_secs as i64;
-    let days = secs / 86400;
-    let time_secs = (secs % 86400) as u32;
-    let hours = time_secs / 3600;
-    let minutes = (time_secs % 3600) / 60;
-    let seconds = time_secs % 60;
-
-    let mut year = 1970i64;
-    let mut remaining = days;
-    loop {
-        let days_in_year = if is_leap(year) { 366 } else { 365 };
-        if remaining < days_in_year {
-            break;
-        }
-        remaining -= days_in_year;
-        year += 1;
-    }
-
-    let month_days = if is_leap(year) {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-
-    let mut month = 0usize;
-    for (i, &md) in month_days.iter().enumerate() {
-        if remaining < md {
-            month = i + 1;
-            break;
-        }
-        remaining -= md;
-    }
-    if month == 0 {
-        month = 12;
-    }
-    let day = remaining + 1;
-
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        year, month, day, hours, minutes, seconds
-    )
-}
-
-fn is_leap(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    use chrono::{TimeZone, Utc};
+    Utc.timestamp_opt(unix_secs as i64, 0)
+        .single()
+        .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
