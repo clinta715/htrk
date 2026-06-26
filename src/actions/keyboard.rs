@@ -54,72 +54,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
 
     handle_early_text(app, ctx, has_focus, any_dialog_open);
 
-    // Tab interception: in the pattern editor, Tab always changes columns — it must never
-    // escape to egui's focus-navigation. Handle it before the focus gate.
-    //
-    // Two interrelated egui bugs to work around:
-    //
-    // 1. Focus::begin_pass() sets self.focus_direction = Next/Previous from raw Tab events
-    //    *before* our handler runs. We surrender focus, but end_pass() then uses the stale
-    //    focus_direction to move focus to another widget. Fix: call move_focus(None) after
-    //    surrendering.
-    //
-    // 2. consume_key() uses matches_logically() which ignores extra modifiers, so
-    //    Shift+Tab matches the plain-Tab branch. Fix: inspect raw events directly,
-    //    matching !modifiers.any() vs modifiers.shift_only() (same semantics begin_pass
-    //    uses internally).
-    //
-    // Tab/Shift-Tab advance the channel cursor in the pattern editor. The
-    // capture is gated on BOTH `is_pattern` (we're in the pattern view) AND
-    // `edit_mode` (we're in data-entry/edit mode). When the user is in
-    // view-only mode (or any other view), Tab is left to egui's normal
-    // focus traversal so dialog widgets (sliders, text fields) work
-    // correctly. Pressing Tab in a non-pattern view should also fall
-    // through to the normal focus chain.
-    if is_pattern && !any_dialog_open && app.edit_mode {
-        let mut tab_pressed = false;
-        let mut shift_pressed = false;
-        ctx.input_mut(|i| {
-            let mut tab_idx = None;
-            let mut shift_tab_idx = None;
-            for (idx, event) in i.events.iter().enumerate() {
-                if let egui::Event::Key { key: egui::Key::Tab, pressed: true, modifiers, .. } = event {
-                    if !modifiers.any() {
-                        tab_idx = Some(idx);
-                        break;
-                    } else if modifiers.shift_only() {
-                        shift_tab_idx = Some(idx);
-                        break;
-                    }
-                }
-            }
-            if let Some(idx) = tab_idx {
-                tab_pressed = true;
-                shift_pressed = false;
-                i.events.remove(idx);
-            } else if let Some(idx) = shift_tab_idx {
-                tab_pressed = true;
-                shift_pressed = true;
-                i.events.remove(idx);
-            }
-        });
-        if tab_pressed {
-            ctx.memory_mut(|m| {
-                if let Some(id) = m.focused() {
-                    m.surrender_focus(id);
-                }
-                m.move_focus(egui::FocusDirection::None);
-            });
-            app.core.selection = None;
-            if shift_pressed {
-                app.core.cursor.channel = app.core.cursor.channel.saturating_sub(1);
-            } else {
-                app.core.cursor.channel += 1;
-                app.core.cursor.channel = app.core.cursor.channel.min(app.core.num_channels_checked() - 1);
-            }
-            app.ensure_cursor_visible();
-        }
-    }
+    handle_tab(app, ctx, is_pattern, any_dialog_open);
 
     // Focus gate: if a widget has focus, skip all key events.
     if has_focus {
@@ -640,6 +575,75 @@ fn handle_early_text(app: &mut HtrkApp, ctx: &egui::Context, has_focus: bool, an
             }
         }
     });
+}
+
+/// Tab interception: in the pattern editor, Tab always changes columns — it must never
+/// escape to egui's focus-navigation. Handle it before the focus gate.
+///
+/// Two interrelated egui bugs to work around:
+///
+/// 1. Focus::begin_pass() sets self.focus_direction = Next/Previous from raw Tab events
+///    *before* our handler runs. We surrender focus, but end_pass() then uses the stale
+///    focus_direction to move focus to another widget. Fix: call move_focus(None) after
+///    surrendering.
+///
+/// 2. consume_key() uses matches_logically() which ignores extra modifiers, so
+///    Shift+Tab matches the plain-Tab branch. Fix: inspect raw events directly,
+///    matching !modifiers.any() vs modifiers.shift_only() (same semantics begin_pass
+///    uses internally).
+///
+/// Tab/Shift-Tab advance the channel cursor in the pattern editor. The
+/// capture is gated on BOTH `is_pattern` (we're in the pattern view) AND
+/// `edit_mode` (we're in data-entry/edit mode). When the user is in
+/// view-only mode (or any other view), Tab is left to egui's normal
+/// focus traversal so dialog widgets (sliders, text fields) work
+/// correctly. Pressing Tab in a non-pattern view should also fall
+/// through to the normal focus chain.
+fn handle_tab(app: &mut HtrkApp, ctx: &egui::Context, is_pattern: bool, any_dialog_open: bool) {
+    if is_pattern && !any_dialog_open && app.edit_mode {
+        let mut tab_pressed = false;
+        let mut shift_pressed = false;
+        ctx.input_mut(|i| {
+            let mut tab_idx = None;
+            let mut shift_tab_idx = None;
+            for (idx, event) in i.events.iter().enumerate() {
+                if let egui::Event::Key { key: egui::Key::Tab, pressed: true, modifiers, .. } = event {
+                    if !modifiers.any() {
+                        tab_idx = Some(idx);
+                        break;
+                    } else if modifiers.shift_only() {
+                        shift_tab_idx = Some(idx);
+                        break;
+                    }
+                }
+            }
+            if let Some(idx) = tab_idx {
+                tab_pressed = true;
+                shift_pressed = false;
+                i.events.remove(idx);
+            } else if let Some(idx) = shift_tab_idx {
+                tab_pressed = true;
+                shift_pressed = true;
+                i.events.remove(idx);
+            }
+        });
+        if tab_pressed {
+            ctx.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+                m.move_focus(egui::FocusDirection::None);
+            });
+            app.core.selection = None;
+            if shift_pressed {
+                app.core.cursor.channel = app.core.cursor.channel.saturating_sub(1);
+            } else {
+                app.core.cursor.channel += 1;
+                app.core.cursor.channel = app.core.cursor.channel.min(app.core.num_channels_checked() - 1);
+            }
+            app.ensure_cursor_visible();
+        }
+    }
 }
 
 fn note_key_preview_only(app: &mut HtrkApp, ch: char) {
