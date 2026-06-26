@@ -50,18 +50,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
     let is_sample = app.current_view == AppView::Sample;
     let modifiers = ctx.input(|i| i.modifiers);
     let has_focus = ctx.memory(|m| m.focused().is_some());
-    let any_dialog_open = app.file_browser.show
-        || app.settings_state.open
-        || app.wav_export_state.open
-        || app.sample_export_dialog.is_some()
-        || app.show_about
-        || app.show_shortcuts
-        || app.show_exit_confirm
-        || app.show_phrase_generator
-        || app.slice_dialog_open
-        || app.sendfx_panel.plugin_browser_open_for.is_some()
-        || app.instrument_editor.plugin_browser_open
-        || app.sample_library_state.open;
+    let any_dialog_open = app.any_dialog_open();
 
     // Text events: processed unconditionally so note preview works even during dialog input.
     // When a widget has focus or a dialog is open, only play audio; skip cell editing.
