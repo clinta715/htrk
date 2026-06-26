@@ -66,14 +66,11 @@ pub fn cmd_preset_list_by_plugin(params: serde_json::Value, ctx: &ToolContext) -
         .preset_library
         .read()
         .map_err(|e| format!("Preset library lock poisoned: {e}"))?;
-    let mut presets: Vec<_> = lib.list_plugin_presets(plugin_path, plugin_id);
+    let presets: Vec<_> = lib.list_plugin_presets(plugin_path, plugin_id);
     let total = presets.len();
     let total_pages = (total + page_size - 1) / page_size;
     let start = page * page_size;
-    let page_presets: Vec<_> = presets
-        .drain(start..)
-        .take(page_size)
-        .collect();
+    let page_presets: Vec<_> = presets.iter().skip(start).take(page_size).cloned().collect();
     let result: Vec<serde_json::Value> = page_presets
         .iter()
         .filter_map(|e| serde_json::to_value(e).ok())
@@ -214,13 +211,17 @@ mod tests {
     use crate::mcp::protocol::*;
 
     fn test_ctx() -> ToolContext {
+        test_ctx_with_lib(PresetLibrary::new())
+    }
+
+    fn test_ctx_with_lib(lib: PresetLibrary) -> ToolContext {
         ToolContext {
             module_snapshot: ModuleSnapshot::default(),
             playback_snapshot: PlaybackSnapshot::default(),
             channels_snapshot: ChannelsSnapshot::default(),
             library: Arc::new(RwLock::new(SampleLibrary::new())),
             plugin_library: Arc::new(RwLock::new(PluginLibrary::new())),
-            preset_library: Arc::new(RwLock::new(PresetLibrary::new())),
+            preset_library: Arc::new(RwLock::new(lib)),
             preset_scan_in_progress: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -243,5 +244,47 @@ mod tests {
         let ctx = test_ctx();
         let result = cmd_preset_status(json!({}), &ctx).unwrap();
         assert_eq!(result["total_presets"].as_i64().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_preset_list_by_plugin_out_of_bounds_page() {
+        let mut lib = PresetLibrary::new();
+        lib.add_preset(crate::audio::plugins::preset_library::PresetEntry {
+            plugin_path: "/p.clap".into(),
+            plugin_id: "com.test".into(),
+            plugin_name: "Test".into(),
+            provider_id: "main".into(),
+            provider_name: "Main".into(),
+            name: "OnlyPreset".into(),
+            load_key: "key".into(),
+            location_path: None,
+            location_kind: "plugin".into(),
+            flags: 0,
+            features: vec![],
+            description: None,
+            creators: vec![],
+            compatible_plugin_ids: vec![],
+            soundpack_id: None,
+            extra_info: std::collections::HashMap::new(),
+            creation_time: None,
+            modification_time: None,
+        });
+
+        let ctx = test_ctx_with_lib(lib);
+        // Request page 100 — well beyond the 1 preset available
+        let result = cmd_preset_list_by_plugin(
+            serde_json::json!({
+                "plugin_path": "/p.clap",
+                "plugin_id": "com.test",
+                "page": 100,
+                "page_size": 10,
+            }),
+            &ctx,
+        )
+        .unwrap();
+        let val = result.as_object().unwrap();
+        assert_eq!(val["total"].as_i64().unwrap(), 1);
+        assert_eq!(val["total_pages"].as_i64().unwrap(), 1);
+        assert_eq!(val["presets"].as_array().unwrap().len(), 0, "should return empty page, not panic");
     }
 }
