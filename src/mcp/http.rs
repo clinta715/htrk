@@ -109,7 +109,7 @@ impl HttpServer {
                     clean_counter += 1;
                     if clean_counter % 500 == 0 {
                         if let Ok(mut sessions) = shared.sessions.lock() {
-                            sessions.retain(|_, tx| tx.send(String::new()).is_ok() == false);
+                            sessions.retain(|_, tx| tx.send(String::new()).is_ok());
                             drop(sessions);
                         }
                     }
@@ -216,6 +216,7 @@ fn handle_sse_get(
     // Keep connection alive, push SSE events
     loop {
         match rx.recv() {
+            Ok(msg) if msg.is_empty() => continue,
             Ok(msg) => {
                 let sse = format!("data: {msg}\n\n");
                 if write!(stream, "{sse}").is_err() || stream.flush().is_err() {
