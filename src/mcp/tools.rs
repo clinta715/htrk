@@ -479,10 +479,15 @@ pub fn list_tools() -> Vec<ToolDefinition> {
                     "type": "object",
                     "description": "Optional filter",
                     "properties": {
-                        "name_contains": {"type": "string", "description": "Substring match on filename"},
-                        "min_duration":  {"type": "number", "description": "Minimum duration in seconds"},
-                        "max_duration":  {"type": "number", "description": "Maximum duration in seconds"},
-                        "category":      {"type": "string", "description": "Substring match on heuristically detected category"}
+                        "name_contains":  {"type": "string", "description": "Substring match on filename"},
+                        "min_duration":   {"type": "number", "description": "Minimum duration in seconds"},
+                        "max_duration":   {"type": "number", "description": "Maximum duration in seconds"},
+                        "category":       {"type": "string", "description": "Substring match on heuristically detected category"},
+                        "min_bpm":        {"type": "number", "description": "Minimum BPM (matches when entry.bpm is in range)"},
+                        "max_bpm":        {"type": "number", "description": "Maximum BPM (matches when entry.bpm is in range)"},
+                        "key":            {"type": "string", "description": "Substring match on detected musical key (e.g. 'Cmaj', 'Amin')"},
+                        "tag":            {"type": "string", "description": "Substring match on any detected tag (e.g. 'kick', 'wet')"},
+                        "channels_filter":{"type": "integer", "description": "Exact channel count: 1 = mono only, 2 = stereo only"}
                     }
                 }
             },
@@ -660,10 +665,34 @@ fn cmd_sample_library_list_dir(params: serde_json::Value, ctx: &ToolContext) -> 
         let category = f.get("category").and_then(|v| v.as_str()).map(String::from);
         let min_duration = f.get("min_duration").and_then(|v| v.as_f64());
         let max_duration = f.get("max_duration").and_then(|v| v.as_f64());
-        if name_contains.is_none() && category.is_none() && min_duration.is_none() && max_duration.is_none() {
-            None
+        let min_bpm = f.get("min_bpm").and_then(|v| v.as_f64()).map(|n| n as f32);
+        let max_bpm = f.get("max_bpm").and_then(|v| v.as_f64()).map(|n| n as f32);
+        let key = f.get("key").and_then(|v| v.as_str()).map(String::from);
+        let tag = f.get("tag").and_then(|v| v.as_str()).map(String::from);
+        let channels_filter = f.get("channels_filter").and_then(|v| v.as_u64()).map(|n| n as u8);
+        let has_any = name_contains.is_some()
+            || category.is_some()
+            || min_duration.is_some()
+            || max_duration.is_some()
+            || min_bpm.is_some()
+            || max_bpm.is_some()
+            || key.is_some()
+            || tag.is_some()
+            || channels_filter.is_some();
+        if has_any {
+            Some(DirFilter {
+                name_contains,
+                category,
+                min_duration,
+                max_duration,
+                min_bpm,
+                max_bpm,
+                key,
+                tag,
+                channels_filter,
+            })
         } else {
-            Some(DirFilter { name_contains, category, min_duration, max_duration })
+            None
         }
     });
 

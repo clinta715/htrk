@@ -238,10 +238,15 @@ pub struct DirFilter {
     pub min_duration: Option<f64>,
     pub max_duration: Option<f64>,
     pub category: Option<String>,
+    pub min_bpm: Option<f32>,
+    pub max_bpm: Option<f32>,
+    pub key: Option<String>,
+    pub tag: Option<String>,
+    pub channels_filter: Option<u8>,
 }
 
 impl DirFilter {
-    fn matches(&self, entry: &LibraryEntry) -> bool {
+    pub fn matches(&self, entry: &LibraryEntry) -> bool {
         if let Some(ref needle) = self.name_contains {
             if !entry.name.to_lowercase().contains(&needle.to_lowercase()) {
                 return false;
@@ -269,6 +274,47 @@ impl DirFilter {
                 if d > max {
                     return false;
                 }
+            }
+        }
+        if let Some(min) = self.min_bpm {
+            if let Some(b) = entry.bpm {
+                if b < min {
+                    return false;
+                }
+            }
+        }
+        if let Some(max) = self.max_bpm {
+            if let Some(b) = entry.bpm {
+                if b > max {
+                    return false;
+                }
+            }
+        }
+        if let Some(ref needle) = self.key {
+            let needle_lc = needle.to_lowercase();
+            match entry.key {
+                Some(ref k) => {
+                    if !k.to_lowercase().contains(&needle_lc) {
+                        return false;
+                    }
+                }
+                None => return false,
+            }
+        }
+        if let Some(ref needle) = self.tag {
+            let needle_lc = needle.to_lowercase();
+            if !entry.tags.iter().any(|t| t.to_lowercase().contains(&needle_lc)) {
+                return false;
+            }
+        }
+        if let Some(ch) = self.channels_filter {
+            match entry.channels {
+                Some(c) => {
+                    if c != ch as u32 {
+                        return false;
+                    }
+                }
+                None => return false,
             }
         }
         true
@@ -834,5 +880,95 @@ mod tests {
         let m = parse_filename("Kick.wav");
         assert!(m.tags.is_empty());
         assert_eq!(m.category, None);
+    }
+
+    fn entry_with_bpm_key_tags_channels(
+        bpm: Option<f32>,
+        key: Option<&str>,
+        tags: &[&str],
+        channels: Option<u32>,
+    ) -> LibraryEntry {
+        LibraryEntry {
+            name: String::from("test.wav"),
+            path: String::from("/test/test.wav"),
+            is_directory: false,
+            duration: Some(1.0),
+            sample_rate: Some(44100),
+            bit_depth: Some(16),
+            file_size: 0,
+            modified: String::new(),
+            category: None,
+            root_note: None,
+            bpm,
+            channels,
+            key: key.map(String::from),
+            tags: tags.iter().map(|s| s.to_string()).collect(),
+            bpm_range: None,
+            tempo_marking: None,
+        }
+    }
+
+    #[test]
+    fn test_filter_by_bpm() {
+        let entry = entry_with_bpm_key_tags_channels(Some(120.0), None, &[], Some(1));
+        let f = DirFilter {
+            min_bpm: Some(100.0),
+            max_bpm: Some(140.0),
+            ..Default::default()
+        };
+        assert!(f.matches(&entry));
+        let f2 = DirFilter {
+            min_bpm: Some(130.0),
+            ..Default::default()
+        };
+        assert!(!f2.matches(&entry));
+    }
+
+    #[test]
+    fn test_filter_by_key() {
+        let entry = entry_with_bpm_key_tags_channels(None, Some("Cmaj"), &[], Some(1));
+        let f = DirFilter {
+            key: Some("Cmaj".to_string()),
+            ..Default::default()
+        };
+        assert!(f.matches(&entry));
+        let f2 = DirFilter {
+            key: Some("Dmin".to_string()),
+            ..Default::default()
+        };
+        assert!(!f2.matches(&entry));
+    }
+
+    #[test]
+    fn test_filter_by_tag() {
+        let entry = entry_with_bpm_key_tags_channels(None, None, &["kick", "punchy"], Some(1));
+        let f = DirFilter {
+            tag: Some("kick".to_string()),
+            ..Default::default()
+        };
+        assert!(f.matches(&entry));
+        let f2 = DirFilter {
+            tag: Some("snare".to_string()),
+            ..Default::default()
+        };
+        assert!(!f2.matches(&entry));
+    }
+
+    #[test]
+    fn test_filter_by_channels() {
+        let mono = entry_with_bpm_key_tags_channels(None, None, &[], Some(1));
+        let stereo = entry_with_bpm_key_tags_channels(None, None, &[], Some(2));
+        let f_mono = DirFilter {
+            channels_filter: Some(1),
+            ..Default::default()
+        };
+        assert!(f_mono.matches(&mono));
+        assert!(!f_mono.matches(&stereo));
+        let f_stereo = DirFilter {
+            channels_filter: Some(2),
+            ..Default::default()
+        };
+        assert!(!f_stereo.matches(&mono));
+        assert!(f_stereo.matches(&stereo));
     }
 }
