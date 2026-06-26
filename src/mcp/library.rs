@@ -3,11 +3,11 @@ use std::fs;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 // ── Data types ──
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LibraryEntry {
     pub name: String,
     pub path: String,
@@ -21,6 +21,14 @@ pub struct LibraryEntry {
     pub root_note: Option<String>,
     pub bpm: Option<f32>,
     pub channels: Option<u32>,
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub bpm_range: Option<(u32, u32)>,
+    #[serde(default)]
+    pub tempo_marking: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -224,7 +232,7 @@ impl SampleLibrary {
 
 // ── Directory filter ──
 
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct DirFilter {
     pub name_contains: Option<String>,
     pub min_duration: Option<f64>,
@@ -306,6 +314,10 @@ fn build_entry(path: &Path) -> Result<LibraryEntry, String> {
         root_note: None,
         bpm: None,
         channels: None,
+        key: None,
+        tags: Vec::new(),
+        bpm_range: None,
+        tempo_marking: None,
     };
 
     if !is_directory {
@@ -322,6 +334,10 @@ fn build_entry(path: &Path) -> Result<LibraryEntry, String> {
         entry.category = parsed.category;
         entry.root_note = parsed.root_note;
         entry.bpm = parsed.bpm;
+        entry.key = parsed.key;
+        entry.tags = parsed.tags;
+        entry.bpm_range = parsed.bpm_range;
+        entry.tempo_marking = parsed.tempo_marking;
     }
 
     Ok(entry)
@@ -415,11 +431,15 @@ fn read_wav_header(path: &Path) -> Result<WavMeta, String> {
 
 // ── Filename heuristic parser ──
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct ParsedMetadata {
     category: Option<String>,
     root_note: Option<String>,
     bpm: Option<f32>,
+    key: Option<String>,
+    tags: Vec<String>,
+    bpm_range: Option<(u32, u32)>,
+    tempo_marking: Option<String>,
 }
 
 fn parse_filename(name: &str) -> ParsedMetadata {
@@ -435,24 +455,36 @@ fn parse_filename(name: &str) -> ParsedMetadata {
         .collect();
 
     if tokens.is_empty() {
-        return ParsedMetadata {
-            category: None,
-            root_note: None,
-            bpm: None,
-        };
+        return ParsedMetadata::default();
     }
 
     let mut category_tokens: Vec<&str> = Vec::new();
     let mut root_note: Option<String> = None;
     let mut bpm: Option<f32> = None;
+    let mut key: Option<String> = None;
+    let mut tags: Vec<String> = Vec::new();
+    let mut bpm_range: Option<(u32, u32)> = None;
+    let mut tempo_marking: Option<String> = None;
     let mut found_musical = false;
 
     for token in &tokens {
-        if let Some(note) = try_parse_note_token(token) {
-            if root_note.is_none() {
-                root_note = Some(note);
+        if let Some(k) = try_parse_key_token(token) {
+            if key.is_none() {
+                key = Some(k);
             }
             found_musical = true;
+            continue;
+        }
+        if let Some(t) = try_parse_tempo_marking_token(token) {
+            if tempo_marking.is_none() {
+                tempo_marking = Some(t);
+            }
+            continue;
+        }
+        if let Some((lo, hi)) = try_parse_bpm_range_token(token) {
+            if bpm_range.is_none() {
+                bpm_range = Some((lo, hi));
+            }
             continue;
         }
         if let Some(b) = try_parse_bpm_token(token) {
@@ -467,6 +499,17 @@ fn parse_filename(name: &str) -> ParsedMetadata {
             found_musical = true;
             continue;
         }
+        if let Some(note) = try_parse_note_token(token) {
+            if root_note.is_none() {
+                root_note = Some(note);
+            }
+            found_musical = true;
+            continue;
+        }
+        if let Some(tag) = try_parse_tag_token(token) {
+            tags.push(tag);
+            continue;
+        }
         category_tokens.push(token);
     }
 
@@ -476,10 +519,16 @@ fn parse_filename(name: &str) -> ParsedMetadata {
         None
     };
 
+    let final_tags = if found_musical { tags } else { Vec::new() };
+
     ParsedMetadata {
         category,
         root_note,
         bpm,
+        key,
+        tags: final_tags,
+        bpm_range,
+        tempo_marking,
     }
 }
 
@@ -515,6 +564,71 @@ fn try_parse_note_token(token: &str) -> Option<String> {
     Some(format!("{}{}{}", first as char, modifier, octave))
 }
 
+fn try_parse_key_token(token: &str) -> Option<String> {
+    let lower = token.to_lowercase();
+    let bytes = lower.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    if bytes[0] < b'a' || bytes[0] > b'g' {
+        return None;
+    }
+    let mut idx = 1;
+    if idx < bytes.len() && (bytes[idx] == b'#' || bytes[idx] == b'b') {
+        idx += 1;
+    }
+    let quality = &lower[idx..];
+    let canonical_quality = match quality {
+        "maj" => "maj",
+        "min" => "min",
+        "m7" => "m7",
+        "maj7" => "maj7",
+        "min7" => "min7",
+        "m7b5" => "m7b5",
+        "dim" => "dim",
+        "aug" => "aug",
+        "sus2" => "sus2",
+        "sus4" => "sus4",
+        "add9" => "add9",
+        "add11" => "add11",
+        _ => return None,
+    };
+    let root = &lower[..idx];
+    let first_upper = (root.as_bytes()[0] as char).to_ascii_uppercase();
+    let rest = &root[1..];
+    Some(format!("{first_upper}{rest}{canonical_quality}"))
+}
+
+const TEMPO_MARKINGS: &[&str] = &[
+    "Largo", "Adagio", "Andante", "Moderato", "Allegro", "Presto", "Vivace", "Lento", "Grave",
+];
+
+fn try_parse_tempo_marking_token(token: &str) -> Option<String> {
+    let lower = token.to_lowercase();
+    for canonical in TEMPO_MARKINGS {
+        if canonical.eq_ignore_ascii_case(&lower) {
+            return Some((*canonical).to_string());
+        }
+    }
+    None
+}
+
+fn try_parse_bpm_range_token(token: &str) -> Option<(u32, u32)> {
+    let lower = token.to_lowercase();
+    let stripped = lower.strip_suffix("bpm").unwrap_or(&lower);
+    for sep in ['-', '_'] {
+        if let Some(idx) = stripped.find(sep) {
+            let (lo_str, hi_str) = stripped.split_at(idx);
+            let hi_str = &hi_str[1..];
+            if let (Ok(lo), Ok(hi)) = (lo_str.parse::<u32>(), hi_str.parse::<u32>()) {
+                let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+                return Some((lo, hi));
+            }
+        }
+    }
+    None
+}
+
 fn try_parse_bpm_token(token: &str) -> Option<f32> {
     let lower = token.to_lowercase();
     if let Some(stripped) = lower.strip_suffix("bpm") {
@@ -529,6 +643,23 @@ fn is_standalone_bpm(token: &str) -> bool {
         return false;
     }
     token.bytes().all(|b| b.is_ascii_digit())
+}
+
+const KNOWN_TAGS: &[&str] = &[
+    "kick", "snare", "rim", "clap", "hihat", "hat", "openhat", "cymbal", "crash", "ride",
+    "tom", "perc", "percussion", "bass", "sub", "lead", "pad", "pluck", "stab",
+    "vox", "vocal", "fx", "riser", "impact", "sweep", "glitch", "noise", "drone",
+    "loop", "oneshot", "wet", "dry", "lofi", "mono", "stereo",
+    "soft", "hard", "warm", "bright", "dark", "punchy",
+];
+
+fn try_parse_tag_token(token: &str) -> Option<String> {
+    let lower = token.to_lowercase();
+    if KNOWN_TAGS.contains(&lower.as_str()) {
+        Some(lower)
+    } else {
+        None
+    }
 }
 
 // ── ISO 8601 formatting ──
@@ -591,7 +722,7 @@ mod tests {
     #[test]
     fn test_parse_kick_c4() {
         let m = parse_filename("Kick_C4.wav");
-        assert_eq!(m.category.as_deref(), Some("Kick"));
+        assert_eq!(m.tags, vec!["kick"]);
         assert_eq!(m.root_note.as_deref(), Some("C4"));
         assert_eq!(m.bpm, None);
     }
@@ -599,7 +730,7 @@ mod tests {
     #[test]
     fn test_parse_snare_rim_120bpm() {
         let m = parse_filename("Snare_Rim_120bpm.wav");
-        assert_eq!(m.category.as_deref(), Some("Snare Rim"));
+        assert_eq!(m.tags, vec!["snare", "rim"]);
         assert_eq!(m.root_note, None);
         assert!((m.bpm.unwrap() - 120.0).abs() < 0.01);
     }
@@ -607,7 +738,7 @@ mod tests {
     #[test]
     fn test_parse_bass_c2_c4() {
         let m = parse_filename("Bass_C2_C4.wav");
-        assert_eq!(m.category.as_deref(), Some("Bass"));
+        assert_eq!(m.tags, vec!["bass"]);
         assert_eq!(m.root_note.as_deref(), Some("C2"));
     }
 
@@ -617,30 +748,35 @@ mod tests {
         assert_eq!(m.category, None);
         assert_eq!(m.root_note, None);
         assert_eq!(m.bpm, None);
+        assert!(m.tags.is_empty());
     }
 
     #[test]
     fn test_parse_pad_strings_a3() {
         let m = parse_filename("Pad_Strings_A3.wav");
-        assert_eq!(m.category.as_deref(), Some("Pad Strings"));
+        assert_eq!(m.category.as_deref(), Some("Strings"));
+        assert_eq!(m.tags, vec!["pad"]);
         assert_eq!(m.root_note.as_deref(), Some("A3"));
     }
 
     #[test]
     fn test_parse_note_dsharp3() {
         let m = parse_filename("Kick_D#3.wav");
+        assert_eq!(m.tags, vec!["kick"]);
         assert_eq!(m.root_note.as_deref(), Some("D#3"));
     }
 
     #[test]
     fn test_parse_note_flat() {
         let m = parse_filename("Bass_Bb2.wav");
+        assert_eq!(m.tags, vec!["bass"]);
         assert_eq!(m.root_note.as_deref(), Some("Bb2"));
     }
 
     #[test]
     fn test_parse_standalone_bpm() {
         let m = parse_filename("Kick_120.wav");
+        assert_eq!(m.tags, vec!["kick"]);
         assert_eq!(m.root_note, None);
         assert!((m.bpm.unwrap() - 120.0).abs() < 0.01);
     }
@@ -650,5 +786,53 @@ mod tests {
         let m = parse_filename("C-4_Piano.wav");
         assert_eq!(m.root_note.as_deref(), Some("C-4"));
         assert_eq!(m.category.as_deref(), Some("Piano"));
+    }
+
+    #[test]
+    fn test_parse_key_maj() {
+        let m = parse_filename("Cmaj.wav");
+        assert_eq!(m.key.as_deref(), Some("Cmaj"));
+        assert!(m.tags.is_empty());
+    }
+
+    #[test]
+    fn test_parse_key_min() {
+        let m = parse_filename("Amin_120bpm.wav");
+        assert_eq!(m.key.as_deref(), Some("Amin"));
+        assert!((m.bpm.unwrap() - 120.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_key_sharp() {
+        let m = parse_filename("A#min.wav");
+        assert_eq!(m.key.as_deref(), Some("A#min"));
+    }
+
+    #[test]
+    fn test_parse_tags() {
+        let m = parse_filename("Kick_punchy_120bpm.wav");
+        assert!(m.tags.contains(&"kick".to_string()));
+        assert!(m.tags.contains(&"punchy".to_string()));
+        assert!((m.bpm.unwrap() - 120.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_bpm_range() {
+        let m = parse_filename("Loop_120-130bpm.wav");
+        assert_eq!(m.bpm_range, Some((120, 130)));
+    }
+
+    #[test]
+    fn test_parse_tempo_marking() {
+        let m = parse_filename("Allegro_Pad_C4.wav");
+        assert_eq!(m.tempo_marking.as_deref(), Some("Allegro"));
+        assert_eq!(m.root_note.as_deref(), Some("C4"));
+    }
+
+    #[test]
+    fn test_no_tags_without_musical_signal() {
+        let m = parse_filename("Kick.wav");
+        assert!(m.tags.is_empty());
+        assert_eq!(m.category, None);
     }
 }
