@@ -25,6 +25,7 @@ pub struct McpServer {
     pub library: Arc<RwLock<SampleLibrary>>,
     pub plugin_library: Arc<RwLock<PluginLibrary>>,
     pub preset_library: Arc<RwLock<PresetLibrary>>,
+    pub preset_scan_in_progress: Arc<AtomicBool>,
     pub shutdown: Arc<AtomicBool>,
 }
 
@@ -41,6 +42,7 @@ impl McpServer {
         http_port: Option<u16>,
         preset_library: Arc<RwLock<PresetLibrary>>,
     ) -> Self {
+        let preset_scan_in_progress = Arc::new(AtomicBool::new(false));
         let addr = format!("127.0.0.1:{port}");
         let listener = match TcpListener::bind(&addr) {
             Ok(l) => l,
@@ -60,6 +62,7 @@ impl McpServer {
                     library: Arc::new(RwLock::new(SampleLibrary::new())),
                     plugin_library: Arc::new(RwLock::new(PluginLibrary::new())),
                     preset_library,
+                    preset_scan_in_progress,
                     shutdown: Arc::new(AtomicBool::new(true)),
                 };
             }
@@ -81,6 +84,7 @@ impl McpServer {
         let library_clone = library.clone();
         let plugin_library_clone = plugin_library.clone();
         let preset_library_clone = preset_library.clone();
+        let preset_scan_flag_clone = preset_scan_in_progress.clone();
         let shutdown_clone = shutdown.clone();
         let cmd_tx = command_tx.clone();
 
@@ -137,6 +141,7 @@ impl McpServer {
                                         library: library_clone.clone(),
                                         plugin_library: plugin_library_clone.clone(),
                                         preset_library: preset_library_clone.clone(),
+                                        preset_scan_in_progress: preset_scan_flag_clone.clone(),
                                     };
                                     drop(snapshot);
                                     drop(pb);
@@ -182,6 +187,7 @@ impl McpServer {
                 library.clone(),
                 plugin_library.clone(),
                 preset_library.clone(),
+                preset_scan_in_progress.clone(),
                 shutdown.clone(),
             )
         });
@@ -199,6 +205,7 @@ impl McpServer {
             library,
             plugin_library,
             preset_library,
+            preset_scan_in_progress,
             shutdown,
         }
     }

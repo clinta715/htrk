@@ -67,8 +67,21 @@ pub fn cmd_preset_list_by_plugin(params: serde_json::Value, ctx: &ToolContext) -
 }
 
 /// Trigger a rescan of presets across all discovered plugins.
-/// Returns summary statistics.
+///
+/// The scan runs on a background thread so it never blocks the MCP server
+/// thread (scanning thousands of presets can take ~30s). Returns immediately
+/// with a "scan_started" status; poll `preset.status` to check progress.
 pub fn cmd_preset_scan(_params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
+    if ctx
+        .preset_scan_in_progress
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return Ok(json!({
+            "status": "already_scanning",
+            "message": "A preset scan is already in progress"
+        }));
+    }
+
     // Collect all discovered plugin .clap paths
     let plugin_paths: Vec<std::path::PathBuf> = {
         let plib = ctx
@@ -83,41 +96,52 @@ pub fn cmd_preset_scan(_params: serde_json::Value, ctx: &ToolContext) -> CmdResu
 
     if plugin_paths.is_empty() {
         return Ok(json!({
-            "presets_found": 0,
-            "plugins_scanned": 0,
-            "errors": 0,
+            "status": "no_plugins",
             "message": "No plugins discovered yet — run plugin.scan first"
         }));
     }
 
-    let (entries, errors) =
-        crate::audio::plugins::preset_discovery::scan_plugins_for_presets(&plugin_paths);
-    let count = entries.len();
+    ctx.preset_scan_in_progress
+        .store(true, std::sync::atomic::Ordering::Relaxed);
 
-    // Write back to the library (requires write lock)
-    {
-        let mut lib = ctx
-            .preset_library
-            .write()
-            .map_err(|e| format!("Preset library lock poisoned: {e}"))?;
-        lib.clear();
-        lib.add_presets(entries);
-        lib.set_last_scan_time(std::time::SystemTime::now());
-    }
+    let preset_lib = ctx.preset_library.clone();
+    let scan_flag = ctx.preset_scan_in_progress.clone();
+    let plugin_count = plugin_paths.len();
+
+    std::thread::Builder::new()
+        .name("htrk-preset-scan".into())
+        .spawn(move || {
+            let (entries, errors) =
+                crate::audio::plugins::preset_discovery::scan_plugins_for_presets(&plugin_paths);
+
+            if let Ok(mut lib) = preset_lib.write() {
+                lib.clear();
+                lib.add_presets(entries);
+                lib.set_last_scan_time(std::time::SystemTime::now());
+            }
+
+            eprintln!(
+                "[preset_discovery] Background scan done: {} error(s) from {} plugin(s)",
+                errors.len(),
+                plugin_count
+            );
+
+            scan_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+        })
+        .map_err(|e| format!("Failed to spawn scan thread: {e}"))?;
 
     Ok(json!({
-        "presets_found": count,
-        "plugins_scanned": plugin_paths.len(),
-        "errors": errors.len(),
-        "error_details": errors.iter().map(|(p, e)| json!({
-            "plugin": p.display().to_string(),
-            "error": e
-        })).collect::<Vec<_>>()
+        "status": "scan_started",
+        "plugins_to_scan": plugin_count,
+        "message": "Scan running in background. Use preset.status to check progress."
     }))
 }
 
 /// Get preset library statistics and status.
 pub fn cmd_preset_status(_params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
+    let scanning = ctx
+        .preset_scan_in_progress
+        .load(std::sync::atomic::Ordering::Relaxed);
     let lib = ctx
         .preset_library
         .read()
@@ -145,6 +169,7 @@ pub fn cmd_preset_status(_params: serde_json::Value, ctx: &ToolContext) -> CmdRe
         "unique_plugins": plugin_names.len(),
         "last_scan": scan_time,
         "plugins": plugin_names,
+        "scanning": scanning,
     }))
 }
 
@@ -200,6 +225,7 @@ fn is_leap(year: i64) -> bool {
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
     use std::sync::RwLock;
     use crate::audio::plugins::PresetLibrary;
     use crate::audio::plugins::PluginLibrary;
@@ -214,6 +240,7 @@ mod tests {
             library: Arc::new(RwLock::new(SampleLibrary::new())),
             plugin_library: Arc::new(RwLock::new(PluginLibrary::new())),
             preset_library: Arc::new(RwLock::new(PresetLibrary::new())),
+            preset_scan_in_progress: Arc::new(AtomicBool::new(false)),
         }
     }
 

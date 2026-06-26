@@ -1,4 +1,5 @@
 use std::sync::{mpsc, Arc, RwLock};
+use std::sync::atomic::AtomicBool;
 use serde::{Deserialize, Serialize};
 
 use crate::mcp::library::SampleLibrary;
@@ -83,6 +84,7 @@ pub struct ToolContext {
     pub library: Arc<RwLock<SampleLibrary>>,
     pub plugin_library: Arc<RwLock<PluginLibrary>>,
     pub preset_library: Arc<RwLock<PresetLibrary>>,
+    pub preset_scan_in_progress: Arc<AtomicBool>,
 }
 
 // ── Snapshots (read-only, shared with MCP thread via Arc<RwLock<>>) ──

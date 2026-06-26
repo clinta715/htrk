@@ -158,6 +158,7 @@ mod tests {
             library: std::sync::Arc::new(std::sync::RwLock::new(library)),
             plugin_library: std::sync::Arc::new(std::sync::RwLock::new(plugin_library)),
             preset_library: std::sync::Arc::new(std::sync::RwLock::new(preset_library)),
+            preset_scan_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         let result = cmd_plugin_list(json!({}), &ctx).unwrap();
         let val = result.as_object().unwrap();
@@ -176,6 +177,7 @@ mod tests {
             library: std::sync::Arc::new(std::sync::RwLock::new(library)),
             plugin_library: std::sync::Arc::new(std::sync::RwLock::new(plugin_library)),
             preset_library: std::sync::Arc::new(std::sync::RwLock::new(preset_library)),
+            preset_scan_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         let result = cmd_plugin_info(json!({
             "format": "clap",

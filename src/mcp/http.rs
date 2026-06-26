@@ -25,6 +25,7 @@ struct Shared {
     library: Arc<RwLock<SampleLibrary>>,
     plugin_library: Arc<RwLock<PluginLibrary>>,
     preset_library: Arc<RwLock<PresetLibrary>>,
+    preset_scan_in_progress: Arc<std::sync::atomic::AtomicBool>,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -38,6 +39,7 @@ impl HttpServer {
         library: Arc<RwLock<SampleLibrary>>,
         plugin_library: Arc<RwLock<PluginLibrary>>,
         preset_library: Arc<RwLock<PresetLibrary>>,
+        preset_scan_in_progress: Arc<std::sync::atomic::AtomicBool>,
         shutdown: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         let addr = format!("127.0.0.1:{port}");
@@ -61,6 +63,7 @@ impl HttpServer {
             library,
             plugin_library,
             preset_library,
+            preset_scan_in_progress,
             shutdown,
         });
 
@@ -275,6 +278,7 @@ fn handle_post(
         library: shared.library.clone(),
         plugin_library: shared.plugin_library.clone(),
         preset_library: shared.preset_library.clone(),
+        preset_scan_in_progress: shared.preset_scan_in_progress.clone(),
     };
     drop(snapshot);
     drop(pb);
