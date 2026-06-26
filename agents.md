@@ -399,3 +399,57 @@ Use the SP_* constants instead of inline `.add_space()`:
 ### Cursor Indicator
 - The active sub-column is shown by a 2.5px-high bright bar (`theme.cursor_outline`) at the bottom of the active sub-column within the cell, computed by `sub_column_rect()` in `pattern_grid.rs`.
 - This is necessary because the full-cell cursor highlight (`cursor_fill`) covers the entire channel width, making it impossible to distinguish between VolumeTens vs VolumeOnes or other adjacent sub-columns without the indicator.
+
+## 23. Sample Library Heuristics + Persistence (Phase 2)
+
+Extends the Phase 1 sample library (`§19`) with richer filename heuristics, more `DirFilter` fields, and on-disk persistence of the in-memory cache.
+
+### Heuristic parser extensions (`src/mcp/library.rs`)
+
+`parse_filename` now detects four new pieces of metadata per token. The detection order in the per-token loop is: **key → tempo_marking → bpm_range → bpm-suffix → standalone-bpm → note → tag → category fallback**.
+
+- **Musical key** (`LibraryEntry.key`): pattern `^([a-g][#b]?)(maj|min|m7|maj7|min7|m7b5|dim|aug|sus2|sus4|add9|add11)$` (case-insensitive). The first letter is uppercased; the modifier and canonical quality are preserved verbatim. Examples: `Cmaj` → `"Cmaj"`, `A#min` → `"A#min"`, `Dmaj7` → `"Dmaj7"`.
+- **Production tags** (`LibraryEntry.tags: Vec<String>`): tokens matching a fixed list of common sample-library tags, lowercased. Includes drum names (`kick`, `snare`, `hat`, `clap`, `crash`, `ride`, `tom`, `perc`), instrument types (`bass`, `sub`, `lead`, `pad`, `pluck`, `stab`), source types (`vox`, `vocal`, `fx`, `riser`, `impact`, `sweep`, `glitch`, `noise`, `drone`, `loop`, `oneshot`), and timbre/process descriptors (`wet`, `dry`, `lofi`, `mono`, `stereo`, `soft`, `hard`, `warm`, `bright`, `dark`, `punchy`).
+- **BPM range** (`LibraryEntry.bpm_range: Option<(u32, u32)>`): token shape `(\d+)[-_](\d+)b?pm?` (or `(\d+)bpm[-_](\d+)bpm?`). The two values are stored with `low <= high` regardless of source order. Examples: `120-130bpm` → `Some((120, 130))`, `130-120` → `Some((120, 130))`.
+- **Tempo marking** (`LibraryEntry.tempo_marking: Option<String>`): token matches one of `["Largo", "Adagio", "Andante", "Moderato", "Allegro", "Presto", "Vivace", "Lento", "Grave"]` case-insensitively. Always stored in canonical form (e.g. `"Largo"` not `"LARGO"`).
+
+### Interaction with the existing category field
+
+A token that matches the tag list is captured as a **tag** and is **not** added to the category. This means `Kick_C4.wav` now produces `tags=["kick"]` + `root_note="C4"` (and `category=None`) where it previously produced `category="Kick"`. This is a deliberate change: a tag is a single-token annotation, the category is the joined leftover string.
+
+Tags are only persisted on the entry when the existing `found_musical` flag is set (i.e. note, bpm, or key is also detected). So `Kick.wav` alone yields no category and no tags, matching the existing "low confidence" rule.
+
+### DirFilter extensions (`src/mcp/library.rs`)
+
+`DirFilter` grew four new fields, all with the same `Option<T>` shape as the existing ones:
+
+- `min_bpm` / `max_bpm: Option<f32>` — range check against `entry.bpm`. An entry with `bpm = None` simply isn't matched (no panic), matching how `min_duration` / `max_duration` behave.
+- `key: Option<String>` — case-insensitive substring match against `entry.key`. An entry with `key = None` is rejected.
+- `tag: Option<String>` — case-insensitive substring match against **any** element of `entry.tags`. An entry with no matching tag is rejected.
+- `channels_filter: Option<u8>` — exact match against `entry.channels`. `1` = mono only, `2` = stereo only. An entry with `channels = None` is rejected.
+
+`DirFilter::matches` is now `pub` so unit tests can exercise it directly. The MCP `sample_library.list_dir` tool definition and `cmd_sample_library_list_dir` handler in `src/mcp/tools.rs` pick up all four new fields, reachable from MCP clients as a `filter` sub-object.
+
+### Persistence (`src/mcp/library.rs` + `src/app.rs`)
+
+`SampleLibrary` now derives `Serialize`/`Deserialize`. `#[serde(default)]` is applied to every field so older or partial cache files still load. New methods:
+
+- `to_json() -> Result<String, String>`
+- `from_json(&str) -> Result<Self, String>`
+- `save_to_file(&Path)` — atomic write via `.tmp` sibling + rename, matching the `PresetLibrary` pattern. Avoids a half-written cache file if the process is killed mid-write.
+- `load_from_file(&Path) -> Result<Self, String>`
+- `cache_len() -> usize` and `is_empty() -> bool` accessors for the app wiring.
+
+Wiring in `src/app.rs`:
+
+- New `sample_library_loaded: bool` field on `HtrkApp`, initialised to `false` in both constructors and set to `true` after the first-frame cache load.
+- `ui()`: on the first frame, try `SampleLibrary::load_from_file(<config_dir>/sample_library_cache.json)` and merge it into the live library. The cache's `roots` field is **discarded** in favour of the `AppConfig`-managed `configured_roots` so changing the roots in Settings doesn't get clobbered by a stale cache.
+- `on_exit()`: if the library has both non-empty `roots` and a non-empty `cache`, `save_to_file(<config_dir>/sample_library_cache.json)`. The non-empty-roots guard prevents an empty cache file being created on first launch when no roots are configured.
+
+### Rule for Future Changes
+- All `LibraryEntry` fields added in this phase carry `#[serde(default)]` — preserve that attribute on any future field so old cache files keep loading.
+- When adding a new heuristic category (e.g. a new token type), update the detection order in `parse_filename` deliberately. Keys, tempo markings, and bpm ranges must be checked before the generic bpm/note checks, otherwise tokens like `120-130` would be partially consumed by the single-value bpm parser.
+- The MCP `sample_library.list_dir` schema must stay in sync with `DirFilter`'s fields. When adding a new filter field, add the JSON-Schema property in `list_tools()` AND parse the field in `cmd_sample_library_list_dir`.
+- `DirFilter::matches` returns `false` (not `None`) when an entry is missing the field being checked. A `None` field is treated as "cannot satisfy this filter", not as "vacuous match". This is the convention for every filter field that points at an optional `LibraryEntry` value.
+- The atomic-write pattern in `save_to_file` is the only safe way to persist the cache — never write directly to the final path, always `.tmp` + `rename`.
+
