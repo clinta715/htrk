@@ -215,6 +215,18 @@ impl HtrkCore {
         }
     }
 
+    /// Execute a mutation on the loaded module, handling ownership and sync.
+    /// Returns `Some(result)` if the module was present, `None` otherwise.
+    pub fn with_module_mut<F, R>(&mut self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut Module) -> R,
+    {
+        self.ensure_module_ownership();
+        let result = self.module.as_mut().and_then(|a| Arc::get_mut(a)).map(f);
+        self.sync_module_to_audio();
+        result
+    }
+
     pub(crate) fn sync_channel_fields(&mut self) {
         let count = self.module.as_ref()
             .map(|m| m.channel_panning.len())
