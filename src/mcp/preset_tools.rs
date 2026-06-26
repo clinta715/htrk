@@ -43,7 +43,7 @@ pub fn cmd_preset_info(params: serde_json::Value, ctx: &ToolContext) -> CmdResul
     }
 }
 
-/// List presets for a specific plugin.
+/// List presets for a specific plugin, with pagination.
 pub fn cmd_preset_list_by_plugin(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
     let plugin_path = params
         .get("plugin_path")
@@ -53,17 +53,36 @@ pub fn cmd_preset_list_by_plugin(params: serde_json::Value, ctx: &ToolContext) -
         .get("plugin_id")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'plugin_id'")?;
+    let page = params.get("page").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+    let page_size = params
+        .get("page_size")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(50)
+        .max(1) as usize;
 
     let lib = ctx
         .preset_library
         .read()
         .map_err(|e| format!("Preset library lock poisoned: {e}"))?;
-    let presets = lib.list_plugin_presets(plugin_path, plugin_id);
-    let result: Vec<serde_json::Value> = presets
+    let mut presets: Vec<_> = lib.list_plugin_presets(plugin_path, plugin_id);
+    let total = presets.len();
+    let total_pages = (total + page_size - 1) / page_size;
+    let start = page * page_size;
+    let page_presets: Vec<_> = presets
+        .drain(start..)
+        .take(page_size)
+        .collect();
+    let result: Vec<serde_json::Value> = page_presets
         .iter()
         .filter_map(|e| serde_json::to_value(e).ok())
         .collect();
-    Ok(json!({ "total": result.len(), "presets": result }))
+    Ok(json!({
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "presets": result
+    }))
 }
 
 /// Trigger a rescan of presets across all discovered plugins.

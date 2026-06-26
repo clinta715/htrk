@@ -549,11 +549,13 @@ pub fn list_tools() -> Vec<ToolDefinition> {
             },
             "required": ["key"]
         })),
-        tool_def("preset.list_by_plugin", "List presets for a specific plugin", json!({
+        tool_def("preset.list_by_plugin", "List presets for a specific plugin, with pagination", json!({
             "type": "object",
             "properties": {
                 "plugin_path": {"type": "string", "description": "Path to the .clap plugin"},
-                "plugin_id":   {"type": "string", "description": "The plugin's CLAP ID"}
+                "plugin_id":   {"type": "string", "description": "The plugin's CLAP ID"},
+                "page":        {"type": "integer", "description": "Page number (0-based)", "default": 0},
+                "page_size":   {"type": "integer", "description": "Items per page (default 50)", "default": 50}
             },
             "required": ["plugin_path", "plugin_id"]
         })),
