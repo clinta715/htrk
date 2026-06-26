@@ -371,11 +371,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                 match key {
                         egui::Key::ArrowDown => {
                             if !any_dialog_open && is_pattern {
-                                if modifiers.ctrl {
-                                    if app.current_octave > 0 {
-                                        app.current_octave -= 1;
-                                    }
-                                } else if modifiers.shift {
+                                if modifiers.shift {
                                     app.extend_selection_down();
                                 } else if modifiers.alt && app.edit_mode {
                                     app.core.transpose_selection(-1);
@@ -387,11 +383,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                         }
                         egui::Key::ArrowUp => {
                             if !any_dialog_open && is_pattern {
-                                if modifiers.ctrl {
-                                    if app.current_octave < 9 {
-                                        app.current_octave += 1;
-                                    }
-                                } else if modifiers.shift {
+                                if modifiers.shift {
                                     app.extend_selection_up();
                                 } else if modifiers.alt && app.edit_mode {
                                     app.core.transpose_selection(1);

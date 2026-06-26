@@ -1,5 +1,6 @@
 // MCP tools for browsing discovered CLAP presets.
-// Read-only: preset.scan is the only mutation tool that requires main-thread dispatch.
+// All tools run on the MCP thread. preset.scan writes to preset_library
+// via RwLock (same pattern as plugin.scan). See AGENTS.md §21.
 
 use serde_json::json;
 
