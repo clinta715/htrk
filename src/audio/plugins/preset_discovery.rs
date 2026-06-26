@@ -470,4 +470,60 @@ mod tests {
         let p = Path::new("/some/path/plugin.clap");
         assert_eq!(resolve_load_path(p).unwrap(), p);
     }
+
+    /// Scan every .clap plugin in the system CLAP directory and report
+    /// which ones expose the preset-discovery factory and how many presets.
+    #[test]
+    fn test_scan_all_clap_presets() {
+        let root = Path::new(r"C:\Program Files\Common Files\CLAP");
+        if !root.is_dir() {
+            eprintln!("[skip] CLAP directory not found");
+            return;
+        }
+
+        let mut total = 0usize;
+        let mut with_presets = 0usize;
+        let mut without_factory = 0usize;
+        let mut errors = 0usize;
+
+        for entry in std::fs::read_dir(root).unwrap() {
+            let Ok(entry) = entry else { continue };
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("clap") {
+                continue;
+            }
+            let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
+
+            match scan_plugin_presets(&path) {
+                Ok(entries) => {
+                    total += 1;
+                    eprintln!("  ✓ {}: {} preset(s)", name, entries.len());
+                    if !entries.is_empty() {
+                        with_presets += 1;
+                        for (i, e) in entries.iter().enumerate().take(3) {
+                            eprintln!("      {}. {} [{}]", i + 1, e.name, e.features.join(", "));
+                        }
+                        if entries.len() > 3 {
+                            eprintln!("      ... and {} more", entries.len() - 3);
+                        }
+                    }
+                }
+                Err(PresetScanError::NoPresetDiscoveryFactory) => {
+                    total += 1;
+                    without_factory += 1;
+                    eprintln!("  ~ {}: no preset-discovery factory", name);
+                }
+                Err(e) => {
+                    total += 1;
+                    errors += 1;
+                    eprintln!("  ✗ {}: {e}", name);
+                }
+            }
+        }
+
+        eprintln!(
+            "\n[result] {total} plugin(s): {with_presets} with presets, \
+             {without_factory} no factory, {errors} error(s)"
+        );
+    }
 }
