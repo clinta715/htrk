@@ -216,13 +216,21 @@ impl HtrkCore {
     }
 
     /// Execute a mutation on the loaded module, handling ownership and sync.
+    /// Temporarily replaces `self.module` with a default so the closure can
+    /// access other fields of `self` alongside the real module (mirroring
+    /// `with_processor_mut` in the engine).
     /// Returns `Some(result)` if the module was present, `None` otherwise.
     pub fn with_module_mut<F, R>(&mut self, f: F) -> Option<R>
     where
-        F: FnOnce(&mut Module) -> R,
+        F: FnOnce(&mut Module, &mut Self) -> R,
     {
         self.ensure_module_ownership();
-        let result = self.module.as_mut().and_then(|a| Arc::get_mut(a)).map(f);
+        let mut dummy = Some(Arc::new(Module::default()));
+        std::mem::swap(&mut self.module, &mut dummy);
+        let result = dummy.as_mut()
+            .and_then(|a| Arc::get_mut(a))
+            .map(|arc_module| f(arc_module, self));
+        std::mem::swap(&mut self.module, &mut dummy);
         self.sync_module_to_audio();
         result
     }

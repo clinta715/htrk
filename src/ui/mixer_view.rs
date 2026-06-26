@@ -50,15 +50,11 @@ impl MixerState {
                 .on_hover_text("When off, only channels that contain at least one cell in the current pattern are shown.");
             ui.separator();
             if ui.small_button("Reset").clicked() {
-                core.ensure_module_ownership();
-                if let Some(ref mut module) = core.module {
-                    if let Some(arc_module) = std::sync::Arc::get_mut(module) {
-                        for v in arc_module.channel_volume.iter_mut() { *v = 64; }
-                        for p in arc_module.channel_panning.iter_mut() { *p = 128; }
-                        for sl in core.send_levels.iter_mut() { *sl = [0.0; 4]; }
-                    }
-                }
-                core.sync_module_to_audio();
+                core.with_module_mut(|arc_module, core| {
+                    for v in arc_module.channel_volume.iter_mut() { *v = 64; }
+                    for p in arc_module.channel_panning.iter_mut() { *p = 128; }
+                    for sl in core.send_levels.iter_mut() { *sl = [0.0; 4]; }
+                });
             }
             ui.label(egui::RichText::new("(vol=64, pan=128, sends=0)").color(theme.fg_dim).size(FONT_CAPTION));
         });
@@ -156,15 +152,11 @@ fn draw_channel_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, ch: u
                     .changed()
                 {
                     let new_vol = new_vol.round() as u8;
-                    core.ensure_module_ownership();
-                    if let Some(ref mut module) = core.module {
-                        if let Some(arc_module) = std::sync::Arc::get_mut(module) {
-                            if let Some(v) = arc_module.channel_volume.get_mut(ch) {
-                                *v = new_vol;
-                            }
+                    core.with_module_mut(|arc_module, _core| {
+                        if let Some(v) = arc_module.channel_volume.get_mut(ch) {
+                            *v = new_vol;
                         }
-                    }
-                    core.sync_module_to_audio();
+                    });
                 }
                 ui.add_space(2.0);
 
@@ -179,15 +171,11 @@ fn draw_channel_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, ch: u
                     .changed()
                 {
                     let new_pan = new_pan.round() as u8;
-                    core.ensure_module_ownership();
-                    if let Some(ref mut module) = core.module {
-                        if let Some(arc_module) = std::sync::Arc::get_mut(module) {
-                            if let Some(p) = arc_module.channel_panning.get_mut(ch) {
-                                *p = new_pan;
-                            }
+                    core.with_module_mut(|arc_module, _core| {
+                        if let Some(p) = arc_module.channel_panning.get_mut(ch) {
+                            *p = new_pan;
                         }
-                    }
-                    core.sync_module_to_audio();
+                    });
                 }
                 ui.add_space(2.0);
 
@@ -247,13 +235,9 @@ fn draw_send_bus_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, bus:
                     .on_hover_text("Bus return level (0.0 = silent, 1.0 = full).")
                     .changed()
                 {
-                    core.ensure_module_ownership();
-                    if let Some(ref mut module) = core.module {
-                        if let Some(arc_module) = std::sync::Arc::get_mut(module) {
-                            arc_module.send_return_levels[bus] = lvl;
-                        }
-                    }
-                    core.sync_module_to_audio();
+                    core.with_module_mut(|arc_module, _core| {
+                        arc_module.send_return_levels[bus] = lvl;
+                    });
                 }
             });
         });
@@ -285,13 +269,9 @@ fn draw_master_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, theme:
                     .changed()
                 {
                     let v = new_vol.round() as u8;
-                    core.ensure_module_ownership();
-                    if let Some(ref mut module) = core.module {
-                        if let Some(arc_module) = std::sync::Arc::get_mut(module) {
-                            arc_module.initial_global_volume = v;
-                        }
-                    }
-                    core.sync_module_to_audio();
+                    core.with_module_mut(|arc_module, _core| {
+                        arc_module.initial_global_volume = v;
+                    });
                 }
                 ui.add_space(2.0);
                 ui.separator();

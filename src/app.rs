@@ -923,16 +923,12 @@ impl HtrkApp {
                 }
                 let sample_idx = self.core.selected_sample;
                 self.core.import_wav_to_sample(sample_idx, sample);
-                self.core.ensure_module_ownership();
-                if let Some(ref mut module) = self.core.module {
-                    if let Some(arc_module) = std::sync::Arc::get_mut(module) {
-                        let inst_idx = self.core.selected_instrument;
-                        if inst_idx > 0 && inst_idx < arc_module.instruments.len() {
-                            for i in 0..120 { arc_module.instruments[inst_idx].sample_map[i] = sample_idx as u8; }
-                        }
+                self.core.with_module_mut(|arc_module, core| {
+                    let inst_idx = core.selected_instrument;
+                    if inst_idx > 0 && inst_idx < arc_module.instruments.len() {
+                        for i in 0..120 { arc_module.instruments[inst_idx].sample_map[i] = sample_idx as u8; }
                     }
-                }
-                self.core.sync_module_to_audio();
+                });
                 self.sample_library_state.status_message = Some("Imported".to_string());
             }
             Err(e) => { self.sample_library_state.status_message = Some(format!("Failed: {e}")); }
@@ -2125,20 +2121,17 @@ impl HtrkApp {
                             // plugin's default patch.
                             self.save_all_instrument_plugin_states();
 
-                            self.core.ensure_module_ownership();
-                            if let Some(ref mut module) = self.core.module {
-                                if let Some(arc_module) = Arc::get_mut(module) {
-                                    if send_index < arc_module.instruments.len() {
-                                        arc_module.instruments[send_index].plugin = Some(
-                                            crate::sequencer::plugin::PluginSlot::new(
-                                                "clap",
-                                                descriptor.path.to_string_lossy().to_string(),
-                                                descriptor.plugin_id,
-                                            )
-                                        );
-                                    }
+                            self.core.with_module_mut(|arc_module, _core| {
+                                if send_index < arc_module.instruments.len() {
+                                    arc_module.instruments[send_index].plugin = Some(
+                                        crate::sequencer::plugin::PluginSlot::new(
+                                            "clap",
+                                            descriptor.path.to_string_lossy().to_string(),
+                                            descriptor.plugin_id,
+                                        )
+                                    );
                                 }
-                            }
+                            });
 
                             self.plugin_browser_status = crate::ui::plugin_browser::PluginBrowserStatus::Loaded(name);
                         }
@@ -2669,22 +2662,14 @@ impl HtrkApp {
             if menu_resp.save_as { self.save_as_dialog(); }
             if menu_resp.export_wav { crate::actions::open_wav_export_dialog(self); }
             if menu_resp.undo {
-                self.core.ensure_module_ownership();
-                if let Some(ref mut module) = self.core.module {
-                    if let Some(arc_module) = Arc::get_mut(module) {
-                        let _ = self.core.undo_manager.undo(arc_module);
-                    }
-                }
-                self.core.sync_module_to_audio();
+                self.core.with_module_mut(|arc_module, core| {
+                    let _ = core.undo_manager.undo(arc_module);
+                });
             }
             if menu_resp.redo {
-                self.core.ensure_module_ownership();
-                if let Some(ref mut module) = self.core.module {
-                    if let Some(arc_module) = Arc::get_mut(module) {
-                        let _ = self.core.undo_manager.redo(arc_module);
-                    }
-                }
-                self.core.sync_module_to_audio();
+                self.core.with_module_mut(|arc_module, core| {
+                    let _ = core.undo_manager.redo(arc_module);
+                });
             }
             if menu_resp.cut { self.core.copy_selection(); self.core.delete_selection(); }
             if menu_resp.copy { self.core.copy_selection(); }

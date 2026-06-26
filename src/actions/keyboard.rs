@@ -219,19 +219,15 @@ fn handle_plain_key(app: &mut HtrkApp, ctx: &egui::Context, any_dialog_open: boo
                         let selected_order = app.core.selected_order;
                         let row = app.core.cursor.row;
                         app.core.ensure_pattern_exists();
-                        app.core.ensure_module_ownership();
-                        if let Some(ref mut module) = app.core.module {
-                            let pat_idx = *module.order_list.get(selected_order).unwrap_or(&0) as usize;
-                            if let Some(arc_module) = Arc::get_mut(module) {
-                                let cmd = Box::new(InsertRowCommand {
-                                    pattern_index: pat_idx,
-                                    row,
-                                    _channel: None,
-                                });
-                                let _ = app.core.undo_manager.execute(cmd, arc_module);
-                            }
-                        }
-                        app.core.sync_module_to_audio();
+                        app.core.with_module_mut(|arc_module, core| {
+                            let pat_idx = *arc_module.order_list.get(selected_order).unwrap_or(&0) as usize;
+                            let cmd = Box::new(InsertRowCommand {
+                                pattern_index: pat_idx,
+                                row,
+                                _channel: None,
+                            });
+                            let _ = core.undo_manager.execute(cmd, arc_module);
+                        });
                     }
                     egui::Key::Space => {
                         if !any_dialog_open {
@@ -388,23 +384,15 @@ fn handle_ctrl(app: &mut HtrkApp, ctx: &egui::Context, any_dialog_open: bool, is
             if let egui::Event::Key { key, pressed: true, .. } = event {
                 match key {
                     egui::Key::Z if app.edit_mode && !any_dialog_open => {
-                        app.core.ensure_module_ownership();
-                        if let Some(ref mut module) = app.core.module {
-                            if let Some(arc_module) = Arc::get_mut(module) {
-                                let _ = app.core.undo_manager.undo(arc_module);
-                            }
-                        }
-                        app.core.sync_module_to_audio();
+                        app.core.with_module_mut(|arc_module, core| {
+                            let _ = core.undo_manager.undo(arc_module);
+                        });
                         handled = true;
                     }
                     egui::Key::Y if app.edit_mode && !any_dialog_open => {
-                        app.core.ensure_module_ownership();
-                        if let Some(ref mut module) = app.core.module {
-                            if let Some(arc_module) = Arc::get_mut(module) {
-                                let _ = app.core.undo_manager.redo(arc_module);
-                            }
-                        }
-                        app.core.sync_module_to_audio();
+                        app.core.with_module_mut(|arc_module, core| {
+                            let _ = core.undo_manager.redo(arc_module);
+                        });
                         handled = true;
                     }
                     egui::Key::C if is_pattern && !any_dialog_open => {
@@ -711,19 +699,15 @@ fn delete_row(app: &mut HtrkApp) {
     let pat_idx = app.core.module.as_ref()
         .and_then(|m| m.order_list.get(selected_order).copied())
         .unwrap_or(0) as usize;
-    app.core.ensure_module_ownership();
-    if let Some(ref mut module) = app.core.module {
-        if let Some(arc_module) = Arc::get_mut(module) {
-            let cmd = Box::new(DeleteRowCommand {
-                pattern_index: pat_idx,
-                row,
-                _channel: None,
-                deleted_data,
-            });
-            let _ = app.core.undo_manager.execute(cmd, arc_module);
-        }
-    }
-    app.core.sync_module_to_audio();
+    app.core.with_module_mut(|arc_module, core| {
+        let cmd = Box::new(DeleteRowCommand {
+            pattern_index: pat_idx,
+            row,
+            _channel: None,
+            deleted_data,
+        });
+        let _ = core.undo_manager.execute(cmd, arc_module);
+    });
 }
 
 fn delete_cell_or_automation(app: &mut HtrkApp) {
