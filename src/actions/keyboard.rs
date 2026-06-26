@@ -52,21 +52,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
     let has_focus = ctx.memory(|m| m.focused().is_some());
     let any_dialog_open = app.any_dialog_open();
 
-    // Text events: processed unconditionally so note preview works even during dialog input.
-    // When a widget has focus or a dialog is open, only play audio; skip cell editing.
-    ctx.input(|i| {
-        for event in &i.events {
-            if let egui::Event::Text(text) = event {
-                for ch in text.chars() {
-                    if has_focus || any_dialog_open {
-                        note_key_preview_only(app, ch);
-                    } else {
-                        handle_text_input(app, ch);
-                    }
-                }
-            }
-        }
-    });
+    handle_early_text(app, ctx, has_focus, any_dialog_open);
 
     // Tab interception: in the pattern editor, Tab always changes columns — it must never
     // escape to egui's focus-navigation. Handle it before the focus gate.
@@ -638,6 +624,24 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
 
 /// Preview-only note playback (no cell editing). Called when a widget has focus
 /// so the user can still hear notes while typing into a TextEdit.
+/// Text events: processed unconditionally so note preview works even during dialog input.
+/// When a widget has focus or a dialog is open, only play audio; skip cell editing.
+fn handle_early_text(app: &mut HtrkApp, ctx: &egui::Context, has_focus: bool, any_dialog_open: bool) {
+    ctx.input(|i| {
+        for event in &i.events {
+            if let egui::Event::Text(text) = event {
+                for ch in text.chars() {
+                    if has_focus || any_dialog_open {
+                        note_key_preview_only(app, ch);
+                    } else {
+                        handle_text_input(app, ch);
+                    }
+                }
+            }
+        }
+    });
+}
+
 fn note_key_preview_only(app: &mut HtrkApp, ch: char) {
     let up = ch.to_ascii_uppercase();
     let note_key = NOTE_KEYS_LOWER
