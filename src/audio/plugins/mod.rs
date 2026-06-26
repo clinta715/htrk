@@ -9,8 +9,11 @@ pub mod library;
 pub mod param_ring;
 #[cfg(windows)]
 pub mod plugin_window;
+pub mod preset_library;
+pub mod preset_discovery;
 
 pub use library::PluginLibrary;
+pub use preset_library::PresetLibrary;
 
 use std::any::Any;
 use std::path::PathBuf;

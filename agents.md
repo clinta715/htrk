@@ -370,3 +370,32 @@ Use the SP_* constants instead of inline `.add_space()`:
 - The PluginSlot is the only state that needs to be persisted to `.htk`; everything else is rebuilt on load.
 - Editor windows default to floating; embedded is opt-in via "Edit (in htrk)" button.
 - Plugin log messages go through `tracing` (stderr default; configure via `RUST_LOG` or `AppConfig.log_file_path`).
+
+## 21. CLAP Preset Discovery (PresetLibrary)
+
+### Architecture
+- `PresetLibrary` (`src/audio/plugins/preset_library.rs`) is an in-memory cache of `PresetEntry` structs, mirroring `PluginLibrary`/`SampleLibrary` patterns. Supports `search()` with pagination, `list_plugin_presets()`, and JSON persistence (`save_to_file`/`load_from_file`).
+
+- `preset_discovery::scan_plugin_presets(path)` in `src/audio/plugins/preset_discovery.rs` loads the .clap library, gets a `PresetDiscoveryFactory`, iterates providers, and calls `Provider::get_metadata()` for each declared location. Uses the clack host-side `IndexerImpl`/`MetadataReceiverImpl` traits.
+
+### Wiring
+- `HtrkApp.preset_library: PresetLibrary` — direct app cache. `rescan_presets()` collects plugin paths from `plugin_library`, runs the scan, populates both the app and MCP libraries.
+- `ToolContext.preset_library`, `McpServer.preset_library` — shared via `Arc<RwLock<>>`, same pattern as plugin/sample libraries.
+- MCP tools: `preset.scan` (runs on MCP thread, writes via RwLock), `preset.list`, `preset.info`, `preset.list_by_plugin`, `preset.status`.
+
+### Rule for Future Changes
+- When adding new MCP preset tools, add tool defs in `list_tools()` in `tools.rs` and handlers in `call_tool()`. Read-only tools go in `src/mcp/preset_tools.rs`; mutations go in `MUTATION_TOOLS` + `mutations.rs`.
+- `preset.scan` is explicitly NOT in `MUTATION_TOOLS` — it writes to `preset_library` via RwLock from the MCP thread, matching the `plugin.scan` pattern.
+- The `PresetDiscoveryFactory` is only available from `PluginEntry::get_factory()` — plugins that don't implement it are silently skipped during scan.
+
+## 22. Sub-Column Navigation and Cursor Indicator
+
+### Keyboard Navigation
+- `ArrowLeft`/`ArrowRight`: cycle sub-columns (Note → InstrTens → InstrOnes → VolTens → VolOnes → EffectType → EffectParamH → EffectParamL).
+- `Alt+ArrowLeft`/`Alt+ArrowRight`: move between channels.
+- `Tab`/`Shift+Tab`: move between channels.
+- Sub-column navigation is defined in `SubColumn::next()` / `prev()` / `next_visible()` / `prev_visible()` in `src/ui/pattern_grid.rs:150-217`. Handlers are in `src/app.rs:995-1007` (`step_sub_column_forward`/`step_sub_column_backward`).
+
+### Cursor Indicator
+- The active sub-column is shown by a 2.5px-high bright bar (`theme.cursor_outline`) at the bottom of the active sub-column within the cell, computed by `sub_column_rect()` in `pattern_grid.rs`.
+- This is necessary because the full-cell cursor highlight (`cursor_fill`) covers the entire channel width, making it impossible to distinguish between VolumeTens vs VolumeOnes or other adjacent sub-columns without the indicator.

@@ -9,7 +9,7 @@ use crate::app_config::AppConfig;
 use crate::audio::commands::AudioCommand;
 use crate::audio::engine::create_engine_and_sender;
 use crate::audio::playback_state::AtomicPlaybackState;
-use crate::audio::plugins::PluginLibrary;
+use crate::audio::plugins::{PluginLibrary, PresetLibrary};
 use crate::mcp::library::SampleLibrary;
 
 use crate::sequencer::pattern::Cell;
@@ -117,6 +117,11 @@ pub struct HtrkApp {
     /// the first `update()` call so the constructor doesn't need to
     /// mutate `self`.
     pub(crate) plugin_scan_done: bool,
+    /// Direct in-memory preset library (CLAP preset-discovery cache).
+    /// Populated by `rescan_presets()`; read by MCP tools and UI.
+    pub(crate) preset_library: PresetLibrary,
+    /// True after the initial preset scan has run.
+    pub(crate) preset_scan_done: bool,
     /// Status of the plugin browser dialog (loading / error / loaded).
     /// Phase 2 plugin hosting.
     pub(crate) plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus,
@@ -199,6 +204,8 @@ impl HtrkApp {
             pending_send_bus_state_writes: Vec::new(),
             plugin_library: crate::audio::plugins::PluginLibrary::new(),
             plugin_scan_done: false,
+            preset_library: crate::audio::plugins::PresetLibrary::new(),
+            preset_scan_done: false,
             plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
             automation_editor: crate::ui::automation_editor_panel::AutomationEditor::default(),
             instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor {
@@ -287,6 +294,8 @@ impl HtrkApp {
             pending_send_bus_state_writes: Vec::new(),
             plugin_library: PluginLibrary::new(),
             plugin_scan_done: false,
+            preset_library: PresetLibrary::new(),
+            preset_scan_done: false,
             plugin_browser_status: crate::ui::plugin_browser::PluginBrowserStatus::Idle,
             automation_editor: crate::ui::automation_editor_panel::AutomationEditor::default(),
             instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor {
@@ -487,6 +496,57 @@ impl HtrkApp {
         format!(
             "Scan complete: {} plugin(s) found, {} error(s), {} .clap file(s) on disk",
             found_count, error_count, scan.clap_files.len()
+        )
+    }
+
+    /// Trigger a rescan of all discovered plugins for presets.
+    /// Only plugins that expose the preset-discovery factory are scanned.
+    /// Results are stored in `self.preset_library`.
+    pub fn rescan_presets(&mut self) -> String {
+        use crate::audio::plugins::preset_discovery;
+
+        // Collect all discovered plugin .clap paths
+        let paths: Vec<std::path::PathBuf> = self
+            .plugin_library
+            .list_descriptors()
+            .iter()
+            .map(|d| d.path.clone())
+            .collect();
+
+        eprintln!("[presets] Scanning {} plugin(s) for presets...", paths.len());
+        let start = std::time::Instant::now();
+
+        let (entries, errors) = preset_discovery::scan_plugins_for_presets(&paths);
+
+        let elapsed = start.elapsed();
+        self.preset_library.clear();
+        self.preset_library.add_presets(entries);
+        self.preset_library
+            .set_last_scan_time(std::time::SystemTime::now());
+
+        // Mirror to MCP library if MCP is enabled
+        if let Some(ref mcp) = self.mcp_server {
+            if let Ok(mut mcp_lib) = mcp.preset_library.write() {
+                mcp_lib.clear();
+                mcp_lib.add_presets(self.preset_library.list_presets().into_iter().cloned().collect());
+                mcp_lib.set_last_scan_time(std::time::SystemTime::now());
+            }
+        }
+
+        eprintln!(
+            "[presets] Done: {} preset(s) from {} plugin(s), {} error(s) in {:.1}s",
+            self.preset_library.preset_count(),
+            paths.len(),
+            errors.len(),
+            elapsed.as_secs_f32()
+        );
+
+        format!(
+            "Preset scan complete: {} preset(s) found from {} plugin(s), {} error(s) in {:.1}s",
+            self.preset_library.preset_count(),
+            paths.len(),
+            errors.len(),
+            elapsed.as_secs_f32()
         )
     }
 

@@ -569,6 +569,18 @@ pub fn draw_pattern_grid(
         );
         painter.rect_filled(cursor_rect, 0.0, theme.cursor_fill);
         painter.rect_stroke(cursor_rect, 0.0, Stroke::new(1.0, theme.cursor_outline), egui::StrokeKind::Outside);
+
+        // Sub-column indicator: a bright bar at the bottom of the cursor
+        // showing exactly which digit/field is active.
+        if cursor.sub_column.is_visible(col_vis) {
+            let (sub_x, sub_w) = sub_column_rect(cursor.sub_column, metrics, col_vis);
+            let indicator_h = 2.5;
+            let indicator_rect = Rect::from_min_size(
+                Pos2::new(cursor_x + sub_x, cursor_y + metrics.row_height - indicator_h),
+                egui::vec2(sub_w, indicator_h),
+            );
+            painter.rect_filled(indicator_rect, 0.0, theme.cursor_outline);
+        }
     }
 
     if let Some(prow) = playback_row {
@@ -1478,6 +1490,22 @@ fn effect_tooltip_text(effect: &Effect) -> String {
         _ => return String::new(),
     };
     format!("{}  {}\n{}\n{}", hex, name, range, detail)
+}
+
+/// Map a SubColumn to its (x_offset, width) within a channel, for cursor
+/// indicator drawing. x_offset is relative to the start of the channel.
+fn sub_column_rect(sub: SubColumn, metrics: GridMetrics, _col_vis: ColumnVisibility) -> (f32, f32) {
+    let cw = metrics.char_width;
+    match sub {
+        SubColumn::Note => (0.0, metrics.note_width),
+        SubColumn::InstrumentTens => (metrics.inst_x, cw),
+        SubColumn::InstrumentOnes => (metrics.inst_x + cw, cw),
+        SubColumn::VolumeTens => (metrics.vol_x, cw),
+        SubColumn::VolumeOnes => (metrics.vol_x + cw, cw),
+        SubColumn::EffectType => (metrics.effect_type_x, cw),
+        SubColumn::EffectParamHigh => (metrics.effect_type_x + cw, cw),
+        SubColumn::EffectParamLow => (metrics.effect_type_x + cw * 2.0, cw),
+    }
 }
 
 

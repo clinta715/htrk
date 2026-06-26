@@ -527,6 +527,40 @@ pub fn list_tools() -> Vec<ToolDefinition> {
             },
             "required": ["format", "path", "plugin_id"]
         })),
+
+        // ── Preset discovery tools ──
+        tool_def("preset.scan", "Rescan all discovered plugins for presets via CLAP preset-discovery", json!({
+            "type": "object",
+            "properties": {}
+        })),
+        tool_def("preset.list", "List cached presets with optional search, plugin filter, and pagination", json!({
+            "type": "object",
+            "properties": {
+                "query":           {"type": "string", "description": "Search by name, feature, plugin, or description"},
+                "filter_plugin_id":{"type": "string", "description": "Restrict to a specific plugin_id"},
+                "page":            {"type": "integer", "description": "Page number (0-based)", "default": 0},
+                "page_size":       {"type": "integer", "description": "Items per page (default 50)", "default": 50}
+            }
+        })),
+        tool_def("preset.info", "Get a specific preset by its cache key", json!({
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "Preset cache key"}
+            },
+            "required": ["key"]
+        })),
+        tool_def("preset.list_by_plugin", "List presets for a specific plugin", json!({
+            "type": "object",
+            "properties": {
+                "plugin_path": {"type": "string", "description": "Path to the .clap plugin"},
+                "plugin_id":   {"type": "string", "description": "The plugin's CLAP ID"}
+            },
+            "required": ["plugin_path", "plugin_id"]
+        })),
+        tool_def("preset.status", "Get preset library statistics (total count, last scan time, unique plugins)", json!({
+            "type": "object",
+            "properties": {}
+        })),
     ]
 }
 
@@ -557,6 +591,13 @@ pub fn call_tool(name: &str, params: serde_json::Value, ctx: &ToolContext) -> Cm
         "plugin.scan" => crate::mcp::plugin_tools::cmd_plugin_scan(params, ctx),
         "plugin.list" => crate::mcp::plugin_tools::cmd_plugin_list(params, ctx),
         "plugin.info" => crate::mcp::plugin_tools::cmd_plugin_info(params, ctx),
+
+        // Preset tools
+        "preset.scan"          => crate::mcp::preset_tools::cmd_preset_scan(params, ctx),
+        "preset.list"          => crate::mcp::preset_tools::cmd_preset_list(params, ctx),
+        "preset.info"          => crate::mcp::preset_tools::cmd_preset_info(params, ctx),
+        "preset.list_by_plugin"=> crate::mcp::preset_tools::cmd_preset_list_by_plugin(params, ctx),
+        "preset.status"        => crate::mcp::preset_tools::cmd_preset_status(params, ctx),
 
         _ if MUTATION_TOOLS.contains(&name) => {
             Err("Requires mutation dispatch".into())

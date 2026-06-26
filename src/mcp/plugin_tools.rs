@@ -150,12 +150,14 @@ mod tests {
         // Test that the list function works with an empty library
         let library = crate::mcp::library::SampleLibrary::new();
         let plugin_library = crate::audio::plugins::PluginLibrary::new();
+        let preset_library = crate::audio::plugins::PresetLibrary::new();
         let ctx = ToolContext {
             module_snapshot: crate::mcp::protocol::ModuleSnapshot::default(),
             playback_snapshot: crate::mcp::protocol::PlaybackSnapshot::default(),
             channels_snapshot: crate::mcp::protocol::ChannelsSnapshot::default(),
             library: std::sync::Arc::new(std::sync::RwLock::new(library)),
             plugin_library: std::sync::Arc::new(std::sync::RwLock::new(plugin_library)),
+            preset_library: std::sync::Arc::new(std::sync::RwLock::new(preset_library)),
         };
         let result = cmd_plugin_list(json!({}), &ctx).unwrap();
         let val = result.as_object().unwrap();
@@ -166,12 +168,14 @@ mod tests {
     fn test_plugin_info_not_found() {
         let library = crate::mcp::library::SampleLibrary::new();
         let plugin_library = crate::audio::plugins::PluginLibrary::new();
+        let preset_library = crate::audio::plugins::PresetLibrary::new();
         let ctx = ToolContext {
             module_snapshot: crate::mcp::protocol::ModuleSnapshot::default(),
             playback_snapshot: crate::mcp::protocol::PlaybackSnapshot::default(),
             channels_snapshot: crate::mcp::protocol::ChannelsSnapshot::default(),
             library: std::sync::Arc::new(std::sync::RwLock::new(library)),
             plugin_library: std::sync::Arc::new(std::sync::RwLock::new(plugin_library)),
+            preset_library: std::sync::Arc::new(std::sync::RwLock::new(preset_library)),
         };
         let result = cmd_plugin_info(json!({
             "format": "clap",

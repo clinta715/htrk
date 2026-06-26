@@ -7,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::mcp::library::SampleLibrary;
-use crate::audio::plugins::PluginLibrary;
+use crate::audio::plugins::{PluginLibrary, PresetLibrary};
 use crate::mcp::protocol::*;
 
 pub struct HttpServer {
@@ -24,6 +24,7 @@ struct Shared {
     channels_snapshot: Arc<RwLock<ChannelsSnapshot>>,
     library: Arc<RwLock<SampleLibrary>>,
     plugin_library: Arc<RwLock<PluginLibrary>>,
+    preset_library: Arc<RwLock<PresetLibrary>>,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -36,6 +37,7 @@ impl HttpServer {
         channels_snapshot: Arc<RwLock<ChannelsSnapshot>>,
         library: Arc<RwLock<SampleLibrary>>,
         plugin_library: Arc<RwLock<PluginLibrary>>,
+        preset_library: Arc<RwLock<PresetLibrary>>,
         shutdown: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         let addr = format!("127.0.0.1:{port}");
@@ -58,6 +60,7 @@ impl HttpServer {
             channels_snapshot,
             library,
             plugin_library,
+            preset_library,
             shutdown,
         });
 
@@ -270,6 +273,7 @@ fn handle_post(
         channels_snapshot: ch.clone(),
         library: shared.library.clone(),
         plugin_library: shared.plugin_library.clone(),
+        preset_library: shared.preset_library.clone(),
     };
     drop(snapshot);
     drop(pb);

@@ -255,14 +255,6 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                             }
                             handled = true;
                         }
-                        egui::Key::ArrowRight if is_pattern && !any_dialog_open => {
-                            app.step_sub_column_forward();
-                            handled = true;
-                        }
-                        egui::Key::ArrowLeft if is_pattern && !any_dialog_open => {
-                            app.step_sub_column_backward();
-                            handled = true;
-                        }
                         egui::Key::Num1 => {
                             let mut col_vis = app.config.get_col_vis();
                             col_vis.note = !col_vis.note;
@@ -423,7 +415,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                                 app.extend_selection_right();
                             } else {
                                 app.core.selection = None;
-                                app.move_cursor_right();
+                                app.step_sub_column_forward();
                             }
                         }
                     }
@@ -440,7 +432,7 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
                                 app.extend_selection_left();
                             } else {
                                 app.core.selection = None;
-                                app.move_cursor_left();
+                                app.step_sub_column_backward();
                             }
                         }
                     }
@@ -1082,6 +1074,54 @@ mod tests {
         assert_eq!(cell.volume, Some(45), "ones=5 on existing 40 should give 45");
         // Cursor advances to effect column
         assert_eq!(app.core.cursor.sub_column, SubColumn::EffectType);
+    }
+
+    /// ArrowRight should advance the sub-column forward.
+    #[test]
+    fn test_arrow_right_advances_sub_column() {
+        let mut app = test_app();
+        app.core.new_song();
+        app.edit_mode = true;
+        app.current_view = AppView::Pattern;
+        app.core.cursor.sub_column = SubColumn::Note;
+        app.core.cursor.row = 0;
+        app.core.cursor.channel = 0;
+
+        app.step_sub_column_forward();
+        assert_eq!(app.core.cursor.sub_column, SubColumn::InstrumentTens,
+            "ArrowRight from Note should go to InstrumentTens");
+
+        app.step_sub_column_forward();
+        assert_eq!(app.core.cursor.sub_column, SubColumn::InstrumentOnes,
+            "ArrowRight from InstrumentTens should go to InstrumentOnes");
+
+        app.step_sub_column_forward();
+        assert_eq!(app.core.cursor.sub_column, SubColumn::VolumeTens,
+            "ArrowRight from InstrumentOnes should go to VolumeTens");
+
+        app.step_sub_column_forward();
+        assert_eq!(app.core.cursor.sub_column, SubColumn::VolumeOnes,
+            "ArrowRight from VolumeTens should go to VolumeOnes");
+
+        app.step_sub_column_forward();
+        assert_eq!(app.core.cursor.sub_column, SubColumn::EffectType,
+            "ArrowRight from VolumeOnes should go to EffectType");
+    }
+
+    /// ArrowLeft should move the sub-column backward.
+    #[test]
+    fn test_arrow_left_moves_sub_column_backward() {
+        let mut app = test_app();
+        app.core.new_song();
+        app.edit_mode = true;
+        app.current_view = AppView::Pattern;
+        app.core.cursor.sub_column = SubColumn::EffectType;
+        app.core.cursor.row = 0;
+        app.core.cursor.channel = 0;
+
+        app.step_sub_column_backward();
+        assert_eq!(app.core.cursor.sub_column, SubColumn::VolumeOnes,
+            "ArrowLeft from EffectType should go to VolumeOnes");
     }
 
     /// Editing a cell should preserve the note + instrument set by an

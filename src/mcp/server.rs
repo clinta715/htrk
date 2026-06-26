@@ -6,7 +6,7 @@ use std::sync::RwLock;
 use std::thread;
 
 use crate::mcp::library::SampleLibrary;
-use crate::audio::plugins::PluginLibrary;
+use crate::audio::plugins::{PluginLibrary, PresetLibrary};
 use crate::mcp::protocol::*;
 use crate::mcp::resources;
 use crate::mcp::tools;
@@ -24,6 +24,7 @@ pub struct McpServer {
     pub channels_snapshot: Arc<RwLock<ChannelsSnapshot>>,
     pub library: Arc<RwLock<SampleLibrary>>,
     pub plugin_library: Arc<RwLock<PluginLibrary>>,
+    pub preset_library: Arc<RwLock<PresetLibrary>>,
     pub shutdown: Arc<AtomicBool>,
 }
 
@@ -50,6 +51,7 @@ impl McpServer {
                     channels_snapshot: Arc::new(RwLock::new(ChannelsSnapshot::default())),
                     library: Arc::new(RwLock::new(SampleLibrary::new())),
                     plugin_library: Arc::new(RwLock::new(PluginLibrary::new())),
+                    preset_library: Arc::new(RwLock::new(PresetLibrary::new())),
                     shutdown: Arc::new(AtomicBool::new(true)),
                 };
             }
@@ -63,6 +65,7 @@ impl McpServer {
         let channels_snapshot = Arc::new(RwLock::new(ChannelsSnapshot::default()));
         let library = Arc::new(RwLock::new(SampleLibrary::new()));
         let plugin_library = Arc::new(RwLock::new(PluginLibrary::new()));
+        let preset_library = Arc::new(RwLock::new(PresetLibrary::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let snapshot_clone = snapshot.clone();
@@ -70,6 +73,7 @@ impl McpServer {
         let ch_snapshot_clone = channels_snapshot.clone();
         let library_clone = library.clone();
         let plugin_library_clone = plugin_library.clone();
+        let preset_library_clone = preset_library.clone();
         let shutdown_clone = shutdown.clone();
         let cmd_tx = command_tx.clone();
 
@@ -125,6 +129,7 @@ impl McpServer {
                                         channels_snapshot: ch.clone(),
                                         library: library_clone.clone(),
                                         plugin_library: plugin_library_clone.clone(),
+                                        preset_library: preset_library_clone.clone(),
                                     };
                                     drop(snapshot);
                                     drop(pb);
@@ -169,6 +174,7 @@ impl McpServer {
                 channels_snapshot.clone(),
                 library.clone(),
                 plugin_library.clone(),
+                preset_library.clone(),
                 shutdown.clone(),
             )
         });
@@ -185,6 +191,7 @@ impl McpServer {
             channels_snapshot,
             library,
             plugin_library,
+            preset_library,
             shutdown,
         }
     }

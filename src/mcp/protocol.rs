@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::mcp::library::SampleLibrary;
 use crate::audio::plugins::PluginLibrary;
+use crate::audio::plugins::PresetLibrary;
 
 // ── MCP JSON-RPC types (subset of the MCP spec) ──
 
@@ -81,6 +82,7 @@ pub struct ToolContext {
     pub channels_snapshot: ChannelsSnapshot,
     pub library: Arc<RwLock<SampleLibrary>>,
     pub plugin_library: Arc<RwLock<PluginLibrary>>,
+    pub preset_library: Arc<RwLock<PresetLibrary>>,
 }
 
 // ── Snapshots (read-only, shared with MCP thread via Arc<RwLock<>>) ──
