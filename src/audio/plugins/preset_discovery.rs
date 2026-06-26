@@ -113,6 +113,8 @@ struct ScanReceiver {
     cur_extra_info: HashMap<String, String>,
     cur_creation_time: Option<i64>,
     cur_modification_time: Option<i64>,
+    cur_location_path: Option<String>,
+    cur_location_kind: String,
 }
 
 impl ScanReceiver {
@@ -141,10 +143,17 @@ impl ScanReceiver {
             cur_extra_info: HashMap::new(),
             cur_creation_time: None,
             cur_modification_time: None,
+            cur_location_path: None,
+            cur_location_kind: String::new(),
         }
     }
 
-    fn finalize(&mut self, location_path: Option<String>, location_kind: &str) {
+    fn set_location(&mut self, path: Option<String>, kind: &str) {
+        self.cur_location_path = path;
+        self.cur_location_kind = kind.to_string();
+    }
+
+    fn finalize(&mut self) {
         let name = match self.cur_name.take() {
             Some(n) => n,
             None => return,
@@ -158,8 +167,8 @@ impl ScanReceiver {
             provider_name: self.provider_name.clone(),
             name,
             load_key,
-            location_path,
-            location_kind: location_kind.to_string(),
+            location_path: self.cur_location_path.clone(),
+            location_kind: self.cur_location_kind.clone(),
             flags: self.cur_flags,
             features: std::mem::take(&mut self.cur_features),
             description: self.cur_description.take(),
@@ -186,7 +195,7 @@ impl MetadataReceiverImpl for ScanReceiver {
         name: Option<&CStr>,
         load_key: Option<&CStr>,
     ) -> Result<(), clack_host::prelude::HostError> {
-        self.finalize(None, "");
+        self.finalize();
         self.cur_name = name.map(|s| s.to_string_lossy().into_owned());
         self.cur_load_key = load_key.map(|s| s.to_string_lossy().into_owned());
         Ok(())
@@ -326,8 +335,9 @@ pub fn scan_plugin_presets(path: &Path) -> Result<Vec<PresetEntry>, PresetScanEr
 
             match &loc.kind {
                 LocationKind::Plugin => {
+                    receiver.set_location(None, "plugin");
                     provider.get_metadata(Location::Plugin, &mut receiver);
-                    receiver.finalize(None, "plugin");
+                    receiver.finalize();
                 }
                 LocationKind::File(loc_path) => {
                     let dir = PathBuf::from(loc_path);
@@ -339,27 +349,32 @@ pub fn scan_plugin_presets(path: &Path) -> Result<Vec<PresetEntry>, PresetScanEr
                             let Ok(cpath) = std::ffi::CString::new(fp.as_ref()) else {
                                 continue;
                             };
+                            receiver.set_location(
+                                Some(file_path.to_string_lossy().to_string()),
+                                "file",
+                            );
                             provider.get_metadata(
                                 Location::File {
                                     path: cpath.as_c_str(),
                                 },
                                 &mut receiver,
                             );
-                            receiver.finalize(
-                                Some(file_path.to_string_lossy().to_string()),
-                                "file",
-                            );
+                            receiver.finalize();
                         }
                     } else if dir.is_file() || dir.exists() {
                         let fp = dir.to_string_lossy();
                         if let Ok(cpath) = std::ffi::CString::new(fp.as_ref()) {
+                            receiver.set_location(
+                                Some(dir.to_string_lossy().to_string()),
+                                "file",
+                            );
                             provider.get_metadata(
                                 Location::File {
                                     path: cpath.as_c_str(),
                                 },
                                 &mut receiver,
                             );
-                            receiver.finalize(Some(dir.to_string_lossy().to_string()), "file");
+                            receiver.finalize();
                         }
                     }
                 }
@@ -469,6 +484,37 @@ mod tests {
     fn test_resolve_load_path_direct_file() {
         let p = Path::new("/some/path/plugin.clap");
         assert_eq!(resolve_load_path(p).unwrap(), p);
+    }
+
+    #[test]
+    fn test_finalize_preserves_location() {
+        let mut receiver = ScanReceiver::new(
+            "/test/plugin.clap".into(),
+            "com.test".into(),
+            "Test".into(),
+            "provider".into(),
+            "Provider".into(),
+        );
+        receiver.set_location(Some("/presets/file.fxp".into()), "file");
+
+        // First preset
+        receiver.begin_preset(Some(c"Preset A"), Some(c"key_a")).unwrap();
+        receiver.add_feature(c"bass");
+
+        // Second preset — triggers finalize() for Preset A internally
+        receiver.begin_preset(Some(c"Preset B"), Some(c"key_b")).unwrap();
+        receiver.add_feature(c"lead");
+
+        // Finalize Preset B
+        receiver.finalize();
+
+        assert_eq!(receiver.entries.len(), 2);
+        assert_eq!(receiver.entries[0].name, "Preset A");
+        assert_eq!(receiver.entries[0].location_path.as_deref(), Some("/presets/file.fxp"));
+        assert_eq!(receiver.entries[0].location_kind, "file");
+        assert_eq!(receiver.entries[1].name, "Preset B");
+        assert_eq!(receiver.entries[1].location_path.as_deref(), Some("/presets/file.fxp"));
+        assert_eq!(receiver.entries[1].location_kind, "file");
     }
 
     /// Integration test: scan presets from Surge XT (which implements the
