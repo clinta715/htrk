@@ -506,23 +506,15 @@ impl HtrkCore {
     }
 
     pub fn undo(&mut self) {
-        self.ensure_module_ownership();
-        if let Some(ref mut module) = self.module {
-            if let Some(arc_module) = Arc::get_mut(module) {
-                let _ = self.undo_manager.undo(arc_module);
-            }
-        }
-        self.sync_module_to_audio();
+        self.with_module_mut(|arc_module, core| {
+            let _ = core.undo_manager.undo(arc_module);
+        });
     }
 
     pub fn redo(&mut self) {
-        self.ensure_module_ownership();
-        if let Some(ref mut module) = self.module {
-            if let Some(arc_module) = Arc::get_mut(module) {
-                let _ = self.undo_manager.redo(arc_module);
-            }
-        }
-        self.sync_module_to_audio();
+        self.with_module_mut(|arc_module, core| {
+            let _ = core.undo_manager.redo(arc_module);
+        });
     }
 
     pub fn copy_channel(&mut self, channel: usize) {
