@@ -1220,6 +1220,21 @@ impl HtrkApp {
         true
     }
 
+    pub fn any_dialog_open(&self) -> bool {
+        self.file_browser.show
+            || self.settings_state.open
+            || self.wav_export_state.open
+            || self.sample_export_dialog.is_some()
+            || self.show_about
+            || self.show_shortcuts
+            || self.show_exit_confirm
+            || self.show_phrase_generator
+            || self.slice_dialog_open
+            || self.sendfx_panel.plugin_browser_open_for.is_some()
+            || self.instrument_editor.plugin_browser_open
+            || self.sample_library_state.open
+    }
+
     fn draw_preamble(&mut self, ctx: &egui::Context) -> (Option<usize>, Option<usize>, Option<usize>, Option<u8>, u8) {
         ctx.set_zoom_factor(self.config.zoom_factor);
         ctx.set_visuals(self.theme.to_visuals());
