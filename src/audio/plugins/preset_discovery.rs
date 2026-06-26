@@ -444,21 +444,48 @@ fn find_matching_files(
     dir: &Path,
     filetypes: &[FileTypeOwned],
 ) -> Vec<PathBuf> {
+    if filetypes.is_empty() {
+        eprintln!(
+            "[preset_discovery] Provider declared no file types; skipping directory scan of {}",
+            dir.display()
+        );
+        return Vec::new();
+    }
     let mut results = Vec::new();
     walk_dir(dir, &mut results, filetypes);
     results
 }
 
 fn walk_dir(dir: &Path, results: &mut Vec<PathBuf>, filetypes: &[FileTypeOwned]) {
+    walk_dir_recursive(dir, results, filetypes, 0);
+}
+
+fn walk_dir_recursive(
+    dir: &Path,
+    results: &mut Vec<PathBuf>,
+    filetypes: &[FileTypeOwned],
+    depth: u32,
+) {
+    if depth > 16 {
+        eprintln!("[preset_discovery] Max directory depth reached at {}", dir.display());
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
+        eprintln!("[preset_discovery] Cannot read directory: {}", dir.display());
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            walk_dir(&path, results, filetypes);
-        } else if path.is_file() {
-            if filetypes.is_empty() || matches_filetype(&path, filetypes) {
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            walk_dir_recursive(&path, results, filetypes, depth + 1);
+        } else if meta.is_file() {
+            if matches_filetype(&path, filetypes) {
                 results.push(path);
             }
         }
