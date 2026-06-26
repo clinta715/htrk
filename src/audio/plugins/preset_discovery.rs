@@ -471,6 +471,45 @@ mod tests {
         assert_eq!(resolve_load_path(p).unwrap(), p);
     }
 
+    /// Integration test: scan presets from Surge XT (which implements the
+    /// preset-discovery factory).
+    #[test]
+    fn test_scan_surge_xt_presets() {
+        // Surge XT can be a bundle directory
+        let bundle = Path::new(r"C:\Program Files\Common Files\CLAP\Surge Synth Team\Surge XT.clap");
+        let fallback = Path::new(r"C:\Program Files\Common Files\CLAP\Surge XT.clap");
+        let path = if bundle.exists() { bundle } else if fallback.exists() { fallback } else {
+            eprintln!("[skip] Surge XT not found");
+            return;
+        };
+
+        let result = scan_plugin_presets(path);
+        match result {
+            Ok(entries) => {
+                eprintln!("[ok] Surge XT presets: {} total", entries.len());
+                for (i, e) in entries.iter().enumerate().take(30) {
+                    let features = if e.features.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", e.features.join(", "))
+                    };
+                    let source = e.location_path.as_deref().unwrap_or("plugin");
+                    eprintln!("  {:3}. {:<40} {:<15}{}", i + 1, e.name, source, features);
+                }
+                if entries.len() > 30 {
+                    eprintln!("  ... and {} more", entries.len() - 30);
+                }
+                assert!(!entries.is_empty(), "Surge XT should have presets");
+            }
+            Err(PresetScanError::NoPresetDiscoveryFactory) => {
+                eprintln!("[skip] Surge XT does not expose preset-discovery factory");
+            }
+            Err(e) => {
+                panic!("Surge XT preset scan failed: {e}");
+            }
+        }
+    }
+
     /// Scan every .clap plugin in the system CLAP directory and report
     /// which ones expose the preset-discovery factory and how many presets.
     #[test]
