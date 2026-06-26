@@ -133,6 +133,7 @@ impl PresetLibrary {
         page_size: usize,
     ) -> PresetSearchResults {
         let q = query.to_lowercase();
+        let page_size = page_size.max(1);
         let mut results: Vec<&PresetEntry> = self
             .presets
             .values()
@@ -156,11 +157,7 @@ impl PresetLibrary {
 
         results.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         let total_results = results.len();
-        let total_pages = if page_size == 0 {
-            1
-        } else {
-            (total_results + page_size - 1) / page_size
-        };
+        let total_pages = (total_results + page_size - 1) / page_size;
         let start = page * page_size;
         let page_results = results
             .into_iter()

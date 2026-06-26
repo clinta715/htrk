@@ -18,11 +18,13 @@ pub fn cmd_preset_list(params: serde_json::Value, ctx: &ToolContext) -> CmdResul
         .and_then(|v| v.as_i64())
         .unwrap_or(50) as usize;
 
-    let lib = ctx
-        .preset_library
-        .read()
-        .map_err(|e| format!("Preset library lock poisoned: {e}"))?;
-    let results = lib.search(query, filter_plugin, page, page_size);
+    let results = {
+        let lib = ctx
+            .preset_library
+            .read()
+            .map_err(|e| format!("Preset library lock poisoned: {e}"))?;
+        lib.search(query, filter_plugin, page, page_size)
+    };
     serde_json::to_value(&results).map_err(|e| format!("Serialization error: {e}"))
 }
 
