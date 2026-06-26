@@ -56,6 +56,22 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
 
     handle_tab(app, ctx, is_pattern, any_dialog_open);
 
+    // Strip Tab/Arrow keys from the event queue so egui's widget system doesn't
+    // interpret them as focus-navigation or scroll commands. The handlers above
+    // processed these events by value but did not consume them from the queue.
+    // Run this before the focus gate so events are stripped regardless of has_focus.
+    if is_pattern && !any_dialog_open {
+        ctx.input_mut(|i| {
+            i.events.retain(|e| !matches!(e,
+                egui::Event::Key { key: egui::Key::Tab, pressed: true, .. }
+                | egui::Event::Key { key: egui::Key::ArrowUp, pressed: true, .. }
+                | egui::Event::Key { key: egui::Key::ArrowDown, pressed: true, .. }
+                | egui::Event::Key { key: egui::Key::ArrowLeft, pressed: true, .. }
+                | egui::Event::Key { key: egui::Key::ArrowRight, pressed: true, .. }
+            ));
+        });
+    }
+
     // Focus gate: if a widget has focus, skip all key events.
     if has_focus {
         return;

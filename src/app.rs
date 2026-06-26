@@ -1253,18 +1253,6 @@ impl HtrkApp {
 
         crate::actions::handle_keyboard_input(self, ctx);
 
-        if self.current_view == AppView::Pattern && ctx.memory(|m| m.focused().is_none()) && !self.any_dialog_open() {
-            ctx.input_mut(|i| {
-                i.events.retain(|e| !matches!(e,
-                    egui::Event::Key { key: egui::Key::Tab, pressed: true, .. }
-                    | egui::Event::Key { key: egui::Key::ArrowUp, pressed: true, .. }
-                    | egui::Event::Key { key: egui::Key::ArrowDown, pressed: true, .. }
-                    | egui::Event::Key { key: egui::Key::ArrowLeft, pressed: true, .. }
-                    | egui::Event::Key { key: egui::Key::ArrowRight, pressed: true, .. }
-                ));
-            });
-        }
-
         let nch = self.core.num_channels();
         self.core.cursor.channel = self.core.cursor.channel.min(nch.saturating_sub(1));
         self.pattern_view.scroll_channel = self.pattern_view.scroll_channel.min(nch.saturating_sub(1));
