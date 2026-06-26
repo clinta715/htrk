@@ -217,9 +217,18 @@ impl PresetLibrary {
     }
 
     /// Save the library to a JSON file at `path`.
+    ///
+    /// Writes to a `.tmp` sibling file first, then atomically renames it
+    /// into place. This avoids a half-written cache corrupting the file
+    /// if the process crashes mid-write.
     pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
         let json = self.to_json()?;
-        std::fs::write(path, &json).map_err(|e| format!("Cannot write preset cache: {e}"))
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, &json)
+            .map_err(|e| format!("Cannot write preset cache: {e}"))?;
+        std::fs::rename(&tmp, path)
+            .map_err(|e| format!("Cannot rename preset cache: {e}"))?;
+        Ok(())
     }
 
     /// Load the library from a JSON file at `path`.

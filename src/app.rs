@@ -491,10 +491,8 @@ impl HtrkApp {
             if let Ok(mut mcp_lib) = mcp.plugin_library.write() {
                 mcp_lib.set_scan_roots(scan_roots.clone());
                 mcp_lib.clear_cache();
-                for path in &scan.clap_files {
-                    if let Ok(d) = crate::audio::plugins::clap_plugin::extract_descriptor_for_browser(path) {
-                        mcp_lib.add_descriptor(d);
-                    }
+                for d in self.plugin_library.list_descriptors() {
+                    mcp_lib.add_descriptor(d.clone());
                 }
             }
         }
@@ -3072,6 +3070,24 @@ impl eframe::App for HtrkApp {
             self.plugin_scan_done = true;
         }
 
+        if !self.preset_scan_done && self.plugin_scan_done {
+            let cache_path = crate::app_config::AppConfig::config_dir().join("preset_cache.json");
+            if let Ok(cached) = crate::audio::plugins::PresetLibrary::load_from_file(&cache_path) {
+                eprintln!("[presets] Loaded {} preset(s) from cache", cached.preset_count());
+                if let Ok(mut lib) = self.preset_library.write() {
+                    *lib = cached;
+                }
+            } else {
+                let _ = self.rescan_presets();
+                if let Ok(lib) = self.preset_library.read() {
+                    if lib.preset_count() > 0 {
+                        let _ = lib.save_to_file(&cache_path);
+                    }
+                }
+            }
+            self.preset_scan_done = true;
+        }
+
         // Release any previewed instrument-plugin notes whose trigger
         // key is no longer held.
         self.release_unheld_preview_notes(&ctx);
@@ -3172,6 +3188,14 @@ impl eframe::App for HtrkApp {
         self.core.send_command(crate::audio::commands::AudioCommand::Stop);
         self.stream = None;
         self.core.command_sender = None;
+        // Persist the preset cache atomically so the next launch can skip
+        // the (potentially ~30s) rescan.
+        let cache_path = crate::app_config::AppConfig::config_dir().join("preset_cache.json");
+        if let Ok(lib) = self.preset_library.read() {
+            if lib.preset_count() > 0 {
+                let _ = lib.save_to_file(&cache_path);
+            }
+        }
         crate::actions::save_config(self);
     }
 
