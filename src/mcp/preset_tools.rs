@@ -129,18 +129,24 @@ pub fn cmd_preset_scan(_params: serde_json::Value, ctx: &ToolContext) -> CmdResu
     std::thread::Builder::new()
         .name("htrk-preset-scan".into())
         .spawn(move || {
-            let (entries, errors) =
+            let summary =
                 crate::audio::plugins::preset_discovery::scan_plugins_for_presets(&plugin_paths);
+
+            let preset_count = summary.presets.len();
+            let error_count = summary.errors.len();
+            let skipped_count = summary.skipped_no_factory;
 
             if let Ok(mut lib) = preset_lib.write() {
                 lib.clear();
-                lib.add_presets(entries);
+                lib.add_presets(summary.presets);
                 lib.set_last_scan_time(std::time::SystemTime::now());
             }
 
             eprintln!(
-                "[preset_discovery] Background scan done: {} error(s) from {} plugin(s)",
-                errors.len(),
+                "[preset_discovery] Background scan done: {} preset(s), {} error(s), {} skipped (no factory) from {} plugin(s)",
+                preset_count,
+                error_count,
+                skipped_count,
                 plugin_count
             );
 

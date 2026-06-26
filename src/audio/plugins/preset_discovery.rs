@@ -387,13 +387,22 @@ pub fn scan_plugin_presets(path: &Path) -> Result<Vec<PresetEntry>, PresetScanEr
     Ok(all_presets)
 }
 
+/// Summary of a bulk preset scan across multiple plugins.
+#[derive(Debug, Default)]
+pub struct ScanSummary {
+    pub presets: Vec<PresetEntry>,
+    pub errors: Vec<(PathBuf, String)>,
+    pub skipped_no_factory: usize,
+}
+
 /// Scan each plugin path for presets. Resilient: per-plugin failures are
-/// collected as (path, error) tuples, not propagated.
-pub fn scan_plugins_for_presets(
-    plugin_paths: &[PathBuf],
-) -> (Vec<PresetEntry>, Vec<(PathBuf, String)>) {
-    let mut all = Vec::new();
+/// collected as (path, error) tuples, not propagated. Plugins that don't
+/// expose the preset-discovery factory are counted in `skipped_no_factory`
+/// rather than treated as errors.
+pub fn scan_plugins_for_presets(plugin_paths: &[PathBuf]) -> ScanSummary {
+    let mut presets = Vec::new();
     let mut errors = Vec::new();
+    let mut skipped = 0usize;
 
     for path in plugin_paths {
         match scan_plugin_presets(path) {
@@ -405,9 +414,11 @@ pub fn scan_plugins_for_presets(
                         path.display()
                     );
                 }
-                all.extend(entries);
+                presets.extend(entries);
             }
-            Err(PresetScanError::NoPresetDiscoveryFactory) => {}
+            Err(PresetScanError::NoPresetDiscoveryFactory) => {
+                skipped += 1;
+            }
             Err(e) => {
                 eprintln!("[preset_discovery] Failed to scan {}: {e}", path.display());
                 errors.push((path.clone(), e.to_string()));
@@ -415,7 +426,11 @@ pub fn scan_plugins_for_presets(
         }
     }
 
-    (all, errors)
+    ScanSummary {
+        presets,
+        errors,
+        skipped_no_factory: skipped,
+    }
 }
 
 // ── Helpers ──

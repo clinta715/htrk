@@ -526,7 +526,7 @@ impl HtrkApp {
         eprintln!("[presets] Scanning {} plugin(s) for presets...", paths.len());
         let start = std::time::Instant::now();
 
-        let (entries, errors) = preset_discovery::scan_plugins_for_presets(&paths);
+        let summary = preset_discovery::scan_plugins_for_presets(&paths);
 
         let elapsed = start.elapsed();
         // The preset_library Arc is shared with the MCP server, so this
@@ -534,7 +534,7 @@ impl HtrkApp {
         // explicit mirror step is needed.
         let count = if let Ok(mut lib) = self.preset_library.write() {
             lib.clear();
-            lib.add_presets(entries);
+            lib.add_presets(summary.presets);
             lib.set_last_scan_time(std::time::SystemTime::now());
             lib.preset_count()
         } else {
@@ -542,18 +542,20 @@ impl HtrkApp {
         };
 
         eprintln!(
-            "[presets] Done: {} preset(s) from {} plugin(s), {} error(s) in {:.1}s",
+            "[presets] Done: {} preset(s) from {} plugin(s), {} error(s), {} skipped (no factory) in {:.1}s",
             count,
             paths.len(),
-            errors.len(),
+            summary.errors.len(),
+            summary.skipped_no_factory,
             elapsed.as_secs_f32()
         );
 
         format!(
-            "Preset scan complete: {} preset(s) found from {} plugin(s), {} error(s) in {:.1}s",
+            "Preset scan complete: {} preset(s) found from {} plugin(s), {} error(s), {} skipped (no factory) in {:.1}s",
             count,
             paths.len(),
-            errors.len(),
+            summary.errors.len(),
+            summary.skipped_no_factory,
             elapsed.as_secs_f32()
         )
     }
