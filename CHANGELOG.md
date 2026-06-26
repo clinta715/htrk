@@ -2,6 +2,52 @@
 
 All notable changes to htrk will be documented in this file.
 
+## [0.23.0] - 2026-06-26
+
+### Added
+
+- **Multi-instrument drum mode for `phrase.generate`**: drum mode now accepts per-drum instruments (`kick_instrument`, `snare_instrument`, `hat_instrument`) so kick, snare, and hat can each play a different instrument. Falls back to the shared `instrument` parameter when a per-drum override is omitted, so existing single-instrument drum calls keep working.
+
+- **Per-channel drum density** (`kick_density`, `snare_density`, `hat_density`): each drum voice now has its own density (0.0-1.0) which drives the euclidean pulse count independently. Defaults preserve the prior feel (kick=¼, snare=¼, hat=½) when unspecified.
+
+- **Drum swing**: new `swing` parameter (0.0-0.5) shifts hat hits on off-beats to produce a swung feel. 0.0 = straight, 0.5 = maximum swing.
+
+- **`pattern.transform` MCP tool**: apply a list of transforms to a pattern as a single undoable operation. 13 ops supported: `thin` (remove notes by probability), `transpose` (shift notes by semitones), `rotate` (shift rows), `reverse`, `invert` (mirror pitches around a root), `quantize` (snap to a scale), `echo` (delayed duplicate with velocity decay), `humanize` (random velocity perturbation), `set_instrument` (bulk-set instrument on cells with notes), `shift` (slide notes in time), `swing` and `augment`/`diminish` (placeholders — see Limitations). Returns the list of applied ops, the cell-change count, and an `undo_id`.
+
+- **`undo.last` / `redo.last` / `undo.to` MCP tools**: every mutation now returns a numeric `undo_id`. `undo.to {undo_id}` reverts every command up to and including the given id (useful for "undo that one specific thing" without needing to call undo N times). `undo.last` and `redo.last` round-trip the id and label of what was undone/redone.
+
+- **Per-channel placement counts** in `phrase.generate` response: `notes_placed: {0: 16, 1: 16, 2: 32}` shows exactly how many cells were set on each channel. Helps agents verify the result without re-querying.
+
+- **MCP `phrase.generate` silent-fail fix**: when the requested `order` is beyond the current order list, the command now auto-extends the order list with the highest existing pattern as the fallback (was: silently failed because `BulkSetCellsCommand::execute` returned an error that was discarded). Propagates `EditError` instead of ignoring it.
+
+- **`HtrkCore::with_module_mut<F, R>()` helper**: borrow-conflict-free mutator pattern using `std::mem::swap` (mirrors `with_processor_mut`). 16 simple call sites converted; ~20 complex ones still use the original 4-step pattern.
+
+- **`HtrkApp::any_dialog_open()` method** + `handle_keyboard_input` decomposed into 5 focused sub-handlers + event cleanup moved from `draw_preamble` into the keyboard handler.
+
+### Fixed
+
+- **`cell.set instrument: 0` dropped to `None`**: the MCP `cell.set` handler treated `instrument: 0` as "clear" because `Cell::instrument` is `Option<u8>`. Now `0` is treated as a valid instrument (Some(0)) and only a negative value clears. Verified: kick on `instrument: 17` now triggers voice allocation (was: 0 voices, no sound).
+
+- **Application exit hang (was: looked like a crash)**: the MCP HTTP server's main loop used a **blocking** `listener.accept()`, so its worker thread was stuck in `accept()` even after `shutdown.store(true)`. `McpServer::stop()` called `handle.join()` on this stuck thread, blocking `on_exit` indefinitely — the process appeared not to close. Made the listener non-blocking with a 50 ms WouldBlock retry; clean exit now completes in ~1 second.
+
+- **`audio_debug` feature flag didn't compile**: `debug_log!` macro uses `$crate::debug_log` so the import was missing in three files where the macro was used inside a `#[cfg(feature = "audio_debug")]` block. Added `use crate::debug_log;` to `src/app.rs`, `src/audio/engine.rs`, `src/audio/mixer.rs`.
+
+- **Panic swallowing on eframe shutdown**: a panic during `on_exit` (e.g. plugin host destruction, audio engine teardown) used to be silently dropped by eframe, making the process look like a no-op crash. Installed a global panic hook that writes timestamp + location + backtrace to `<config_dir>/crash.log` for post-mortem diagnosis.
+
+- **`on_exit` invisibility**: replaced ad-hoc ordering with explicit `eprintln!` tracing through the whole shutdown sequence (`stopping MCP → audio Stop → drop stream → save config`) so the next hang is debuggable from stderr alone. The 50 ms sleep before stream drop lets the audio thread observe the Stop command and finish any in-flight callback.
+
+### Limitations
+
+- `pattern.transform` `swing` and `humanize` (timing) are placeholders — note-timing data is not stored in the `Cell` struct (it lives in the channel effect column, separate from cell mutation). The velocity-randomization path in `humanize` does work; the per-row shift does not.
+
+- `pattern.transform` `augment`/`diminish` are placeholders — they require resizing the pattern (changing `num_rows`), which is a separate operation not yet implemented for the transform tool.
+
+### Changed
+
+- **Version**: 0.22.0 → 0.23.0
+- **`UndoManager::execute()` return type**: `Result<(), EditError>` → `Result<u64, EditError>`. The returned `u64` is the assigned `undo_id`. All 40 existing `let _ = ...execute(...)` call sites remain unchanged because the success value was already being discarded.
+- **`UndoManager` entries** now carry an explicit `id: u64` field. Previously `undo_to` parsed the id out of the entry's label string, which failed for non-numeric labels like "phrase.generate drum".
+
 ## [0.19.0] - 2026-06-25
 
 ### Added

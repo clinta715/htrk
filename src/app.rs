@@ -10,6 +10,7 @@ use crate::audio::commands::AudioCommand;
 use crate::audio::engine::create_engine_and_sender;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::audio::plugins::{PluginLibrary, PresetLibrary};
+use crate::debug_log;
 use crate::mcp::library::SampleLibrary;
 
 use crate::sequencer::pattern::Cell;
@@ -3197,12 +3198,28 @@ impl eframe::App for HtrkApp {
     }
 
     fn on_exit(&mut self) {
+        eprintln!("[EXIT] on_exit start");
         if let Some(ref mut server) = self.mcp_server {
+            eprintln!("[EXIT] stopping MCP server");
             server.stop();
+            eprintln!("[EXIT] MCP server stopped");
         }
+        eprintln!("[EXIT] sending audio Stop command");
         self.core.send_command(crate::audio::commands::AudioCommand::Stop);
-        self.stream = None;
+        // Cut the audio thread's command source so it can no longer try to
+        // read commands after we drop the stream.
         self.core.command_sender = None;
+        // Give the audio thread a moment to observe the Stop command and
+        // finish any in-flight callback before we drop the cpal Stream.
+        // cpal's Stream::drop on Windows WASAPI blocks until the callback
+        // returns, and a callback that just dequeued our Stop command
+        // returns immediately. The sleep is paranoia for the case where
+        // the callback is stuck in a long mix (e.g. very large send FX).
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        eprintln!("[EXIT] dropping audio stream");
+        self.stream = None;
+        eprintln!("[EXIT] audio shutdown complete");
+
         // Persist the preset cache atomically so the next launch can skip
         // the (potentially ~30s) rescan.
         let cache_path = crate::app_config::AppConfig::config_dir().join("preset_cache.json");
@@ -3221,7 +3238,9 @@ impl eframe::App for HtrkApp {
                 let _ = lib.save_to_file(&sample_cache_path);
             }
         }
+        eprintln!("[EXIT] saving config");
         crate::actions::save_config(self);
+        eprintln!("[EXIT] on_exit done");
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {

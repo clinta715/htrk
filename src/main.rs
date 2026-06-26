@@ -45,6 +45,10 @@ fn main() -> eframe::Result<()> {
         htrk::debug_log::init(true, htrk::app_config::AppConfig::config_dir());
     }
 
+    // Install a panic hook that appends to <config_dir>/crash.log. Catches
+    // panics during eframe shutdown that would otherwise be swallowed.
+    htrk::debug_log::install_panic_hook(htrk::app_config::AppConfig::config_dir());
+
     htrk::debug_log::init_tracing(config.log_file_path.as_deref());
 
     apply_cli_overrides(&mut config, &args);

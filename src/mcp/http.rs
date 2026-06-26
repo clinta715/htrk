@@ -51,7 +51,11 @@ impl HttpServer {
             }
         };
         let actual_port = listener.local_addr().unwrap().port();
-        listener.set_nonblocking(false).ok();  // blocking accept
+        // Non-blocking so the accept loop can poll the shutdown flag
+        // between attempts and exit promptly on stop(). A blocking
+        // listener would wedge the thread here until a new connection
+        // arrived, which is exactly what was hanging app shutdown.
+        listener.set_nonblocking(true).ok();
 
         let shared = Arc::new(Shared {
             sessions: Mutex::new(HashMap::new()),
@@ -89,8 +93,12 @@ impl HttpServer {
 
                     let (stream, addr) = match listener.accept() {
                         Ok(s) => s,
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            // No incoming connection; check shutdown and yield.
+                            thread::sleep(Duration::from_millis(50));
+                            continue;
+                        }
                         Err(e) => {
-                            // Blocking listener only errors on real problems.
                             eprintln!("[mcph] Accept error: {e}");
                             thread::sleep(Duration::from_millis(100));
                             continue;

@@ -104,6 +104,20 @@ pub struct PhraseParams {
     pub kick_ch: usize,
     pub snare_ch: usize,
     pub hat_ch: usize,
+    /// Per-drum instrument overrides. When `None`, falls back to
+    /// `instrument` so old single-instrument drum calls keep working.
+    pub kick_instrument: Option<u8>,
+    pub snare_instrument: Option<u8>,
+    pub hat_instrument: Option<u8>,
+    /// Per-drum density (0.0-1.0). Drives the euclidean pulse count.
+    /// `None` falls back to the original hardcoded values
+    /// (kick=num_rows/4, snare=num_rows/4, hat=num_rows/2).
+    pub kick_density: Option<f32>,
+    pub snare_density: Option<f32>,
+    pub hat_density: Option<f32>,
+    /// Swing amount for off-beats (0.0 = straight, 0.5 = max swing).
+    /// Currently shifts hat hits on odd rows by ±swing ticks. 0 = off.
+    pub swing: f32,
     pub chord_type: ChordType,
     pub progression: Progression,
     pub bars_per_chord: u8,
@@ -127,6 +141,13 @@ impl Default for PhraseParams {
             kick_ch: 0,
             snare_ch: 1,
             hat_ch: 2,
+            kick_instrument: None,
+            snare_instrument: None,
+            hat_instrument: None,
+            kick_density: None,
+            snare_density: None,
+            hat_density: None,
+            swing: 0.0,
             chord_type: ChordType::Triad,
             progression: Progression::OneFourFiveOne,
             bars_per_chord: 4,
@@ -239,6 +260,11 @@ fn generate_euclidean(params: &PhraseParams, start_row: usize, end_row: usize) -
     result
 }
 
+fn density_to_pulses(num_rows: usize, density: f32) -> usize {
+    if num_rows == 0 { return 0; }
+    ((num_rows as f32) * density.clamp(0.0, 1.0)).round() as usize
+}
+
 fn generate_drum(
     params: &PhraseParams,
     start_row: usize,
@@ -248,33 +274,65 @@ fn generate_drum(
     let num_rows = end_row.saturating_sub(start_row) + 1;
     let mut result = Vec::new();
 
-    let kick_pat = scale::euclidean(num_rows, (num_rows / 4).max(1), 0);
-    let snare_pat = scale::euclidean(num_rows, (num_rows / 4).max(1), (num_rows / 8).max(1));
-    let hat_pat = scale::euclidean(num_rows, (num_rows / 2).max(1), 0);
+    // Resolve per-drum pulse counts: explicit density wins, else fall
+    // back to the original hardcoded defaults so existing calls still
+    // produce a four-on-the-floor + backbeat + 8ths feel.
+    let kick_pulses = params.kick_density
+        .map(|d| density_to_pulses(num_rows, d))
+        .unwrap_or_else(|| (num_rows / 4).max(1));
+    let snare_pulses = params.snare_density
+        .map(|d| density_to_pulses(num_rows, d))
+        .unwrap_or_else(|| (num_rows / 4).max(1));
+    let hat_pulses = params.hat_density
+        .map(|d| density_to_pulses(num_rows, d))
+        .unwrap_or_else(|| (num_rows / 2).max(1));
+
+    let kick_pat = scale::euclidean(num_rows, kick_pulses.min(num_rows).max(1), 0);
+    let snare_pat = scale::euclidean(num_rows, snare_pulses.min(num_rows).max(1), (num_rows / 8).max(1));
+    let hat_pat = scale::euclidean(num_rows, hat_pulses.min(num_rows).max(1), 0);
 
     let kick_ch = if params.kick_ch < num_channels { Some(params.kick_ch) } else { None };
     let snare_ch = if params.snare_ch < num_channels { Some(params.snare_ch) } else { None };
     let hat_ch = if params.hat_ch < num_channels { Some(params.hat_ch) } else { None };
 
+    // Per-drum instruments: explicit param wins, then fall back to
+    // the shared `instrument` so single-instrument drum calls work.
+    let kick_inst = params.kick_instrument.or(params.instrument);
+    let snare_inst = params.snare_instrument.or(params.instrument);
+    let hat_inst = params.hat_instrument.or(params.instrument);
+
     for (i, &active) in kick_pat.iter().enumerate() {
         if active {
             if let Some(ch) = kick_ch {
-                result.push((start_row + i, ch, note_cell(36, params.instrument)));
+                result.push((start_row + i, ch, note_cell(36, kick_inst)));
             }
         }
     }
     for (i, &active) in snare_pat.iter().enumerate() {
         if active {
             if let Some(ch) = snare_ch {
-                result.push((start_row + i, ch, note_cell(38, params.instrument)));
+                result.push((start_row + i, ch, note_cell(38, snare_inst)));
             }
         }
     }
+    // Apply swing: shift hat hits on odd-indexed pattern slots by one
+    // row (down on early half, up on late half). swing=0.0 is a no-op;
+    // 0.5 swaps every other hit's row.
+    let swing = params.swing.clamp(0.0, 1.0);
     for (i, &active) in hat_pat.iter().enumerate() {
-        if active {
-            if let Some(ch) = hat_ch {
-                result.push((start_row + i, ch, note_cell(42, params.instrument)));
-            }
+        if !active {
+            continue;
+        }
+        let Some(ch) = hat_ch else { continue };
+        let row_offset: i32 = if swing > 0.0 && i % 2 == 1 {
+            // Even row → +1, odd row → -1, scaled by swing.
+            if (i / 2) % 2 == 0 { 1 } else { -1 }
+        } else {
+            0
+        };
+        let row = (start_row as i32 + i as i32 + row_offset) as usize;
+        if row >= start_row && row <= end_row {
+            result.push((row, ch, note_cell(42, hat_inst)));
         }
     }
 

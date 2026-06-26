@@ -72,6 +72,49 @@ pub fn shutdown() {
     }
 }
 
+/// Install a panic hook that writes the panic message + location to
+/// `<config_dir>/crash.log` and to stderr. Without this, a panic during
+/// eframe shutdown is swallowed by the windowing layer and the user only
+/// sees the process vanish with no clue what happened.
+pub fn install_panic_hook(config_dir: std::path::PathBuf) {
+    use std::io::Write;
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let _ = std::fs::create_dir_all(&config_dir);
+        let log_path = config_dir.join("crash.log");
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            // Always print via the default hook so stderr shows it too.
+            default_hook(info);
+
+            let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = info.payload().downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "<non-string panic payload>".to_string()
+            };
+            let location = info.location()
+                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+                .unwrap_or_else(|| "<unknown>".to_string());
+
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true).append(true).open(&log_path)
+            {
+                let _ = writeln!(f, "[{:.3}] PANIC at {}: {}", timestamp, location, payload);
+                let _ = writeln!(f, "  backtrace: {}", std::backtrace::Backtrace::capture());
+                let _ = f.flush();
+            }
+        }));
+    });
+}
+
 // ── tracing integration ──
 //
 // Initializes the `tracing` ecosystem alongside the legacy debug log. We use

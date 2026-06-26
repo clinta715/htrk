@@ -7,6 +7,7 @@ use crate::audio::mixer;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::audio::sendfx;
 use crate::audio::sequencer_engine::SequencerEngine;
+use crate::debug_log;
 use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::module::Module;

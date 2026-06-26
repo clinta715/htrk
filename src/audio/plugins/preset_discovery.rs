@@ -40,7 +40,9 @@ impl std::error::Error for PresetScanError {}
 
 #[derive(Clone, Debug)]
 struct LocationInfoOwned {
+    #[allow(dead_code)]
     name: String,
+    #[allow(dead_code)]
     flags: u32,
     kind: LocationKind,
 }
@@ -53,7 +55,9 @@ enum LocationKind {
 
 #[derive(Clone, Debug)]
 struct FileTypeOwned {
+    #[allow(dead_code)]
     name: String,
+    #[allow(dead_code)]
     description: Option<String>,
     extension: Option<String>,
 }

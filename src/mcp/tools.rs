@@ -20,6 +20,9 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "channel.set_panning", "channel.set_volume", "channel.set_mute", "channel.set_solo",
     "sendfx.set_bus", "sendfx.set_return_level",
     "sample_library.import",
+    "phrase.generate",
+    "pattern.transform",
+    "undo.last", "undo.to", "redo.last",
 ];
 
 pub fn list_tools() -> Vec<ToolDefinition> {
@@ -366,6 +369,88 @@ pub fn list_tools() -> Vec<ToolDefinition> {
                 "track_id": {"type": "integer"}
             },
             "required": ["track_id"]
+        })),
+
+        // ── Phrase generation ──
+        tool_def("phrase.generate", "Generate a musical phrase into the current pattern. Returns an undo_id you can pass to undo.to to revert.", json!({
+            "type": "object",
+            "properties": {
+                "order":      {"type": "integer", "description": "Order position (default: selected_order)"},
+                "start_row":  {"type": "integer", "description": "Start row (default 0)"},
+                "end_row":    {"type": "integer", "description": "End row (default 63)"},
+                "mode":       {"type": "string", "enum": ["melodic", "euclidean", "drum", "chord"],
+                              "description": "Generation mode"},
+                "scale":      {"type": "string", "enum": ["chromatic", "major", "natural_minor", "harmonic_minor",
+                              "pentatonic_minor", "pentatonic_major", "blues", "dorian", "phrygian"],
+                              "description": "Musical scale (default major)"},
+                "root":       {"type": "integer", "description": "Root note MIDI key 0-119 (default 0 = C)"},
+                "octave_min": {"type": "integer", "description": "Minimum octave (default 3)"},
+                "octave_max": {"type": "integer", "description": "Maximum octave (default 5)"},
+                "density":    {"type": "number", "description": "Note density 0.0-1.0 (default 0.3)"},
+                "step_size":  {"type": "integer", "description": "Step size in rows (default 3)"},
+                "seed":       {"type": "integer", "description": "RNG seed (default 0)"},
+                "instrument": {"type": "integer", "description": "Shared instrument number to assign (drum mode falls back to this if per-drum not set)"},
+                "pulses":     {"type": "integer", "description": "Euclidean pulses (default 8)"},
+                "rotation":   {"type": "integer", "description": "Euclidean rotation (default 0)"},
+                "kick_ch":    {"type": "integer", "description": "Drum: kick channel (default 0)"},
+                "snare_ch":   {"type": "integer", "description": "Drum: snare channel (default 1)"},
+                "hat_ch":     {"type": "integer", "description": "Drum: hat channel (default 2)"},
+                "kick_instrument":  {"type": "integer", "description": "Drum: instrument index for kick (overrides 'instrument')"},
+                "snare_instrument": {"type": "integer", "description": "Drum: instrument index for snare (overrides 'instrument')"},
+                "hat_instrument":   {"type": "integer", "description": "Drum: instrument index for hat (overrides 'instrument')"},
+                "kick_density":     {"type": "number", "description": "Drum: kick density 0.0-1.0 (default 0.25 = 4-on-floor)"},
+                "snare_density":    {"type": "number", "description": "Drum: snare density 0.0-1.0 (default 0.25 = backbeat)"},
+                "hat_density":      {"type": "number", "description": "Drum: hat density 0.0-1.0 (default 0.5 = 8ths)"},
+                "swing":            {"type": "number", "description": "Drum: swing amount 0.0-0.5, shifts hat off-beats (default 0)"},
+                "chord_type": {"type": "string", "enum": ["triad", "seventh", "sus2", "sus4"],
+                              "description": "Chord type (default triad)"},
+                "progression":{"type": "string", "enum": ["I-IV-V-I", "I-V-vi-IV", "I-vi-IV-V", "I-iii-IV-V", "circle"],
+                              "description": "Chord progression (default I-IV-V-I)"},
+                "bars_per_chord": {"type": "integer", "description": "Rows per chord (default 4)"},
+                "chord_channels": {"type": "array", "items": {"type": "integer"},
+                              "description": "Channels for chord voices (default [0,1,2,3])"}
+            },
+            "required": ["mode"]
+        })),
+
+        tool_def("pattern.transform", "Apply a list of transforms to a pattern (humanize, swing, thin, transpose, rotate, ...). Returns an undo_id.", json!({
+            "type": "object",
+            "properties": {
+                "order": {"type": "integer", "description": "Order position (default: selected_order)"},
+                "ops":   {"type": "array", "description": "Transforms to apply, in order. Each is an object with 'type' + type-specific fields.",
+                          "items": {
+                              "type": "object",
+                              "properties": {
+                                  "type": {
+                                      "type": "string",
+                                      "enum": ["humanize", "swing", "thin", "transpose", "rotate", "reverse", "invert", "quantize", "augment", "diminish", "echo", "set_instrument", "shift"],
+                                      "description": "Transform type"
+                                  }
+                              },
+                              "required": ["type"]
+                          }
+                },
+                "seed": {"type": "integer", "description": "RNG seed for humanize/thin (default 0)"}
+            },
+            "required": ["ops"]
+        })),
+
+        tool_def("undo.last", "Undo the most recent mutation. Returns the undone id and label.", json!({
+            "type": "object",
+            "properties": {}
+        })),
+
+        tool_def("redo.last", "Redo the most recently undone mutation. Returns the redone id and label.", json!({
+            "type": "object",
+            "properties": {}
+        })),
+
+        tool_def("undo.to", "Undo every mutation up to and including the one with this undo_id. Pass the 'undo_id' from a previous phrase.generate / pattern.transform / cell.set response.", json!({
+            "type": "object",
+            "properties": {
+                "undo_id": {"type": "integer", "description": "The id returned by a previous mutation (auto-assigned integer)"}
+            },
+            "required": ["undo_id"]
         })),
 
         // ── Playback ──
