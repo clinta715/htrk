@@ -1238,7 +1238,19 @@ impl HtrkApp {
 
         crate::actions::handle_keyboard_input(self, ctx);
 
-        if self.current_view == AppView::Pattern && ctx.memory(|m| m.focused().is_none()) {
+        let any_dialog_open = self.file_browser.show
+            || self.settings_state.open
+            || self.wav_export_state.open
+            || self.sample_export_dialog.is_some()
+            || self.show_about
+            || self.show_shortcuts
+            || self.show_exit_confirm
+            || self.show_phrase_generator
+            || self.slice_dialog_open
+            || self.sendfx_panel.plugin_browser_open_for.is_some()
+            || self.instrument_editor.plugin_browser_open
+            || self.sample_library_state.open;
+        if self.current_view == AppView::Pattern && ctx.memory(|m| m.focused().is_none()) && !any_dialog_open {
             ctx.input_mut(|i| {
                 i.events.retain(|e| !matches!(e,
                     egui::Event::Key { key: egui::Key::Tab, pressed: true, .. }

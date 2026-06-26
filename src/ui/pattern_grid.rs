@@ -567,8 +567,7 @@ pub fn draw_pattern_grid(
             Pos2::new(cursor_x, cursor_y),
             egui::vec2(metrics.channel_width - 2.0, metrics.row_height),
         );
-        painter.rect_filled(cursor_rect, 0.0, theme.cursor_fill);
-        painter.rect_stroke(cursor_rect, 0.0, Stroke::new(1.0, theme.cursor_outline), egui::StrokeKind::Outside);
+        painter.rect_stroke(cursor_rect, 0.0, Stroke::new(1.5, theme.cursor_outline), egui::StrokeKind::Outside);
 
         // Sub-column indicator: a bright bar at the bottom of the cursor
         // showing exactly which digit/field is active.
