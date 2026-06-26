@@ -1150,4 +1150,32 @@ mod tests {
         assert_eq!(cell.instrument, Some(1), "instrument must survive volume entry");
         assert_eq!(cell.volume, Some(40));
     }
+
+    #[test]
+    fn test_step_sub_column_wraps_at_end() {
+        let mut app = test_app();
+        app.core.new_song();
+        app.core.cursor.sub_column = SubColumn::EffectParamLow;
+        app.core.cursor.row = 0;
+        app.core.cursor.channel = 0;
+
+        app.step_sub_column_forward();
+
+        assert_eq!(app.core.cursor.sub_column, SubColumn::Note);
+        assert_eq!(app.core.cursor.row, 1, "should advance to next row on wrap");
+    }
+
+    #[test]
+    fn test_step_sub_column_backward_wraps_at_start() {
+        let mut app = test_app();
+        app.core.new_song();
+        app.core.cursor.sub_column = SubColumn::Note;
+        app.core.cursor.row = 5;
+        app.core.cursor.channel = 0;
+
+        app.step_sub_column_backward();
+
+        assert_eq!(app.core.cursor.sub_column, SubColumn::EffectParamLow);
+        assert_eq!(app.core.cursor.row, 4, "should go back a row on wrap");
+    }
 }

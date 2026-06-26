@@ -992,10 +992,22 @@ impl HtrkApp {
         SubColumn::Note
     }
 
+    pub(crate) fn last_visible_sub_column(col_vis: crate::ui::pattern_grid::ColumnVisibility) -> crate::ui::pattern_grid::SubColumn {
+        use crate::ui::pattern_grid::SubColumn;
+        if col_vis.effect { return SubColumn::EffectParamLow; }
+        if col_vis.volume { return SubColumn::VolumeOnes; }
+        if col_vis.instrument { return SubColumn::InstrumentOnes; }
+        if col_vis.note { return SubColumn::Note; }
+        SubColumn::Note
+    }
+
     pub(crate) fn step_sub_column_forward(&mut self) {
         let col_vis = self.config.get_col_vis();
         if let Some(next) = self.core.cursor.sub_column.next_visible(col_vis) {
             self.core.cursor.sub_column = next;
+        } else {
+            self.core.cursor.sub_column = Self::first_visible_sub_column(col_vis);
+            self.advance_cursor_down(1);
         }
     }
 
@@ -1003,6 +1015,9 @@ impl HtrkApp {
         let col_vis = self.config.get_col_vis();
         if let Some(prev) = self.core.cursor.sub_column.prev_visible(col_vis) {
             self.core.cursor.sub_column = prev;
+        } else {
+            self.core.cursor.sub_column = Self::last_visible_sub_column(col_vis);
+            self.advance_cursor_up(1);
         }
     }
 
