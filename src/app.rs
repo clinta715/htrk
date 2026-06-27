@@ -148,6 +148,23 @@ pub struct HtrkApp {
     pub(crate) sample_library: Arc<RwLock<SampleLibrary>>,
     pub(crate) slice_config: crate::actions::slice_to_instrument::SliceConfig,
 
+    // --- Menu bar keyboard navigation (Alt-tap / Alt+letter) ---
+    /// When true, the menu bar is in keyboard-navigation mode: the menu at
+    /// `active_menu` is highlighted, and arrow/letter keys navigate between
+    /// menus. Toggled by tapping Alt.
+    pub(crate) menu_bar_active: bool,
+    /// Index of the currently highlighted top-level menu (0=File, 1=Edit,
+    /// 2=View, 3=Audio, 4=Help).
+    pub(crate) active_menu: usize,
+    /// One-shot: if `Some(idx)`, the menu at that index is force-opened this
+    /// frame. Cleared after one frame by `draw_menu_bar`.
+    pub(crate) force_open_menu: Option<usize>,
+    /// Previous frame's Alt state — used to detect press/release transitions.
+    pub(crate) alt_prev_frame: bool,
+    /// Set to true when any non-Alt key is pressed while Alt is held, so the
+    /// Alt release is NOT treated as a "tap" (it was used as a modifier).
+    pub(crate) alt_intercepted: bool,
+
     pub(crate) mcp_server: Option<crate::mcp::McpServer>,
 }
 
@@ -234,6 +251,11 @@ impl HtrkApp {
             sample_library_state: crate::ui::sample_library::SampleLibraryState::default(),
             sample_library: Arc::new(RwLock::new(SampleLibrary::new())),
             slice_config: crate::actions::slice_to_instrument::SliceConfig::default(),
+            menu_bar_active: false,
+            active_menu: 0,
+            force_open_menu: None,
+            alt_prev_frame: false,
+            alt_intercepted: false,
             mcp_server: None,
         }
     }
@@ -327,6 +349,11 @@ impl HtrkApp {
             sample_library_state: crate::ui::sample_library::SampleLibraryState::default(),
             sample_library: Arc::new(RwLock::new(SampleLibrary::new())),
             slice_config: crate::actions::slice_to_instrument::SliceConfig::default(),
+            menu_bar_active: false,
+            active_menu: 0,
+            force_open_menu: None,
+            alt_prev_frame: false,
+            alt_intercepted: false,
             devmcp: {
                 let ps = pending_view_switch.clone();
                 let devmcp = DevMcp::new()
@@ -2631,6 +2658,9 @@ impl HtrkApp {
     }
 
     fn handle_menu_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let menu_bar_active = self.menu_bar_active;
+        let active_menu = self.active_menu;
+        let force_open_menu = self.force_open_menu.take();
         egui::Panel::top("menu_bar").show_inside(ui, |ui| {
             let menu_resp = crate::ui::menu_bar::draw_menu_bar(
                 ui,
@@ -2645,6 +2675,9 @@ impl HtrkApp {
                 &self.current_sample_format,
                 &mut self.col_vis,
                 &self.config.recent_files,
+                menu_bar_active,
+                active_menu,
+                force_open_menu,
             );
             if menu_resp.new_song { self.new_song(); }
             if menu_resp.open_file { self.open_file_dialog(); }

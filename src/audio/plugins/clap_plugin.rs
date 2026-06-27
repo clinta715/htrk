@@ -636,7 +636,6 @@ impl HostedPluginHandle for ClapPluginHandle {
     fn is_editor_open(&self) -> bool {
         self.editor_open
     }
-
     fn has_editor(&self) -> bool {
         let Some(instance) = self.instance.as_ref() else {
             return false;
@@ -733,13 +732,33 @@ impl HostedPluginHandle for ClapPluginHandle {
     }
 }
 
+impl Drop for ClapPluginHandle {
+    /// Close the editor before the host window and instance are dropped.
+    ///
+    /// The default field-drop order is: `host_window` first, then `instance`.
+    /// If the editor is still open when the handle drops, the plugin's
+    /// child HWND is reparented into `host_window`. Destroying the
+    /// host window first orphans the plugin's HWND, and the subsequent
+    /// `PluginInstance::drop()` calls the plugin's `destroy` callback
+    /// — which can crash the plugin (or the OS) when it tries to
+    /// clean up an HWND whose parent has already been destroyed.
+    ///
+    /// This was the root cause of the crash-on-exit when a CLAP
+    /// editor was open at app shutdown.
+    fn drop(&mut self) {
+        if self.editor_open {
+            self.close_editor();
+        }
+    }
+}
+
 // ── Audio-thread Processor (real CLAP processing) ──
 
 /// Real CLAP processor that calls the plugin's process() function each callback.
 /// Wraps a `StartedPluginAudioProcessor<HtrkHost>` and pre-allocates the
 /// audio I/O buffers + event buffers in `new()` for allocation-free processing.
 pub struct ClapPluginProcessor {
-    processor: StartedPluginAudioProcessor<HtrkHost>,
+    processor: Option<StartedPluginAudioProcessor<HtrkHost>>,
     descriptor: PluginDescriptor,
     sample_rate: f64,
     max_block: usize,
@@ -784,7 +803,7 @@ impl ClapPluginProcessor {
     ) -> Self {
         let max_block = max_block.max(1) as usize;
         ClapPluginProcessor {
-            processor,
+            processor: Some(processor),
             descriptor,
             sample_rate,
             max_block,
@@ -805,10 +824,40 @@ impl ClapPluginProcessor {
 
     /// Stop processing and return the StoppedPluginAudioProcessor so the handle can
     /// call `instance.deactivate(stopped)` on the main thread. Consumes self.
-    pub fn stop(self) -> clack_host::process::StoppedPluginAudioProcessor<HtrkHost> {
-        self.processor.stop_processing()
+    /// The Option field is `take()`n so the Drop impl doesn't double-stop.
+    pub fn stop(mut self) -> clack_host::process::StoppedPluginAudioProcessor<HtrkHost> {
+        self.processor
+            .take()
+            .expect("ClapPluginProcessor::stop called twice")
+            .stop_processing()
     }
 
+}
+
+impl Drop for ClapPluginProcessor {
+    /// Defensive cleanup: if the processor is dropped without `stop()`
+    /// being called first (e.g. the audio engine drops the SendBus's
+    /// plugin slot because the user removed the plugin without
+    /// round-tripping through `deactivate`), make sure the
+    /// `StartedPluginAudioProcessor` is properly stopped so the
+    /// audio-thread side of the plugin is released.
+    ///
+    /// The returned `StoppedPluginAudioProcessor` cannot be sent back
+    /// to the main thread from Drop, so it's dropped here (a small
+    /// leak). The main thread's `PluginInstance::drop()` will still
+    /// call the plugin's `destroy` callback and release the plugin's
+    /// own resources, so the leak is limited to the wrapper struct.
+    fn drop(&mut self) {
+        if let Some(processor) = self.processor.take() {
+            let stopped = processor.stop_processing();
+            tracing::debug!(
+                "[plugin] ClapPluginProcessor dropped without explicit stop(); \
+                 audio-thread resources released but StoppedPluginAudioProcessor \
+                 leaked (main thread cannot call deactivate)"
+            );
+            drop(stopped);
+        }
+    }
 }
 
 impl std::fmt::Debug for ClapPluginProcessor {
@@ -946,14 +995,16 @@ impl HostedPluginProcessor for ClapPluginProcessor {
 
         let input_events = clack_host::events::io::InputEvents::from_buffer(&ev_buffer);
         let mut output_events = clack_host::events::io::OutputEvents::from_buffer(&mut self.output_event_buffer);
-        let _ = self.processor.process(
-            &input_audio,
-            &mut output_audio,
-            &input_events,
-            &mut output_events,
-            None,
-            None,
-        );
+        if let Some(processor) = self.processor.as_mut() {
+            let _ = processor.process(
+                &input_audio,
+                &mut output_audio,
+                &input_events,
+                &mut output_events,
+                None,
+                None,
+            );
+        }
 
         // Copy plugin output back to caller's buffers
         for i in 0..frame_count.min(n) {
@@ -1644,5 +1695,80 @@ mod tests {
         // Tear down the audio thread cleanly.
         let stopped = processor.stop();
         handle2.deactivate(stopped).expect("deactivate 2 failed");
+    }
+
+    /// Regression test: dropping a `ClapPluginHandle` while the editor
+    /// is still open must close the editor cleanly. Previously the
+    /// host window was destroyed first and the plugin's child HWND was
+    /// orphaned, which crashed `PluginInstance::drop()` (and the whole
+    /// app on exit). The `Drop` impl on `ClapPluginHandle` now calls
+    /// `close_editor()` before the fields are dropped, so this path
+    /// should be safe.
+    #[test]
+    fn test_drop_with_open_editor_does_not_crash() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found");
+            return;
+        }
+
+        let mut handle = ClapPluginHandle::load(path).expect("load failed");
+        let _processor = handle.activate(48000.0, 256).expect("activate failed");
+
+        // Open the editor (any mode that the plugin supports). If the
+        // plugin is headless, the open_editor call will Err and we skip
+        // the test — the Drop is a no-op when the editor isn't open.
+        let opened = handle.open_editor(
+            crate::audio::plugins::EditorMode::Floating,
+            None,
+        ).is_ok() || handle.open_editor(
+            crate::audio::plugins::EditorMode::Embedded,
+            None,
+        ).is_ok();
+
+        if !opened {
+            eprintln!("[skip] TAL-Reverb-4 has no GUI; Drop path not exercised");
+            return;
+        }
+
+        assert!(handle.is_editor_open(), "Editor should be open before drop");
+
+        // Drop the handle without explicitly closing the editor.
+        // Previously this would crash on app exit. Now the Drop
+        // impl calls close_editor() and the field drop order is
+        // safe (host_window is None, instance drops last).
+        drop(handle);
+        eprintln!("[ok] Dropped handle with open editor without crashing");
+    }
+
+    /// Regression test: dropping a `ClapPluginProcessor` (e.g. when the
+    /// audio engine replaces the plugin in a send bus) should release
+    /// the audio-thread resources via `stop_processing()` rather than
+    /// silently leaking the `StartedPluginAudioProcessor`. The
+    /// `StoppedPluginAudioProcessor` returned by `stop_processing()`
+    /// cannot be passed back to the main thread from `Drop`, so it's
+    /// a small leak — but the audio thread side is no longer leaked.
+    #[test]
+    fn test_drop_processor_releases_audio_resources() {
+        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        if !path.exists() {
+            eprintln!("[skip] TAL-Reverb-4.clap not found");
+            return;
+        }
+
+        let mut handle = ClapPluginHandle::load(path).expect("load failed");
+        let processor = handle.activate(48000.0, 256).expect("activate failed");
+
+        // Drop the processor without calling stop() first. The Drop
+        // impl should call stop_processing() internally to release
+        // the audio-thread resources.
+        drop(processor);
+        eprintln!("[ok] Dropped processor without explicit stop()");
+
+        // The handle still holds the instance; we can still call
+        // close_editor() / save_state() etc.
+        assert!(handle.is_editor_open() == false, "Editor should not be open");
     }
 }

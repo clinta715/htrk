@@ -107,6 +107,18 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool, theme: &Track
                     });
 
                     ui.add_space(4.0);
+                    ui.collapsing("Menu bar (Alt navigation)", |ui| {
+                        shortcut_row(ui, "Alt (tap)", "Activate / deactivate menu bar highlight", theme);
+                        shortcut_row(ui, "Alt+F / E / V / A / H", "Open File / Edit / View / Audio / Help menu", theme);
+                        shortcut_row(ui, "Left / Right (when active)", "Cycle between menus", theme);
+                        shortcut_row(ui, "Down / Enter (when active)", "Open highlighted menu", theme);
+                        shortcut_row(ui, "F / E / V / A / H (when active)", "Jump to that menu", theme);
+                        shortcut_row(ui, "Escape (when active)", "Deactivate menu bar", theme);
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new("Note: Alt+F/E/V/A/H always open menus. Pattern-editor shortcuts that previously used those keys have been remapped: Alt+G = Fill Instrument, Alt+D = Mark Block End, Alt+P = Paste.").color(theme.fg_dim).size(FONT_BODY));
+                    });
+
+                    ui.add_space(4.0);
                     ui.collapsing("Navigation", |ui| {
                         shortcut_row(ui, "Up / Down", "Move cursor between rows", theme);
                         shortcut_row(ui, "Left / Right", "Move cursor between channels", theme);
@@ -141,9 +153,9 @@ pub fn draw_shortcuts_window(ctx: &egui::Context, open: &mut bool, theme: &Track
                         shortcut_row(ui, "Alt+S", "Toggle solo channel", theme);
                         shortcut_row(ui, "Alt+N", "Toggle multichannel edit", theme);
                         shortcut_row(ui, "Alt+L (x2)", "Select column / select all", theme);
-                        shortcut_row(ui, "Alt+B / Alt+E", "Mark block begin / end", theme);
+                        shortcut_row(ui, "Alt+B / Alt+D", "Mark block begin / end", theme);
                         shortcut_row(ui, "Alt+Z", "Reverse block", theme);
-                        shortcut_row(ui, "Alt+F", "Fill instrument", theme);
+                        shortcut_row(ui, "Alt+G", "Fill instrument", theme);
                         shortcut_row(ui, "Alt+I", "Interpolate volume", theme);
                         shortcut_row(ui, "Alt+K", "Interpolate effect", theme);
                         shortcut_row(ui, "Alt+R", "Randomize notes / volume", theme);

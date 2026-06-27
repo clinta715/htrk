@@ -15,6 +15,163 @@ use crate::sequencer::player::PlayMode;
 use crate::ui::file_browser::BrowserMode;
 use crate::ui::pattern_grid::{ContextMenuAction, SubColumn};
 
+/// Number of top-level menus in the menu bar (File, Edit, View, Audio, Help).
+const NUM_MENUS: usize = 5;
+
+/// Map a key to a top-level menu index for Alt+letter shortcuts and
+/// letter-when-menu-bar-active navigation. Returns None for non-menu keys.
+fn menu_index_for_key(key: egui::Key) -> Option<usize> {
+    match key {
+        egui::Key::F => Some(0), // File
+        egui::Key::E => Some(1), // Edit
+        egui::Key::V => Some(2), // View
+        egui::Key::A => Some(3), // Audio
+        egui::Key::H => Some(4), // Help
+        _ => None,
+    }
+}
+
+/// Handle Alt-key interactions for menu bar activation.
+///
+/// Three behaviours:
+/// 1. **Alt tap** (press + release, no intervening key): toggle `menu_bar_active`.
+///    When activating, File (index 0) is highlighted.
+/// 2. **Alt+letter** (Alt + F/E/V/A/H): open the matching menu directly.
+/// 3. **Menu bar active navigation** (when active, no popup open):
+///    - Left/Right: cycle between menus
+///    - Down/Enter: open highlighted menu
+///    - F/E/V/A/H (plain): open that menu
+///    - Escape: deactivate menu bar
+///
+/// Runs BEFORE the focus gate so Alt+letter works regardless of widget focus.
+/// Consumed events are stripped from the queue.
+fn handle_alt_menu(app: &mut HtrkApp, ctx: &egui::Context, any_dialog_open: bool) {
+    let alt_now = ctx.input(|i| i.modifiers.alt);
+
+    // --- Alt press transition: reset interception flag ---
+    if alt_now && !app.alt_prev_frame {
+        app.alt_intercepted = false;
+    }
+
+    // --- Alt+letter menu shortcuts (work in any view / mode) ---
+    if alt_now && !any_dialog_open {
+        let found_menu: Option<usize> = ctx.input(|i| {
+            for event in &i.events {
+                if let egui::Event::Key { key, pressed: true, modifiers, .. } = event {
+                    if modifiers.alt && !modifiers.ctrl && !modifiers.shift {
+                        if let Some(idx) = menu_index_for_key(*key) {
+                            return Some(idx);
+                        }
+                    }
+                }
+            }
+            None
+        });
+        if let Some(idx) = found_menu {
+            app.menu_bar_active = true;
+            app.active_menu = idx;
+            app.force_open_menu = Some(idx);
+            app.alt_intercepted = true;
+            ctx.input_mut(|i| {
+                i.events.retain(|e| {
+                    if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
+                        if modifiers.alt && !modifiers.ctrl && !modifiers.shift
+                            && menu_index_for_key(*key).is_some()
+                        {
+                            return false;
+                        }
+                    }
+                    true
+                });
+            });
+        }
+    }
+
+    // --- Track whether any key was pressed while Alt held (intercepts tap) ---
+    if alt_now {
+        let any_key = ctx.input(|i| {
+            i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))
+        });
+        if any_key {
+            app.alt_intercepted = true;
+        }
+    }
+
+    // --- Alt release transition: detect tap ---
+    if !alt_now && app.alt_prev_frame {
+        if !app.alt_intercepted && !any_dialog_open {
+            app.menu_bar_active = !app.menu_bar_active;
+            if app.menu_bar_active {
+                app.active_menu = 0;
+            }
+        }
+    }
+    app.alt_prev_frame = alt_now;
+
+    // --- Menu bar active navigation (only when no popup is open) ---
+    let popup_open = egui::Popup::is_any_open(ctx);
+    if app.menu_bar_active && !any_dialog_open && !popup_open {
+        let nav_keys: Vec<egui::Key> = ctx.input(|i| {
+            i.events.iter().filter_map(|e| {
+                if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
+                    if !modifiers.any() {
+                        if matches!(*key,
+                            egui::Key::ArrowLeft | egui::Key::ArrowRight
+                            | egui::Key::ArrowDown | egui::Key::Enter
+                            | egui::Key::Escape
+                        ) || menu_index_for_key(*key).is_some() {
+                            return Some(*key);
+                        }
+                    }
+                }
+                None
+            }).collect()
+        });
+
+        for key in &nav_keys {
+            match key {
+                egui::Key::ArrowLeft => {
+                    app.active_menu = (app.active_menu + NUM_MENUS - 1) % NUM_MENUS;
+                }
+                egui::Key::ArrowRight => {
+                    app.active_menu = (app.active_menu + 1) % NUM_MENUS;
+                }
+                egui::Key::ArrowDown | egui::Key::Enter => {
+                    app.force_open_menu = Some(app.active_menu);
+                }
+                egui::Key::Escape => {
+                    app.menu_bar_active = false;
+                }
+                _ => {
+                    if let Some(idx) = menu_index_for_key(*key) {
+                        app.active_menu = idx;
+                        app.force_open_menu = Some(idx);
+                    }
+                }
+            }
+        }
+
+        if !nav_keys.is_empty() {
+            ctx.input_mut(|i| {
+                i.events.retain(|e| {
+                    if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
+                        if !modifiers.any() {
+                            if matches!(*key,
+                                egui::Key::ArrowLeft | egui::Key::ArrowRight
+                                | egui::Key::ArrowDown | egui::Key::Enter
+                                | egui::Key::Escape
+                            ) || menu_index_for_key(*key).is_some() {
+                                return false;
+                            }
+                        }
+                    }
+                    true
+                });
+            });
+        }
+    }
+}
+
 const NOTE_KEYS_LOWER: [(egui::Key, u8); 12] = [
     (egui::Key::Z, 0),
     (egui::Key::S, 1),
@@ -52,27 +209,13 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
     let has_focus = ctx.memory(|m| m.focused().is_some());
     let any_dialog_open = app.any_dialog_open();
 
+    handle_alt_menu(app, ctx, any_dialog_open);
+
     handle_early_text(app, ctx, has_focus, any_dialog_open);
 
     handle_tab(app, ctx, is_pattern, any_dialog_open);
 
-    // Strip Tab/Arrow keys from the event queue so egui's widget system doesn't
-    // interpret them as focus-navigation or scroll commands. The handlers above
-    // processed these events by value but did not consume them from the queue.
-    // Run this before the focus gate so events are stripped regardless of has_focus.
-    if is_pattern && !any_dialog_open {
-        ctx.input_mut(|i| {
-            i.events.retain(|e| !matches!(e,
-                egui::Event::Key { key: egui::Key::Tab, pressed: true, .. }
-                | egui::Event::Key { key: egui::Key::ArrowUp, pressed: true, .. }
-                | egui::Event::Key { key: egui::Key::ArrowDown, pressed: true, .. }
-                | egui::Event::Key { key: egui::Key::ArrowLeft, pressed: true, .. }
-                | egui::Event::Key { key: egui::Key::ArrowRight, pressed: true, .. }
-            ));
-        });
-    }
-
-    // Focus gate: if a widget has focus, skip all key events.
+    // Focus gate: if a widget has focus, let the widget handle all key events.
     if has_focus {
         return;
     }
@@ -93,6 +236,26 @@ pub(crate) fn handle_keyboard_input(app: &mut HtrkApp, ctx: &egui::Context) {
     }
 
     handle_plain_key(app, ctx, any_dialog_open, is_pattern, is_sample, modifiers);
+
+    // After all handlers have processed key events, strip any remaining
+    // Tab/Arrow events from the queue so egui's widget system doesn't
+    // also interpret them as focus-navigation or scroll commands. This must
+    // run AFTER handle_plain_key (which reads arrow events from the queue to
+    // move the cursor) and must NOT run when a widget has focus (so focused
+    // widgets like sliders, dropdowns, and dialog buttons can receive Tab/
+    // Arrow events normally for their own navigation). The has_focus gate
+    // above guarantees we only reach here when no widget is focused.
+    if is_pattern && !any_dialog_open {
+        ctx.input_mut(|i| {
+            i.events.retain(|e| !matches!(e,
+                egui::Event::Key { key: egui::Key::Tab, pressed: true, .. }
+                | egui::Event::Key { key: egui::Key::ArrowUp, pressed: true, .. }
+                | egui::Event::Key { key: egui::Key::ArrowDown, pressed: true, .. }
+                | egui::Event::Key { key: egui::Key::ArrowLeft, pressed: true, .. }
+                | egui::Event::Key { key: egui::Key::ArrowRight, pressed: true, .. }
+            ));
+        });
+    }
 }
 
 /// Handle all remaining keys (arrows, F-keys, Delete, Escape, brackets, etc.)
@@ -329,10 +492,9 @@ fn handle_plain_key(app: &mut HtrkApp, ctx: &egui::Context, any_dialog_open: boo
                     egui::Key::Plus if is_pattern && !any_dialog_open => { app.core.skip_to_next_pattern(); }
                     egui::Key::C if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => { app.core.copy_selection(); }
                     egui::Key::P if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => { app.core.paste_at_cursor(); }
-                    egui::Key::V if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => { app.core.paste_at_cursor(); }
                     egui::Key::X if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => { app.cut_selection(); }
                     egui::Key::B if modifiers.alt && is_pattern && !any_dialog_open => { app.mark_block_begin(); }
-                    egui::Key::E if modifiers.alt && is_pattern && !any_dialog_open => { app.mark_block_end(); }
+                    egui::Key::D if modifiers.alt && is_pattern && !any_dialog_open => { app.mark_block_end(); }
                     egui::Key::L if modifiers.alt && is_pattern && !any_dialog_open => {
                         let now = std::time::Instant::now();
                         let within = app.alt_l_last.map_or(false, |t| now.duration_since(t) < std::time::Duration::from_millis(600));
@@ -348,7 +510,7 @@ fn handle_plain_key(app: &mut HtrkApp, ctx: &egui::Context, any_dialog_open: boo
                             app.handle_context_menu_action(ContextMenuAction::Reverse);
                         }
                     }
-                    egui::Key::F if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => {
+                    egui::Key::G if modifiers.alt && app.edit_mode && is_pattern && !any_dialog_open => {
                         if app.core.selection.is_some() {
                             app.handle_context_menu_action(ContextMenuAction::FillInstrument);
                         }

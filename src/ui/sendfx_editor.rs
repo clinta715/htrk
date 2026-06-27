@@ -382,10 +382,14 @@ pub(crate) fn is_editor_hwnd_visible(_handle: &dyn HostedPluginHandle) -> bool {
     true
 }
 
-/// Render the embedded editor panel row. For each send bus whose plugin is
 /// Render the egui rect for a single plugin's embedded editor. Reserves
 /// a fixed-height frame and resizes the plugin's child HWND to match.
 /// Shared between send-bus and instrument plugin embedded editors.
+///
+/// Includes a "Close" button in the header so the user can dismiss the
+/// editor from the dock itself (otherwise they'd have to switch to the
+/// Send FX / Instrument tab to find the close button, which is hidden
+/// behind several other UI elements).
 #[cfg(windows)]
 pub(crate) fn draw_embedded_editor_panel(
     ui: &mut egui::Ui,
@@ -394,21 +398,46 @@ pub(crate) fn draw_embedded_editor_panel(
 ) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.set_min_height(280.0);
-        ui.label(label);
-        // Reserve space for the plugin's child HWND. The actual
-        // sizing happens here — MoveWindow positions and sizes the
-        // HWND to match the rect we allocate below.
-        let rect = ui.available_rect_before_wrap();
-        let width = rect.width().max(100.0) as i32;
-        let height = rect.height().max(100.0) as i32;
+        // Header: plugin label on the left, Close button on the right.
+        ui.horizontal(|ui| {
+            ui.label(label);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Close").clicked() {
+                    handle.close_editor();
+                }
+            });
+        });
+        // Reserve space for the plugin's child HWND. We position the
+        // host HWND at the actual screen-space rect of the allocated
+        // space, not at (0, 0) — the previous code overlapped the
+        // top-left of the eframe window and obscured the menu bar.
+        let available = ui.available_rect_before_wrap();
+        let width_pts = available.width();
+        let height_pts = available.height();
+        let rect = ui.allocate_space(egui::vec2(width_pts, height_pts));
         if let Some(hwnd) = handle.editor_hwnd() {
+            // `ui.allocate_space` returns (Id, Rect) in egui 0.34 — pull
+            // out the Rect. Convert from egui points to physical pixels
+            // in the eframe's client area. egui's `content_rect` gives
+            // the egui render area's top-left in eframe client pixels
+            // (typically (0, 0)); `pixels_per_point` is the DPI scale.
+            let rect = rect.1;
+            let content_rect = ui.ctx().content_rect();
+            let ppp = ui.ctx().pixels_per_point();
+            let pos_x = (rect.min.x * ppp + content_rect.min.x) as i32;
+            let pos_y = (rect.min.y * ppp + content_rect.min.y) as i32;
+            let width_px = (rect.width() * ppp).max(0.0) as i32;
+            let height_px = (rect.height() * ppp).max(0.0) as i32;
             // SAFETY: hwnd is a valid HWND owned by the plugin handle.
+            // MoveWindow uses the parent window's coordinate system;
+            // for our WS_CHILD of the eframe main window, that's the
+            // eframe's client area, which is exactly what `pos_x, pos_y`
+            // are in.
             unsafe {
                 use windows_sys::Win32::UI::WindowsAndMessaging::MoveWindow;
-                MoveWindow(hwnd, 0, 0, width, height, 1);
+                MoveWindow(hwnd, pos_x, pos_y, width_px, height_px, 1);
             }
         }
-        ui.allocate_space(egui::vec2(width as f32, height as f32));
     });
 }
 

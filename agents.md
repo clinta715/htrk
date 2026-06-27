@@ -120,6 +120,7 @@ When any egui widget has keyboard focus, or when any dialog is open, the `handle
 - Octave (`[`/`]`), pattern navigation (`-`/`=`/`+`), Alt+Num cursor_skip, Alt+M/S/N channel controls MUST be gated on `!any_dialog_open`.
 - Escape closes the topmost open dialog (in priority order) when `any_dialog_open`; only toggles `edit_mode` when no dialog is open.
 - When adding a new keyboard shortcut that should work regardless of widget focus, add it to a pre-gate `ctx.input()` pass, not the main match block.
+- **Event-strip ordering**: The `ctx.input_mut` that strips Tab/Arrow events from the queue so egui widgets don't react to them MUST run AFTER `handle_plain_key` (which reads those same events to move the cursor), NOT before it. It must also NOT run when a widget has focus (`has_focus == false` is guaranteed by the focus gate's early return). Placing the strip before the handlers breaks arrow navigation and Tab between columns. This was a regression from commit `58265b3` that was fixed by moving the strip to after `handle_plain_key`.
 
 ## 12. Save-on-Exit Confirmation
 
@@ -452,4 +453,46 @@ Wiring in `src/app.rs`:
 - The MCP `sample_library.list_dir` schema must stay in sync with `DirFilter`'s fields. When adding a new filter field, add the JSON-Schema property in `list_tools()` AND parse the field in `cmd_sample_library_list_dir`.
 - `DirFilter::matches` returns `false` (not `None`) when an entry is missing the field being checked. A `None` field is treated as "cannot satisfy this filter", not as "vacuous match". This is the convention for every filter field that points at an optional `LibraryEntry` value.
 - The atomic-write pattern in `save_to_file` is the only safe way to persist the cache — never write directly to the final path, always `.tmp` + `rename`.
+
+## 24. Menu Bar Keyboard Navigation (Alt-tap / Alt+letter)
+
+### Architecture
+Standard Windows/macOS-style menu bar activation via the keyboard. Three behaviours:
+
+1. **Alt tap** (press + release, no intervening key): toggles `menu_bar_active` on `HtrkApp`. When activating, `active_menu = 0` (File) is highlighted. A second Alt tap deactivates.
+2. **Alt+letter** (Alt + F/E/V/A/H): opens the corresponding menu directly — sets `menu_bar_active = true`, `active_menu = idx`, `force_open_menu = Some(idx)`.
+3. **Menu bar active navigation** (when `menu_bar_active && !popup_open`): Left/Right cycle menus, Down/Enter opens, plain F/E/V/A/H jumps, Escape deactivates.
+
+### State Fields (`HtrkApp`)
+- `menu_bar_active: bool` — menu bar is in keyboard-nav mode.
+- `active_menu: usize` — index of highlighted menu (0=File, 1=Edit, 2=View, 3=Audio, 4=Help).
+- `force_open_menu: Option<usize>` — one-shot: force-open this menu's popup this frame. Consumed (`.take()`) by `handle_menu_bar` before `draw_menu_bar`.
+- `alt_prev_frame: bool` — previous frame's `modifiers.alt`, for press/release transition detection.
+- `alt_intercepted: bool` — set true when any key was pressed while Alt held (so the release is NOT treated as a tap).
+
+### Handler Flow (`handle_alt_menu` in `src/actions/keyboard.rs`)
+Called FIRST in `handle_keyboard_input`, BEFORE `handle_early_text` and the focus gate, so Alt+letter works regardless of widget focus. Events consumed here are stripped from the queue.
+
+### Popup Force-Open Mechanism
+`draw_menu_bar` uses `top_menu_button` (not `dev_menu_button`) for the 5 top-level menus. When `force_open_menu == Some(idx)`:
+1. The button is created via `ui.add(Button::new(text))`.
+2. `Popup::open_id(ctx, response.id.with("popup"))` is called — this inserts the popup into `Memory::popups`.
+3. `Popup::menu(&response).show(content)` runs — `show()` sees `set: None` (button not clicked), calls `keep_popup_open(id)`, then `is_open()` returns true. Popup renders.
+4. On subsequent frames, `keep_popup_open` in `Popup::show` keeps the popup alive until the user closes it (Escape, click-away, or item selection).
+
+The highlight is applied via `Button::fill(visuals.widgets.open.bg_fill)` when `menu_bar_active && active_menu == index`.
+
+### Shortcut Remapping
+Alt+F/E/V/A/H take priority for menu opening. The following pattern-editor shortcuts were remapped to avoid conflicts:
+- **Alt+F** (Fill Instrument) → **Alt+G**
+- **Alt+E** (Mark Block End) → **Alt+D**
+- **Alt+V** (Paste) → removed (Alt+P already does Paste)
+- All other Alt+letter shortcuts (Alt+M, Alt+S, Alt+N, Alt+L, Alt+C, Alt+P, Alt+X, Alt+B, Alt+Z, Alt+I, Alt+K, Alt+R, Alt+0-9) remain unchanged.
+
+### Rule for Future Changes
+- When adding a new top-level menu, update `NUM_MENUS` and `menu_index_for_key` in `keyboard.rs`, and add a `top_menu_button` call in `menu_bar.rs` with the correct index.
+- `handle_alt_menu` must run before the focus gate and before `handle_early_text`.
+- The `force_open_menu` field is a one-shot — always consume it via `.take()` in `handle_menu_bar`, never read it directly.
+- Sub-menus inside top-level menus (Track, Column, Open Recent, etc.) still use `dev_menu_button` — only the 5 top-level menus use `top_menu_button`.
+- When `menu_bar_active` is true and no popup is open, navigation keys (arrows, enter, escape, menu letters) are stripped from the event queue so they don't reach the pattern editor.
 

@@ -73,6 +73,40 @@ impl Default for MenuResponse {
     }
 }
 
+/// Render a top-level menu bar button with optional highlight and force-open.
+///
+/// When `menu_bar_active && active_menu == index`, the button is rendered with
+/// the "open" visual style (highlighted). When `force_open_menu == Some(index)`,
+/// the popup is force-opened via `Popup::open_id` before `Popup::show` runs,
+/// so the menu appears even without a mouse click.
+fn top_menu_button<R>(
+    ui: &mut egui::Ui,
+    text: &str,
+    index: usize,
+    menu_bar_active: bool,
+    active_menu: usize,
+    force_open_menu: Option<usize>,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<R> {
+    let highlight = menu_bar_active && active_menu == index;
+    let force_open = force_open_menu == Some(index);
+
+    let mut button = egui::Button::new(text);
+    if highlight {
+        button = button.fill(ui.style().visuals.widgets.open.bg_fill);
+    }
+    let response = ui.add(button);
+
+    if force_open {
+        let popup_id = response.id.with("popup");
+        egui::Popup::open_id(ui.ctx(), popup_id);
+    }
+
+    egui::Popup::menu(&response)
+        .show(|ui| add_contents(ui))
+        .map(|r| r.inner)
+}
+
 pub fn draw_menu_bar(
     ui: &mut egui::Ui,
     can_undo: bool,
@@ -86,11 +120,14 @@ pub fn draw_menu_bar(
     sample_format: &str,
     col_vis: &mut ColumnVisibility,
     recent_files: &[String],
+    menu_bar_active: bool,
+    active_menu: usize,
+    force_open_menu: Option<usize>,
 ) -> MenuResponse {
     let mut resp = MenuResponse::default();
 
     egui::MenuBar::new().ui(ui, |ui| {
-        ui.dev_menu_button("menu.file", "File", |ui| {
+        let _ = top_menu_button(ui, "File", 0, menu_bar_active, active_menu, force_open_menu, |ui| {
             if ui.dev_button("menu.file.new_song", "New Song    Ctrl+N").clicked() {
                 resp.new_song = true;
                 ui.close();
@@ -145,7 +182,7 @@ pub fn draw_menu_bar(
             }
         });
 
-        ui.dev_menu_button("menu.edit", "Edit", |ui| {
+        let _ = top_menu_button(ui, "Edit", 1, menu_bar_active, active_menu, force_open_menu, |ui| {
             if ui.add_enabled(can_undo, egui::Button::new("Undo   Ctrl+Z")).clicked() {
                 resp.undo = true;
                 ui.close();
@@ -216,7 +253,7 @@ pub fn draw_menu_bar(
             }
         });
 
-        ui.dev_menu_button("menu.view", "View", |ui| {
+        let _ = top_menu_button(ui, "View", 2, menu_bar_active, active_menu, force_open_menu, |ui| {
             let label = if follow_playback {
                 "Follow Playback  [ON]"
             } else {
@@ -286,12 +323,12 @@ pub fn draw_menu_bar(
             }
         });
 
-        ui.dev_menu_button("menu.audio", "Audio", |ui| {
+        let _ = top_menu_button(ui, "Audio", 3, menu_bar_active, active_menu, force_open_menu, |ui| {
             ui.dev_label("menu.audio.rate", format!("Rate: {} Hz  Format: {}", sample_rate, sample_format));
             ui.dev_label("menu.audio.device_hint", "Device selection is in Settings (F10)");
         });
 
-        ui.dev_menu_button("menu.help", "Help", |ui| {
+        let _ = top_menu_button(ui, "Help", 4, menu_bar_active, active_menu, force_open_menu, |ui| {
             if ui.dev_button("menu.help.shortcuts", "Keyboard Shortcuts   F3").clicked() {
                 resp.show_shortcuts = true;
                 ui.close();
