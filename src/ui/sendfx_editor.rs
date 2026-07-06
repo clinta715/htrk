@@ -114,6 +114,7 @@ pub(crate) fn draw_plugin_parameter_sliders(
         // Use horizontal_wrapped with fixed-width sliders so items naturally
         // fill rows and wrap — no Grid column-width distribution issues.
         egui::ScrollArea::vertical()
+            .id_salt("plugin_param_scroll")
             .max_height(360.0)
             .auto_shrink([false; 2])
             .show(ui, |ui| {

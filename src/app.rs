@@ -240,6 +240,19 @@ impl HtrkApp {
             instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor {
                 list_width: config.instrument_list_width.unwrap_or(150.0),
                 envelope_height: config.instrument_envelope_height.unwrap_or(180.0),
+                envelope_type: config.instrument_envelope_type
+                    .and_then(|v| {
+                        use crate::edit::EnvelopeType;
+                        match v {
+                            0 => Some(EnvelopeType::Volume),
+                            1 => Some(EnvelopeType::Panning),
+                            2 => Some(EnvelopeType::Pitch),
+                            3 => Some(EnvelopeType::Filter),
+                            _ => None,
+                        }
+                    })
+                    .unwrap_or(crate::edit::EnvelopeType::Volume),
+                envelope_visible: config.instrument_envelope_visible.unwrap_or(true),
                 ..crate::ui::instrument_editor_panel::InstrumentEditor::default()
             },
             mixer_state: crate::ui::mixer_view::MixerState::default(),
@@ -266,6 +279,19 @@ impl HtrkApp {
     fn from_config(config: AppConfig) -> Self {
         let inst_list_w = config.instrument_list_width.unwrap_or(150.0);
         let inst_env_h = config.instrument_envelope_height.unwrap_or(180.0);
+        let inst_env_type = config.instrument_envelope_type
+            .and_then(|v| {
+                use crate::edit::EnvelopeType;
+                match v {
+                    0 => Some(EnvelopeType::Volume),
+                    1 => Some(EnvelopeType::Panning),
+                    2 => Some(EnvelopeType::Pitch),
+                    3 => Some(EnvelopeType::Filter),
+                    _ => None,
+                }
+            })
+            .unwrap_or(crate::edit::EnvelopeType::Volume);
+        let inst_env_visible = config.instrument_envelope_visible.unwrap_or(true);
         let mut file_browser = FileBrowser::default();
         file_browser.restore_last_dirs(&config);
         file_browser.restore_favorites(&config.favorites);
@@ -341,6 +367,8 @@ impl HtrkApp {
             instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor {
                 list_width: inst_list_w,
                 envelope_height: inst_env_h,
+                envelope_type: inst_env_type,
+                envelope_visible: inst_env_visible,
                 ..crate::ui::instrument_editor_panel::InstrumentEditor::default()
             },
             mixer_state: crate::ui::mixer_view::MixerState::default(),

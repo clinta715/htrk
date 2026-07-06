@@ -3,6 +3,7 @@ use eframe::egui;
 use crate::audio::engine::CommandSender;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::audio::plugins::HostedPluginHandle;
+use crate::edit::EnvelopeType;
 use crate::sequencer::module::Module;
 use crate::ui::theme::TrackerTheme;
 use crate::ui::instrument_editor::InstrumentEditEvent;
@@ -11,6 +12,8 @@ pub struct InstrumentEditor {
     pub list_width: f32,
     pub envelope_height: f32,
     pub plugin_browser_open: bool,
+    pub envelope_type: EnvelopeType,
+    pub envelope_visible: bool,
 }
 
 impl Default for InstrumentEditor {
@@ -19,6 +22,8 @@ impl Default for InstrumentEditor {
             list_width: 150.0,
             envelope_height: 180.0,
             plugin_browser_open: false,
+            envelope_type: EnvelopeType::Volume,
+            envelope_visible: true,
         }
     }
 }

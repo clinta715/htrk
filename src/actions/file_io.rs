@@ -299,6 +299,8 @@ pub(crate) fn save_config(app: &mut HtrkApp) {
     app.file_browser.sync_widths_to_config(&mut app.config);
     app.config.instrument_list_width = Some(app.instrument_editor.list_width);
     app.config.instrument_envelope_height = Some(app.instrument_editor.envelope_height);
+    app.config.instrument_envelope_type = Some(app.instrument_editor.envelope_type as u8);
+    app.config.instrument_envelope_visible = Some(app.instrument_editor.envelope_visible);
     app.config.sample_list_width = Some(app.sample_editor.list_width);
     app.config.sample_waveform_height = Some(app.sample_editor.waveform_height);
     app.config.save();

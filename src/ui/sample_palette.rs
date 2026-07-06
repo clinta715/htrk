@@ -12,6 +12,7 @@ pub fn draw_inline_sample_palette(
     paint_sample: &mut u8,
     playback_state: &AtomicPlaybackState,
     theme: &TrackerTheme,
+    reset_scroll: bool,
 ) {
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
@@ -25,6 +26,10 @@ pub fn draw_inline_sample_palette(
             .max_height(INLINE_PALETTE_HEIGHT)
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                if reset_scroll {
+                    let (_, resp) = ui.allocate_exact_size(egui::vec2(1.0, 1.0), egui::Sense::hover());
+                    ui.scroll_to_rect(resp.rect, Some(egui::Align::TOP));
+                }
                 let mut any_clicked = false;
                 for i in 0..module.samples.len().min(1000) {
                     let sample = &module.samples[i];

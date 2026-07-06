@@ -141,6 +141,10 @@ pub struct AppConfig {
     pub instrument_list_width: Option<f32>,
     #[serde(default)]
     pub instrument_envelope_height: Option<f32>,
+    #[serde(default)]
+    pub instrument_envelope_type: Option<u8>,
+    #[serde(default)]
+    pub instrument_envelope_visible: Option<bool>,
 
     #[serde(default)]
     pub sample_list_width: Option<f32>,
@@ -268,6 +272,8 @@ impl Default for AppConfig {
             window_height: None,
             instrument_list_width: None,
             instrument_envelope_height: None,
+            instrument_envelope_type: None,
+            instrument_envelope_visible: None,
             sample_list_width: None,
             sample_waveform_height: None,
             order_list_width: None,

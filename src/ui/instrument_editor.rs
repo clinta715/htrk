@@ -69,13 +69,15 @@ pub fn draw_instrument_editor(
     let mut paint_sample_idx = ui.data(|d| d.get_temp::<u8>(paint_sample_id).unwrap_or(0));
     let browser_open_id = ui.make_persistent_id("sample_browser_open");
     let mut browser_open = ui.data(|d| d.get_temp::<bool>(browser_open_id).unwrap_or(false));
+    let prev_inst_id = ui.make_persistent_id("prev_selected_instrument");
+    let prev_inst = ui.data(|d| d.get_temp::<usize>(prev_inst_id).unwrap_or(0));
+    let reset_palette_scroll = *selected_instrument != prev_inst;
+    ui.data_mut(|d| d.insert_temp(prev_inst_id, *selected_instrument));
 
-    let env_type_id = ui.make_persistent_id("instrument_env_type");
-    let mut env_type = ui.data(|d| d.get_temp::<crate::edit::EnvelopeType>(env_type_id).unwrap_or(crate::edit::EnvelopeType::Volume));
     let generator_open_id = ui.make_persistent_id("env_generator_open");
     let mut generator_open = ui.data(|d| d.get_temp::<bool>(generator_open_id).unwrap_or(false));
-    let env_visible_id = ui.make_persistent_id("instrument_env_visible");
-    let mut env_visible = ui.data(|d| d.get_temp::<bool>(env_visible_id).unwrap_or(true));
+    let mut env_type = instrument_editor.envelope_type;
+    let mut env_visible = instrument_editor.envelope_visible;
 
     let _total_w = ui.available_width();
     let total_h = ui.available_height();
@@ -93,7 +95,7 @@ pub fn draw_instrument_editor(
                     .id_salt("instrument_list_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        let max_idx = module.instruments.len().max(100).min(100);
+                        let max_idx = module.instruments.len();
                         for i in 1..max_idx {
                             let is_selected = *selected_instrument == i;
                             let has_inst = module.instruments.get(i).is_some();
@@ -199,7 +201,6 @@ pub fn draw_instrument_editor(
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.selectable_label(env_visible, "Show Envelopes").clicked() {
                             env_visible = !env_visible;
-                            ui.data_mut(|d| d.insert_temp(env_visible_id, env_visible));
                         }
                     });
                 });
@@ -298,7 +299,7 @@ pub fn draw_instrument_editor(
                         
                         // Wrap the mapping section in its own vertical scroll if needed, 
                         // or just let the main central scroll handle it.
-                        if let Some(e) = draw_maps_row(ui, inst, theme, module, &mut paint_sample_idx, &mut browser_open, playback_state, config) {
+                        if let Some(e) = draw_maps_row(ui, inst, theme, module, &mut paint_sample_idx, &mut browser_open, playback_state, config, reset_palette_scroll) {
                             event = Some(e);
                         }
                     });
@@ -328,11 +329,12 @@ pub fn draw_instrument_editor(
         }
     }
 
+    instrument_editor.envelope_type = env_type;
+    instrument_editor.envelope_visible = env_visible;
     ui.data_mut(|d| {
         d.insert_temp(paint_sample_id, paint_sample_idx);
         d.insert_temp(browser_open_id, browser_open);
         d.insert_temp(generator_open_id, generator_open);
-        d.insert_temp(env_type_id, env_type);
     });
 
     event
@@ -401,11 +403,13 @@ fn draw_settings_grid(
                     ui.label("Type:");
                     let ft = inst.filter_type;
                     let mut ft_u8 = ft.to_u8();
-                    ui.horizontal(|ui| {
-                        ui.dev_selectable_value("inst.filter.type.lp", &mut ft_u8, 0u8, "LP");
-                        ui.dev_selectable_value("inst.filter.type.hp", &mut ft_u8, 1u8, "HP");
-                        ui.dev_selectable_value("inst.filter.type.bp", &mut ft_u8, 2u8, "BP");
-                        ui.dev_selectable_value("inst.filter.type.notch", &mut ft_u8, 3u8, "Notch");
+                    egui::Frame::group(ui.style()).inner_margin(egui::Margin::symmetric(3, 1)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.dev_selectable_value("inst.filter.type.lp", &mut ft_u8, 0u8, "LP");
+                            ui.dev_selectable_value("inst.filter.type.hp", &mut ft_u8, 1u8, "HP");
+                            ui.dev_selectable_value("inst.filter.type.bp", &mut ft_u8, 2u8, "BP");
+                            ui.dev_selectable_value("inst.filter.type.notch", &mut ft_u8, 3u8, "Notch");
+                        });
                     });
                     let new_ft = crate::sequencer::effect::FilterType::from_u8(ft_u8);
                     if new_ft != ft {
@@ -424,11 +428,13 @@ fn draw_settings_grid(
                     ui.label("Action:");
                     use crate::sequencer::instrument::{NewNoteAction, DuplicateCheckType, DuplicateCheckAction};
                     let mut nna = inst.nna;
-                    ui.horizontal(|ui| {
-                        ui.dev_selectable_value("inst.nna.cut", &mut nna, NewNoteAction::NoteCut, "Cut");
-                        ui.dev_selectable_value("inst.nna.cont", &mut nna, NewNoteAction::Continue, "Cont");
-                        ui.dev_selectable_value("inst.nna.off", &mut nna, NewNoteAction::NoteOff, "Off");
-                        ui.dev_selectable_value("inst.nna.fade", &mut nna, NewNoteAction::NoteFade, "Fade");
+                    egui::Frame::group(ui.style()).inner_margin(egui::Margin::symmetric(3, 1)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.dev_selectable_value("inst.nna.cut", &mut nna, NewNoteAction::NoteCut, "Cut");
+                            ui.dev_selectable_value("inst.nna.cont", &mut nna, NewNoteAction::Continue, "Cont");
+                            ui.dev_selectable_value("inst.nna.off", &mut nna, NewNoteAction::NoteOff, "Off");
+                            ui.dev_selectable_value("inst.nna.fade", &mut nna, NewNoteAction::NoteFade, "Fade");
+                        });
                     });
                     if nna != inst.nna {
                         ev = Some(InstrumentEditEvent::NnaChanged(nna));
@@ -437,11 +443,13 @@ fn draw_settings_grid(
 
                     ui.dev_label("inst.nna.dct_label", "DCT:");
                     let mut dct = inst.duplicate_check_type;
-                    ui.horizontal(|ui| {
-                        ui.dev_selectable_value("inst.nna.dct.off", &mut dct, DuplicateCheckType::Disabled, "Off");
-                        ui.dev_selectable_value("inst.nna.dct.note", &mut dct, DuplicateCheckType::Note, "Note");
-                        ui.dev_selectable_value("inst.nna.dct.samp", &mut dct, DuplicateCheckType::Sample, "Samp");
-                        ui.dev_selectable_value("inst.nna.dct.inst", &mut dct, DuplicateCheckType::Instrument, "Inst");
+                    egui::Frame::group(ui.style()).inner_margin(egui::Margin::symmetric(3, 1)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.dev_selectable_value("inst.nna.dct.off", &mut dct, DuplicateCheckType::Disabled, "Off");
+                            ui.dev_selectable_value("inst.nna.dct.note", &mut dct, DuplicateCheckType::Note, "Note");
+                            ui.dev_selectable_value("inst.nna.dct.samp", &mut dct, DuplicateCheckType::Sample, "Samp");
+                            ui.dev_selectable_value("inst.nna.dct.inst", &mut dct, DuplicateCheckType::Instrument, "Inst");
+                        });
                     });
                     if dct != inst.duplicate_check_type {
                         ev = Some(InstrumentEditEvent::DuplicateCheckTypeChanged(dct));
@@ -450,10 +458,12 @@ fn draw_settings_grid(
 
                     ui.dev_label("inst.nna.dna_label", "DNA:");
                     let mut dna = inst.duplicate_check_action;
-                    ui.horizontal(|ui| {
-                        ui.dev_selectable_value("inst.nna.dna.cut", &mut dna, DuplicateCheckAction::NoteCut, "Cut");
-                        ui.dev_selectable_value("inst.nna.dna.off", &mut dna, DuplicateCheckAction::NoteOff, "Off");
-                        ui.dev_selectable_value("inst.nna.dna.fade", &mut dna, DuplicateCheckAction::NoteFade, "Fade");
+                    egui::Frame::group(ui.style()).inner_margin(egui::Margin::symmetric(3, 1)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.dev_selectable_value("inst.nna.dna.cut", &mut dna, DuplicateCheckAction::NoteCut, "Cut");
+                            ui.dev_selectable_value("inst.nna.dna.off", &mut dna, DuplicateCheckAction::NoteOff, "Off");
+                            ui.dev_selectable_value("inst.nna.dna.fade", &mut dna, DuplicateCheckAction::NoteFade, "Fade");
+                        });
                     });
                     if dna != inst.duplicate_check_action {
                         ev = Some(InstrumentEditEvent::DuplicateCheckActionChanged(dna));
@@ -489,11 +499,13 @@ fn draw_settings_grid(
                 egui::Grid::new("vib_grid").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
                     ui.label("Type:");
                     let mut vib_type = inst.vib_type;
-                    ui.horizontal(|ui| {
-                        ui.dev_selectable_value("inst.vib.type.sine", &mut vib_type, 0u8, "Sine");
-                        ui.dev_selectable_value("inst.vib.type.ramp", &mut vib_type, 1u8, "Ramp");
-                        ui.dev_selectable_value("inst.vib.type.sq", &mut vib_type, 2u8, "Sq");
-                        ui.dev_selectable_value("inst.vib.type.rand", &mut vib_type, 3u8, "Rand");
+                    egui::Frame::group(ui.style()).inner_margin(egui::Margin::symmetric(3, 1)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.dev_selectable_value("inst.vib.type.sine", &mut vib_type, 0u8, "Sine");
+                            ui.dev_selectable_value("inst.vib.type.ramp", &mut vib_type, 1u8, "Ramp");
+                            ui.dev_selectable_value("inst.vib.type.sq", &mut vib_type, 2u8, "Sq");
+                            ui.dev_selectable_value("inst.vib.type.rand", &mut vib_type, 3u8, "Rand");
+                        });
                     });
                     if vib_type != inst.vib_type {
                         ev = Some(InstrumentEditEvent::VibTypeChanged(vib_type));
@@ -545,6 +557,7 @@ fn draw_maps_row(
     browser_open: &mut bool,
     playback_state: &AtomicPlaybackState,
     config: &mut crate::app_config::AppConfig,
+    reset_palette_scroll: bool,
 ) -> Option<InstrumentEditEvent> {
     let mut event = None;
 
@@ -572,7 +585,7 @@ fn draw_maps_row(
                 }
             });
             ui.add_space(4.0);
-            crate::ui::sample_palette::draw_inline_sample_palette(ui, module, paint_sample_idx, playback_state, theme);
+            crate::ui::sample_palette::draw_inline_sample_palette(ui, module, paint_sample_idx, playback_state, theme, reset_palette_scroll);
             if let Some(map_event) = crate::ui::sample_map::draw_sample_map(
                 ui, &inst.sample_map, *paint_sample_idx, module, config.map_cell_size, theme,
             ) {
