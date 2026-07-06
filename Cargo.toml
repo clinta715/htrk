@@ -1,12 +1,12 @@
 [package]
 name = "htrk"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2021"
 
 [features]
 audio_debug = []
 debug_log = []
-devtools = ["eguidev_runtime"]
+devtools = ["eguidev_runtime", "eframe/glow"]
 
 [dependencies]
 eguidev = "0.0.2"

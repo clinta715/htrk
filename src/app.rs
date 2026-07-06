@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::RwLock;
 
 use eframe::egui;
@@ -10,6 +10,7 @@ use crate::audio::commands::AudioCommand;
 use crate::audio::engine::create_engine_and_sender;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::audio::plugins::{PluginLibrary, PresetLibrary};
+#[cfg(feature = "audio_debug")]
 use crate::debug_log;
 use crate::mcp::library::SampleLibrary;
 
@@ -138,6 +139,7 @@ pub struct HtrkApp {
     pub(crate) instrument_editor: crate::ui::instrument_editor_panel::InstrumentEditor,
     pub(crate) mixer_state: crate::ui::mixer_view::MixerState,
     pub(crate) devmcp: Arc<DevMcp>,
+    pub(crate) pending_new_song: Arc<AtomicBool>,
     pub(crate) pending_view_switch: Arc<AtomicU8>,
     pub(crate) show_exit_confirm: bool,
     pub(crate) exit_confirmed: bool,
@@ -243,6 +245,7 @@ impl HtrkApp {
             mixer_state: crate::ui::mixer_view::MixerState::default(),
             devmcp,
             pending_view_switch: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            pending_new_song: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             show_exit_confirm: false,
             exit_confirmed: false,
             close_after_save: false,
@@ -269,6 +272,7 @@ impl HtrkApp {
         file_browser.restore_widths_from_config(&config);
         let playback_state = Arc::new(AtomicPlaybackState::default());
         let pending_view_switch = Arc::new(AtomicU8::new(0));
+        let pending_new_song = Arc::new(AtomicBool::new(false));
         let mcp_enabled = config.mcp_enabled;
         let mcp_port = config.mcp_port;
         let mcp_http_enabled = config.mcp_http_enabled;
@@ -341,6 +345,7 @@ impl HtrkApp {
             },
             mixer_state: crate::ui::mixer_view::MixerState::default(),
             pending_view_switch: pending_view_switch.clone(),
+            pending_new_song: pending_new_song.clone(),
             show_exit_confirm: false,
             exit_confirmed: false,
             close_after_save: false,
@@ -356,6 +361,7 @@ impl HtrkApp {
             alt_intercepted: false,
             devmcp: {
                 let ps = pending_view_switch.clone();
+                let pns = pending_new_song.clone();
                 let devmcp = DevMcp::new()
                     .verbose_logging(true)
                     .fixtures([
@@ -384,6 +390,9 @@ impl HtrkApp {
                             "automation_view" => 6,
                             _ => return Err(format!("unknown fixture: {name}")),
                         };
+                        if name == "empty_project" || name == "pattern_view" {
+                            pns.store(true, Ordering::Relaxed);
+                        }
                         ps.store(view, Ordering::Relaxed);
                         Ok(())
                     });
@@ -843,9 +852,7 @@ impl HtrkApp {
         // separate locals so the borrow checker doesn't see them as
         // overlapping &mut self borrows.
         let core_command_sender = &mut self.core.command_sender;
-        let core_selected_instrument = self.core.selected_instrument;
         let instrument_plugin_handles = &mut self.instrument_plugin_handles;
-        let instrument_editor_plugin_name = &mut self.instrument_editor.plugin_name;
 
         crate::ui::plugin_browser::sync_plugin_slots_from_module(
             slots,
@@ -861,12 +868,9 @@ impl HtrkApp {
                     descriptor, inst_idx, initial_state, sample_rate, core_command_sender,
                 )
             },
-            |inst_idx, handle, name| {
+            |inst_idx, handle, _name| {
                 if inst_idx < instrument_plugin_handles.len() {
                     instrument_plugin_handles[inst_idx] = Some(handle);
-                }
-                if core_selected_instrument == inst_idx {
-                    *instrument_editor_plugin_name = name;
                 }
             },
         );
@@ -1282,6 +1286,11 @@ impl HtrkApp {
         self.pattern_view.scroll_channel = self.pattern_view.scroll_channel.min(nch.saturating_sub(1));
 
         crate::actions::update_wav_export_progress(self);
+
+        // Fixture may request module creation (empty_project / pattern_view)
+        if self.pending_new_song.swap(false, Ordering::Relaxed) {
+            self.new_song();
+        }
 
         let pending = self.pending_view_switch.swap(0, Ordering::Relaxed);
         if pending > 0 {
@@ -1848,6 +1857,7 @@ impl HtrkApp {
                             }
                             BrowserPurpose::SaveProject => {
                                 self.core.save_file(&path_str);
+                                crate::actions::add_recent_file(self, &path_str);
                             }
                         }
                         self.browser_purpose = BrowserPurpose::General;
@@ -1991,33 +2001,13 @@ impl HtrkApp {
         // ui() pass) so editors stay alive in any tab.
 
         if let Some(module) = &self.core.module {
-            // Cache the plugin editor state for the currently selected
-            // instrument so the editor UI can read it without needing
-            // a borrow of HtrkApp.
+            // Live plugin-handle access: the editor reads editor state and
+            // parameters directly from the handle (no per-frame cache).
             let inst_idx = self.core.selected_instrument;
-            self.instrument_editor.plugin_has_editor = self
+            let plugin_handle: Option<&dyn crate::audio::plugins::HostedPluginHandle> = self
                 .instrument_plugin_handles
                 .get(inst_idx)
-                .and_then(|h| h.as_ref())
-                .map(|h| h.has_editor())
-                .unwrap_or(false);
-            self.instrument_editor.plugin_editor_is_open = self
-                .instrument_plugin_handles
-                .get(inst_idx)
-                .and_then(|h| h.as_ref())
-                .map(|h| h.is_editor_open())
-                .unwrap_or(false);
-            self.instrument_editor.plugin_editor_mode = self
-                .instrument_plugin_handles
-                .get(inst_idx)
-                .and_then(|h| h.as_ref())
-                .and_then(|h| h.editor_mode());
-            self.instrument_editor.plugin_editor_error = self
-                .instrument_plugin_handles
-                .get(inst_idx)
-                .and_then(|h| h.as_ref())
-                .and_then(|h| h.last_editor_error());
-
+                .and_then(|h| h.as_deref());
             if let Some(event) = self.instrument_editor.ui(
                 ui,
                 module,
@@ -2026,7 +2016,8 @@ impl HtrkApp {
                 &self.theme,
                 &self.core.playback_state,
                 &mut self.config,
-                eframe_hwnd,
+                plugin_handle,
+                &mut self.core.command_sender,
             ) {
                 match event {
                     crate::ui::instrument_editor::InstrumentEditEvent::SaveInstrument => {
@@ -2062,24 +2053,19 @@ impl HtrkApp {
                         // plugin later with their saved state preserved.
                         let instrument_idx = self.core.selected_instrument;
                         self.unload_instrument_plugin(instrument_idx);
-                        self.instrument_editor.plugin_name.clear();
                         self.core.sync_module_to_audio();
                     }
-                    crate::ui::instrument_editor::InstrumentEditEvent::OpenPluginEditor { floating } => {
+                    crate::ui::instrument_editor::InstrumentEditEvent::OpenPluginEditor => {
                         let inst_idx = self.core.selected_instrument;
-                        let mode = if floating {
-                            crate::audio::plugins::EditorMode::Floating
-                        } else {
-                            crate::audio::plugins::EditorMode::Embedded
-                        };
-                        let parent: Option<*mut std::ffi::c_void> = if !floating {
-                            eframe_hwnd.map(|h| h as *mut _)
-                        } else {
-                            None
-                        };
+                        // The host HWND is passed as the transient parent so
+                        // the plugin's floating window stays above the host.
+                        let parent: Option<*mut std::ffi::c_void> = eframe_hwnd.map(|h| h as *mut _);
                         if let Some(handle) = self.instrument_plugin_handles.get_mut(inst_idx) {
                             if let Some(ref mut h) = handle {
-                                if let Err(e) = h.open_editor(mode, parent) {
+                                if let Err(e) = h.open_editor(
+                                    crate::audio::plugins::EditorMode::Floating,
+                                    parent,
+                                ) {
                                     eprintln!("[plugin] instrument plugin open editor failed: {e}");
                                 }
                             }
@@ -2141,7 +2127,6 @@ impl HtrkApp {
                     ) {
                         Ok((handle, name)) => {
                             self.instrument_plugin_handles[send_index] = Some(handle);
-                            self.instrument_editor.plugin_name = name.clone();
                             self.instrument_editor.plugin_browser_open = false;
 
                             // Capture the freshly-loaded plugin's state so
@@ -2898,102 +2883,6 @@ impl HtrkApp {
         self.preview_held_notes = remaining;
     }
 
-    /// Frame-level pass for plugin editor X-close detection. Called
-    /// every frame from `ui()` regardless of which tab is active so
-    /// that editors don't get stuck "open" in our state when the user
-    /// X-closes them from another tab.
-    fn poll_plugin_editors(&mut self) {
-        // Send-bus plugins.
-        for si in 0..self.send_bus_handles.len() {
-            if let Some(ref mut handle) = self.send_bus_handles[si] {
-                if handle.is_editor_open()
-                    && !crate::ui::sendfx_editor::is_editor_hwnd_visible(handle.as_ref())
-                {
-                    handle.close_editor();
-                }
-            }
-        }
-        // Instrument plugins.
-        for handle_opt in self.instrument_plugin_handles.iter_mut() {
-            if let Some(ref mut handle) = handle_opt {
-                if handle.is_editor_open()
-                    && !crate::ui::sendfx_editor::is_editor_hwnd_visible(handle.as_ref())
-                {
-                    handle.close_editor();
-                }
-            }
-        }
-    }
-
-    /// Frame-level pass that renders a global "Embedded Plugin
-    /// Editors" dock at the bottom of the window. Every plugin whose
-    /// editor is currently open in Embedded mode (send-bus or
-    /// instrument) gets a panel here, visible in any tab. Called
-    /// every frame from `ui()`.
-    fn draw_embedded_plugin_dock(&mut self, ui: &mut egui::Ui) {
-        // Collect (label, &mut handle) pairs for every plugin with an
-        // open embedded editor. We can't borrow self in the inner
-        // loop, so we collect labels first.
-        let mut send_bus_labels: Vec<(usize, String)> = Vec::new();
-        for (si, opt) in self.send_bus_handles.iter().enumerate() {
-            if let Some(h) = opt.as_ref() {
-                if h.is_editor_open()
-                    && h.editor_mode() == Some(crate::audio::plugins::EditorMode::Embedded)
-                {
-                    let bus_letter = char::from(b'A' + si as u8);
-                    send_bus_labels.push((
-                        si,
-                        format!("Send Bus {} — {} (embedded)", bus_letter, h.descriptor().name),
-                    ));
-                }
-            }
-        }
-        let mut instrument_labels: Vec<(usize, String)> = Vec::new();
-        for (idx, opt) in self.instrument_plugin_handles.iter().enumerate() {
-            if let Some(h) = opt.as_ref() {
-                if h.is_editor_open()
-                    && h.editor_mode() == Some(crate::audio::plugins::EditorMode::Embedded)
-                {
-                    instrument_labels.push((
-                        idx,
-                        format!("Instrument {:02X} — {} (embedded)", idx, h.descriptor().name),
-                    ));
-                }
-            }
-        }
-
-        if send_bus_labels.is_empty() && instrument_labels.is_empty() {
-            return;
-        }
-
-        ui.add_space(4.0);
-        ui.separator();
-        ui.label(
-            egui::RichText::new("Embedded Plugin Editors")
-                .strong()
-                .size(13.0),
-        );
-
-        for (si, label) in send_bus_labels {
-            if let Some(ref mut handle) = self.send_bus_handles[si] {
-                crate::ui::sendfx_editor::draw_embedded_editor_panel(
-                    ui,
-                    &label,
-                    handle.as_mut(),
-                );
-            }
-        }
-        for (idx, label) in instrument_labels {
-            if let Some(ref mut handle) = self.instrument_plugin_handles[idx] {
-                crate::ui::sendfx_editor::draw_embedded_editor_panel(
-                    ui,
-                    &label,
-                    handle.as_mut(),
-                );
-            }
-        }
-    }
-
     // ─── Send-bus plugin state persistence (mirrors instrument side) ─────
 
     /// Iterate all loaded send-bus plugin handles, capture their state, and
@@ -3080,6 +2969,60 @@ impl HtrkApp {
     }
 }
 
+impl HtrkApp {
+    /// Shared exit-time shutdown. eframe's `App::on_exit` trait signature
+    /// differs by the `glow` feature (which `devtools` enables), so there
+    /// are two `on_exit` impls in the trait impl below; both delegate here
+    /// so the shutdown runs identically in every build configuration.
+    /// Stops the MCP server, stops the audio thread, drops the cpal stream,
+    /// persists the preset + sample library caches, and saves the app config.
+    fn shutdown_on_exit(&mut self) {
+        eprintln!("[EXIT] on_exit start");
+        if let Some(ref mut server) = self.mcp_server {
+            eprintln!("[EXIT] stopping MCP server");
+            server.stop();
+            eprintln!("[EXIT] MCP server stopped");
+        }
+        eprintln!("[EXIT] sending audio Stop command");
+        self.core.send_command(crate::audio::commands::AudioCommand::Stop);
+        // Cut the audio thread's command source so it can no longer try to
+        // read commands after we drop the stream.
+        self.core.command_sender = None;
+        // Give the audio thread a moment to observe the Stop command and
+        // finish any in-flight callback before we drop the cpal Stream.
+        // cpal's Stream::drop on Windows WASAPI blocks until the callback
+        // returns, and a callback that just dequeued our Stop command
+        // returns immediately. The sleep is paranoia for the case where
+        // the callback is stuck in a long mix (e.g. very large send FX).
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        eprintln!("[EXIT] dropping audio stream");
+        self.stream = None;
+        eprintln!("[EXIT] audio shutdown complete");
+
+        // Persist the preset cache atomically so the next launch can skip
+        // the (potentially ~30s) rescan.
+        let cache_path = crate::app_config::AppConfig::config_dir().join("preset_cache.json");
+        if let Ok(lib) = self.preset_library.read() {
+            if lib.preset_count() > 0 {
+                let _ = lib.save_to_file(&cache_path);
+            }
+        }
+        // Persist the sample library cache so the next launch has instant
+        // directory browsing. Skipped if the library is empty (no roots
+        // configured) to avoid creating empty cache files on first run.
+        let sample_cache_path = crate::app_config::AppConfig::config_dir()
+            .join("sample_library_cache.json");
+        if let Ok(lib) = self.sample_library.read() {
+            if !lib.roots.is_empty() && lib.cache_len() > 0 {
+                let _ = lib.save_to_file(&sample_cache_path);
+            }
+        }
+        eprintln!("[EXIT] saving config");
+        crate::actions::save_config(self);
+        eprintln!("[EXIT] on_exit done");
+    }
+}
+
 impl eframe::App for HtrkApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -3140,12 +3083,6 @@ impl eframe::App for HtrkApp {
         // Release any previewed instrument-plugin notes whose trigger
         // key is no longer held.
         self.release_unheld_preview_notes(&ctx);
-
-        // Sync the cached state of any open plugin editors (X-close
-        // detection) regardless of which tab the user is in, so
-        // editors don't get stuck "open" in our state when the user
-        // X-closes them while looking at a different tab.
-        self.poll_plugin_editors();
 
         let (playback_row, playback_order, playback_pattern, playback_tick, playback_speed) =
             self.draw_preamble(&ctx);
@@ -3215,65 +3152,16 @@ impl eframe::App for HtrkApp {
         self.config.window_height = Some(size.y);
 
         self.draw_dialogs(&ctx);
-
-        // Global "Embedded Plugin Editors" dock at the bottom of the
-        // window, visible in any tab. Resizable; user can shrink to
-        // 0 height when no editors are open (which is the default
-        // since we render nothing in that case).
-        egui::Panel::bottom("embedded_plugin_dock")
-            .resizable(true)
-            .default_size(320.0)
-            .min_size(0.0)
-            .max_size(900.0)
-            .show_inside(ui, |ui| {
-                self.draw_embedded_plugin_dock(ui);
-            });
     }
 
+    #[cfg(not(feature = "devtools"))]
     fn on_exit(&mut self) {
-        eprintln!("[EXIT] on_exit start");
-        if let Some(ref mut server) = self.mcp_server {
-            eprintln!("[EXIT] stopping MCP server");
-            server.stop();
-            eprintln!("[EXIT] MCP server stopped");
-        }
-        eprintln!("[EXIT] sending audio Stop command");
-        self.core.send_command(crate::audio::commands::AudioCommand::Stop);
-        // Cut the audio thread's command source so it can no longer try to
-        // read commands after we drop the stream.
-        self.core.command_sender = None;
-        // Give the audio thread a moment to observe the Stop command and
-        // finish any in-flight callback before we drop the cpal Stream.
-        // cpal's Stream::drop on Windows WASAPI blocks until the callback
-        // returns, and a callback that just dequeued our Stop command
-        // returns immediately. The sleep is paranoia for the case where
-        // the callback is stuck in a long mix (e.g. very large send FX).
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        eprintln!("[EXIT] dropping audio stream");
-        self.stream = None;
-        eprintln!("[EXIT] audio shutdown complete");
+        self.shutdown_on_exit();
+    }
 
-        // Persist the preset cache atomically so the next launch can skip
-        // the (potentially ~30s) rescan.
-        let cache_path = crate::app_config::AppConfig::config_dir().join("preset_cache.json");
-        if let Ok(lib) = self.preset_library.read() {
-            if lib.preset_count() > 0 {
-                let _ = lib.save_to_file(&cache_path);
-            }
-        }
-        // Persist the sample library cache so the next launch has instant
-        // directory browsing. Skipped if the library is empty (no roots
-        // configured) to avoid creating empty cache files on first run.
-        let sample_cache_path = crate::app_config::AppConfig::config_dir()
-            .join("sample_library_cache.json");
-        if let Ok(lib) = self.sample_library.read() {
-            if !lib.roots.is_empty() && lib.cache_len() > 0 {
-                let _ = lib.save_to_file(&sample_cache_path);
-            }
-        }
-        eprintln!("[EXIT] saving config");
-        crate::actions::save_config(self);
-        eprintln!("[EXIT] on_exit done");
+    #[cfg(feature = "devtools")]
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.shutdown_on_exit();
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {

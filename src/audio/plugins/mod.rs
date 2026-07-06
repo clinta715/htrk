@@ -56,10 +56,10 @@ pub enum PluginType {
 /// handle DPI.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditorMode {
+    /// The plugin creates its own top-level OS window (managed by the plugin).
+    /// The host passes its own HWND as `parent_hwnd` so the plugin window can
+    /// be registered as a transient (stays above the host).
     Floating,
-    /// The host HWND will be created (or reused) as a child of the eframe
-    /// main window. The plugin is parented to it via `set_parent`.
-    Embedded,
 }
 
 // ── Descriptor (discovered metadata) ──
@@ -237,14 +237,11 @@ pub trait HostedPluginHandle {
 
     /// Open the plugin's editor (if it has one). Called on the main thread.
     ///
-    /// - `mode = EditorMode::Floating`: the plugin creates its own top-level
-    ///   OS window. The host doesn't need to provide a parent.
-    /// - `mode = EditorMode::Embedded`: the plugin is parented to a host-
-    ///   provided HWND (`parent_hwnd`). The HWND should be a child of the
-    ///   main application window. Ignored on non-Windows platforms.
-    ///
-    /// The implementation may fall back from one mode to the other if the
-    /// plugin doesn't support the requested mode.
+    /// `mode` is always `EditorMode::Floating` — the plugin creates its own
+    /// top-level OS window. `parent_hwnd` is the host's main window HWND,
+    /// used to register the plugin window as a transient so it stays above
+    /// the host. (The previous embedded native-GUI mode was removed in favor
+    /// of the procedural parameter-slider view.) Ignored on non-Windows.
     #[cfg(windows)]
     fn open_editor(
         &mut self,
@@ -269,12 +266,6 @@ pub trait HostedPluginHandle {
     /// Returns the current editor mode (only meaningful if `is_editor_open`).
     /// Returns `None` if no editor is open.
     fn editor_mode(&self) -> Option<EditorMode>;
-
-    /// Returns the host-side container HWND for an embedded-mode editor
-    /// (Windows only). Used by the UI to detect when the user X-closes the
-    /// window and update the button label.
-    #[cfg(windows)]
-    fn editor_hwnd(&self) -> Option<*mut std::ffi::c_void>;
 
     /// Returns the last error message from `open_editor`, if any. Cleared
     /// on the next `open_editor` call.

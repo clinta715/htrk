@@ -18,11 +18,9 @@ use clack_extensions::gui::{
 };
 use clack_extensions::log::{HostLog, HostLogImpl, LogSeverity};
 use clack_extensions::params::{ParamInfoBuffer, PluginParams};
-#[cfg(windows)]
-use crate::audio::plugins::plugin_window::{self, PluginHostWindow};
 
 use super::{
-    EditorMode, HostedPluginHandle, HostedPluginProcessor, ParamChange, ParamInfo,
+    HostedPluginHandle, HostedPluginProcessor, ParamChange, ParamInfo,
     ParamRingBuffer, PluginDescriptor, PluginError, PluginFormat, PluginType, TransportInfo,
 };
 
@@ -130,11 +128,6 @@ pub struct ClapPluginHandle {
     editor_open: bool,
     /// Which editor mode is currently in use (None if not open).
     editor_mode: Option<crate::audio::plugins::EditorMode>,
-    /// On Windows, a top-level HWND used as the parent for an embedded
-    /// plugin GUI. Only populated when the plugin is in embedded mode
-    /// (or when floating was unavailable and we fell back to embedded).
-    #[cfg(windows)]
-    host_window: Option<PluginHostWindow>,
     /// Last error from `open_editor` (e.g. plugin doesn't support any GUI mode,
     /// or HWND creation failed). Surfaced to the UI so the user sees what went
     /// wrong instead of a silent failure.
@@ -158,6 +151,11 @@ pub struct ClapPluginHandle {
     /// state extension. Populated during `load()`. Used by `save_state()`
     /// and `load_state()`.
     state_ext: Option<clack_extensions::state::PluginState>,
+    /// Container window for embedded-mode plugin GUI (the only mode most
+    /// CLAP plugins support). Created in `open_editor()` when the plugin
+    /// does not support floating mode. Destroyed in `close_editor()`.
+    #[cfg(windows)]
+    host_container: Option<super::plugin_window::PluginHostWindow>,
 }
 
 impl ClapPluginHandle {
@@ -233,13 +231,13 @@ impl ClapPluginHandle {
             activated: false,
             editor_open: false,
             editor_mode: None,
-            #[cfg(windows)]
-            host_window: None,
             last_editor_error: None,
             cached_param_info: Vec::new(),
             param_ring: Arc::new(ParamRingBuffer::new(256)),
             param_index_to_id: Vec::new(),
             state_ext,
+            #[cfg(windows)]
+            host_container: None,
         })
     }
 
@@ -479,7 +477,7 @@ impl HostedPluginHandle for ClapPluginHandle {
     #[cfg(windows)]
     fn open_editor(
         &mut self,
-        mode: crate::audio::plugins::EditorMode,
+        _mode: crate::audio::plugins::EditorMode,
         parent_hwnd: Option<*mut std::ffi::c_void>,
     ) -> Result<(), String> {
         self.last_editor_error = None;
@@ -495,87 +493,122 @@ impl HostedPluginHandle for ClapPluginHandle {
             .get_extension::<PluginGuiExt>()
             .ok_or_else(|| "Plugin does not expose the GUI extension".to_string())?;
 
-        let floating_config = GuiConfiguration {
+        // ── Try floating mode first ──
+        let float_config = GuiConfiguration {
             api_type: GuiApiType::WIN32,
             is_floating: true,
         };
-        let embedded_config = GuiConfiguration {
+        if gui_ext.is_api_supported(&mut handle, float_config) {
+            let parent_hwnd_ptr: *mut std::ffi::c_void =
+                parent_hwnd.unwrap_or(std::ptr::null_mut());
+            gui_ext
+                .create(&mut handle, float_config)
+                .map_err(|e| format!("Plugin GUI create failed: {e:?}"))?;
+            if !parent_hwnd_ptr.is_null() {
+                let host_win = ClapWindow::from_win32_hwnd(parent_hwnd_ptr as *mut _);
+                unsafe {
+                    let _ = gui_ext.set_transient(&mut handle, host_win);
+                }
+            }
+            let title = std::ffi::CString::new(self.descriptor.name.as_str())
+                .unwrap_or_else(|_| std::ffi::CString::new("Plugin").unwrap());
+            gui_ext.suggest_title(&mut handle, &title);
+            let _ = gui_ext.show(&mut handle);
+
+            self.editor_open = true;
+            self.editor_mode = Some(crate::audio::plugins::EditorMode::Floating);
+            return Ok(());
+        }
+
+        // ── Fall back to embedded mode ──
+        let embed_config = GuiConfiguration {
             api_type: GuiApiType::WIN32,
             is_floating: false,
         };
-
-        // Honor the requested mode. If the plugin doesn't support it, fall back
-        // to the other mode. Only fail if neither works.
-        let try_modes: &[EditorMode] = match mode {
-            EditorMode::Floating => &[EditorMode::Floating, EditorMode::Embedded],
-            EditorMode::Embedded => &[EditorMode::Embedded, EditorMode::Floating],
-        };
-
-        let parent_hwnd_ptr: *mut std::ffi::c_void =
-            parent_hwnd.unwrap_or(std::ptr::null_mut());
-
-        for &try_mode in try_modes {
-            let config = match try_mode {
-                EditorMode::Floating => floating_config,
-                EditorMode::Embedded => embedded_config,
-            };
-            if !gui_ext.is_api_supported(&mut handle, config) {
-                continue;
-            }
-
-            // For embedded mode, we need a parent HWND. If the caller didn't
-            // provide one (e.g. floating was requested but plugin only supports
-            // embedded), fall back to creating a top-level host window.
-            //
-            // Inline the logic here to avoid borrow conflicts with self.instance
-            // (which is already mutably borrowed via `handle`).
-            let result: Result<(), String> = match try_mode {
-                EditorMode::Floating => {
-                    gui_ext
-                        .create(&mut handle, config)
-                        .map_err(|e| format!("Plugin GUI create failed: {e:?}"))?;
-                    let _ = gui_ext.show(&mut handle);
-                    Ok(())
-                }
-                EditorMode::Embedded => {
-                    let title = format!("{} - htrk", self.descriptor.name);
-                    let window_mode = if parent_hwnd_ptr.is_null() {
-                        plugin_window::WindowMode::TopLevel
-                    } else {
-                        plugin_window::WindowMode::ChildOf(parent_hwnd_ptr)
-                    };
-                    let host_window = match PluginHostWindow::create(
-                        &title, window_mode, 800, 600,
-                    ) {
-                        Some(w) => w,
-                        None => Err("Failed to create plugin host window".to_string())?,
-                    };
-                    let hwnd = host_window.hwnd();
-                    let clap_window = ClapWindow::from_win32_hwnd(hwnd as *mut _);
-                    if let Err(e) = gui_ext.create(&mut handle, config) {
-                        return Err(format!("Plugin GUI create failed: {e:?}"));
-                    }
-                    if let Some(size) = gui_ext.get_size(&mut handle) {
-                        let _ = gui_ext.set_size(&mut handle, size);
-                    }
-                    unsafe {
-                        let _ = gui_ext.set_parent(&mut handle, clap_window);
-                    }
-                    let _ = gui_ext.show(&mut handle);
-                    self.host_window = Some(host_window);
-                    Ok(())
-                }
-            };
-            if result.is_ok() {
-                self.editor_open = true;
-                self.editor_mode = Some(try_mode);
-                return Ok(());
-            }
-            // If this mode failed, try the next one.
+        if !gui_ext.is_api_supported(&mut handle, embed_config) {
+            let err = "Plugin does not support any GUI mode (floating or embedded)".to_string();
+            self.last_editor_error = Some(err.clone());
+            return Err(err);
         }
-        let err = "Plugin does not support Win32 GUI (floating or embedded)".to_string();
-        self.last_editor_error = Some(err.clone());
-        Err(err)
+        tracing::info!(target: "htrk::audio::plugins::clap_plugin", "embedded mode supported, calling gui_ext.create(embedded)");
+        // Some plugins (e.g. JC303) have issues with the create → set_parent
+        // → show embedded flow through clack's wrapper. If set_parent fails,
+        // we skip it and just do create + show, which still opens the plugin's
+        // native GUI in a container window.
+        let gui_result = gui_ext.create(&mut handle, embed_config);
+        match gui_result {
+            Ok(()) => {
+                tracing::info!(target: "htrk::audio::plugins::clap_plugin", "create succeeded, creating container");
+                let container = super::plugin_window::PluginHostWindow::create(
+                    &self.descriptor.name,
+                    super::plugin_window::WindowMode::TopLevel,
+                    800, 600,
+                );
+                if let Some(ref win) = container {
+                    let clap_win = ClapWindow::from_win32_hwnd(win.hwnd() as *mut _);
+                    tracing::info!(target: "htrk::audio::plugins::clap_plugin", "calling set_parent");
+                    let sp_result = unsafe { gui_ext.set_parent(&mut handle, clap_win) };
+                    if let Err(e) = sp_result {
+                        tracing::warn!(target: "htrk::audio::plugins::clap_plugin", "set_parent failed (showing without parent): {e:?}");
+                    }
+                }
+                tracing::info!(target: "htrk::audio::plugins::clap_plugin", "calling show");
+                let _ = gui_ext.show(&mut handle);
+
+                // Diagnostic: log window hierarchy
+                #[cfg(windows)]
+                if let Some(ref win) = container {
+                    let container_hwnd = win.hwnd();
+                    // SAFETY: We own the container HWND; it is valid.
+                    let child_hwnd = unsafe {
+                        use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindow, GW_CHILD};
+                        GetWindow(container_hwnd, GW_CHILD)
+                    };
+                    // SAFETY: We own the container HWND; all Win32 calls are on our windows.
+                    unsafe {
+                        use windows_sys::Win32::Foundation::{HWND, RECT};
+                        use windows_sys::Win32::UI::WindowsAndMessaging::{
+                            GetAncestor, GA_PARENT, GetParent, GetWindowRect, GetWindowTextW,
+                            IsWindowVisible, IsChild,
+                        };
+                        let mut log_one = |h: HWND, label: &str| {
+                            let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                            GetWindowRect(h, &mut rect);
+                            let parent = GetParent(h);
+                            let ancestor = GetAncestor(h, GA_PARENT);
+                            let visible = IsWindowVisible(h) != 0;
+                            let mut buf = [0u16; 256];
+                            let len = GetWindowTextW(h, buf.as_mut_ptr(), buf.len() as i32);
+                            let title = if len > 0 { String::from_utf16_lossy(&buf[..len as usize]) } else { String::new() };
+                            tracing::info!(
+                                target: "htrk::audio::plugins::clap_plugin",
+                                "{label}: hwnd={h:?} parent={parent:?} ancestor={ancestor:?} visible={visible} rect=({},{},{},{}) title=\"{title}\"",
+                                rect.left, rect.top, rect.right, rect.bottom
+                            );
+                        };
+                        log_one(container_hwnd, "container");
+                        if !child_hwnd.is_null() {
+                            log_one(child_hwnd, "plugin_child");
+                            let is_ch = IsChild(container_hwnd, child_hwnd);
+                            tracing::info!(target: "htrk::audio::plugins::clap_plugin", "  is_child_of_container={is_ch}");
+                        } else {
+                            tracing::info!(target: "htrk::audio::plugins::clap_plugin", "  plugin_child=(none)");
+                        }
+                    }
+                }
+
+                self.host_container = container;
+                self.editor_open = true;
+                self.editor_mode = Some(crate::audio::plugins::EditorMode::Floating);
+                Ok(())
+            }
+            Err(e) => {
+                let err = format!("Plugin GUI create (embedded) failed: {e:?}");
+                tracing::error!(target: "htrk::audio::plugins::clap_plugin", "{err}");
+                self.last_editor_error = Some(err.clone());
+                Err(err)
+            }
+        }
     }
 
     #[cfg(not(windows))]
@@ -624,10 +657,9 @@ impl HostedPluginHandle for ClapPluginHandle {
                 gui_ext.destroy(&mut handle);
             }
         }
-        // Drop the host window (this destroys the HWND).
         #[cfg(windows)]
         {
-            self.host_window = None;
+            self.host_container = None; // Drop destroys the container window
         }
         self.editor_open = false;
         self.editor_mode = None;
@@ -646,27 +678,17 @@ impl HostedPluginHandle for ClapPluginHandle {
         let raw_ptr: *const PluginInstance<HtrkHost> = instance;
         let mut_instance = unsafe { (raw_ptr as *mut PluginInstance<HtrkHost>).as_mut() }
             .expect("instance pointer is null");
-        let mut handle = mut_instance.plugin_handle();
-        let Some(gui_ext) = handle.get_extension::<PluginGuiExt>() else {
-            return false;
-        };
-        // Some plugins only support one mode. Probe both floating and embedded.
-        gui_ext.is_api_supported(
-            &mut handle,
-            GuiConfiguration { api_type: GuiApiType::WIN32, is_floating: true },
-        ) || gui_ext.is_api_supported(
-            &mut handle,
-            GuiConfiguration { api_type: GuiApiType::WIN32, is_floating: false },
-        )
+        let handle = mut_instance.plugin_handle();
+        // Just check whether the plugin exposes the GUI extension at all.
+        // We do NOT probe is_api_supported here — some plugins (JC303)
+        // don't handle repeated is_api_supported calls well, which can
+        // interfere with the subsequent create() in open_editor. Actual
+        // mode selection (floating vs embedded) happens in open_editor.
+        handle.get_extension::<PluginGuiExt>().is_some()
     }
 
     fn editor_mode(&self) -> Option<crate::audio::plugins::EditorMode> {
         self.editor_mode
-    }
-
-    #[cfg(windows)]
-    fn editor_hwnd(&self) -> Option<*mut std::ffi::c_void> {
-        self.host_window.as_ref().map(|w| w.hwnd())
     }
 
     fn last_editor_error(&self) -> Option<String> {
@@ -733,18 +755,8 @@ impl HostedPluginHandle for ClapPluginHandle {
 }
 
 impl Drop for ClapPluginHandle {
-    /// Close the editor before the host window and instance are dropped.
-    ///
-    /// The default field-drop order is: `host_window` first, then `instance`.
-    /// If the editor is still open when the handle drops, the plugin's
-    /// child HWND is reparented into `host_window`. Destroying the
-    /// host window first orphans the plugin's HWND, and the subsequent
-    /// `PluginInstance::drop()` calls the plugin's `destroy` callback
-    /// — which can crash the plugin (or the OS) when it tries to
-    /// clean up an HWND whose parent has already been destroyed.
-    ///
-    /// This was the root cause of the crash-on-exit when a CLAP
-    /// editor was open at app shutdown.
+    /// Close the editor before the instance is dropped, so the plugin's GUI
+    /// resources are released cleanly via its `destroy` callback.
     fn drop(&mut self) {
         if self.editor_open {
             self.close_editor();
@@ -892,76 +904,27 @@ impl HostedPluginProcessor for ClapPluginProcessor {
         frame_count: usize,
         _transport: &TransportInfo,
     ) {
-        let n = frame_count.min(self.max_block);
-
-        // Copy input into our pre-allocated buffers
-        for i in 0..n {
-            self.in_l[i] = if i < input_l.len() { input_l[i] } else { 0.0 };
-            self.in_r[i] = if i < input_r.len() { input_r[i] } else { 0.0 };
-            self.out_l[i] = 0.0;
-            self.out_r[i] = 0.0;
-        }
-        // Zero the rest
-        for i in n..self.max_block {
-            self.in_l[i] = 0.0;
-            self.in_r[i] = 0.0;
-            self.out_l[i] = 0.0;
-            self.out_r[i] = 0.0;
-        }
-
-        // Build audio port buffer array. We need &mut [f32] for the buffer references.
-        // We split the buffers into individual channel slices.
         use clack_host::process::audio_buffers::{
             AudioPortBuffer, AudioPortBufferType, InputChannel,
         };
-
-        // Split the in/out buffers into per-channel slices.
-        // We use indices instead of slices to avoid borrow issues with `with_input_buffers`.
-        let in_l_ptr = self.in_l.as_mut_ptr();
-        let in_r_ptr = self.in_r.as_mut_ptr();
-        let out_l_ptr = self.out_l.as_mut_ptr();
-        let out_r_ptr = self.out_r.as_mut_ptr();
-        let block_len = self.max_block;
-
-        // SAFETY: The pointers are valid for `block_len` f32 elements.
-        let in_l_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(in_l_ptr, block_len) };
-        let in_r_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(in_r_ptr, block_len) };
-        let out_l_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(out_l_ptr, block_len) };
-        let out_r_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(out_r_ptr, block_len) };
-
-        let input_audio = self.input_ports.with_input_buffers([AudioPortBuffer {
-            latency: 0,
-            channels: AudioPortBufferType::f32_input_only([
-                InputChannel::variable(in_l_slice),
-                InputChannel::variable(in_r_slice),
-            ]),
-        }]);
-
-        let mut output_audio = self.output_ports.with_output_buffers([AudioPortBuffer {
-            latency: 0,
-            channels: AudioPortBufferType::f32_output_only([
-                out_l_slice,
-                out_r_slice,
-            ]),
-        }]);
-
-        // Drain parameter ring and note queue, then build a single event
-        // buffer containing both param-value and note-on/off events.
-        self.param_scratch.clear();
-        let drained = self.param_ring.drain_into(&mut self.param_scratch, 64);
-
         use clack_common::events::event_types::{
             NoteOffEvent, NoteOnEvent, ParamValueEvent,
         };
         use clack_common::events::{Match, Pckn};
         use clack_common::utils::{ClapId, Cookie};
 
-        let total_events = drained + self.note_events.len();
-        let mut ev_buffer = clack_host::events::io::EventBuffer::with_capacity(total_events.max(1));
+        // Drain parameter ring and note queue ONCE per callback. All events
+        // are delivered in the first sub-block at time 0 (matching the
+        // previous single-block behavior); subsequent sub-blocks get an empty
+        // event buffer so notes/params are not duplicated across chunks.
+        self.param_scratch.clear();
+        let drained = self.param_ring.drain_into(&mut self.param_scratch, 64);
         let cookie = Cookie::default();
-
-        // Push param changes
         let pckn = Pckn::new(0u16, 0u16, 0u16, Match::All);
+
+        let mut first_events = clack_host::events::io::EventBuffer::with_capacity(
+            (drained + self.note_events.len()).max(1),
+        );
         for change in self.param_scratch.iter() {
             let ev = ParamValueEvent::new(
                 0,
@@ -970,10 +933,8 @@ impl HostedPluginProcessor for ClapPluginProcessor {
                 change.value,
                 cookie,
             );
-            let _ = ev_buffer.push(&ev);
+            let _ = first_events.push(&ev);
         }
-
-        // Push note events
         while let Some((note_on, midi_ch, key, velocity)) = self.note_events.pop_front() {
             if note_on {
                 let note_id = self.next_note_id;
@@ -985,31 +946,101 @@ impl HostedPluginProcessor for ClapPluginProcessor {
                     note_id,
                 );
                 let ev = NoteOnEvent::new(0, note_pckn, (velocity as f64) / 127.0);
-                let _ = ev_buffer.push(&ev);
+                let _ = first_events.push(&ev);
             } else {
                 let note_pckn = Pckn::new(0u16, midi_ch as u16, key as u16, Match::All);
                 let ev = NoteOffEvent::new(0, note_pckn, 0.0);
-                let _ = ev_buffer.push(&ev);
+                let _ = first_events.push(&ev);
             }
         }
+        let empty_events = clack_host::events::io::EventBuffer::with_capacity(0);
 
-        let input_events = clack_host::events::io::InputEvents::from_buffer(&ev_buffer);
-        let mut output_events = clack_host::events::io::OutputEvents::from_buffer(&mut self.output_event_buffer);
-        if let Some(processor) = self.processor.as_mut() {
-            let _ = processor.process(
-                &input_audio,
-                &mut output_audio,
-                &input_events,
-                &mut output_events,
-                None,
-                None,
+        // Process in sub-blocks of `max_block`. The audio callback can hand
+        // us more frames than the plugin was activated for (e.g. a WASAPI
+        // shared-mode 1024-frame buffer vs. a 512-sample max_block), so we
+        // chunk the callback into max_block-sized pieces and invoke the
+        // plugin once per chunk. Without this, frames past `max_block` would
+        // be left as silence, producing a chopped/intermittent output.
+        let block_len = self.max_block;
+        let mut offset = 0usize;
+        let mut first = true;
+        while offset < frame_count {
+            let chunk = (frame_count - offset).min(block_len);
+
+            // Copy this chunk's input into the pre-allocated buffers and
+            // zero the tail (the plugin always sees a full block_len).
+            for i in 0..chunk {
+                self.in_l[i] = input_l[offset + i];
+                self.in_r[i] = input_r[offset + i];
+                self.out_l[i] = 0.0;
+                self.out_r[i] = 0.0;
+            }
+            for i in chunk..block_len {
+                self.in_l[i] = 0.0;
+                self.in_r[i] = 0.0;
+                self.out_l[i] = 0.0;
+                self.out_r[i] = 0.0;
+            }
+
+            // Rebuild clack audio port buffers around the internal buffers.
+            // Raw pointers are used (as in the original) so the &mut [f32]
+            // slices don't form a tracked borrow of `self`, which would
+            // conflict with `self.processor.as_mut()` below.
+            let in_l_ptr = self.in_l.as_mut_ptr();
+            let in_r_ptr = self.in_r.as_mut_ptr();
+            let out_l_ptr = self.out_l.as_mut_ptr();
+            let out_r_ptr = self.out_r.as_mut_ptr();
+            // SAFETY: the four buffers each hold exactly `block_len` f32s
+            // (allocated in `new()` and never resized).
+            let in_l_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(in_l_ptr, block_len) };
+            let in_r_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(in_r_ptr, block_len) };
+            let out_l_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(out_l_ptr, block_len) };
+            let out_r_slice: &mut [f32] = unsafe { std::slice::from_raw_parts_mut(out_r_ptr, block_len) };
+
+            let input_audio = self.input_ports.with_input_buffers([AudioPortBuffer {
+                latency: 0,
+                channels: AudioPortBufferType::f32_input_only([
+                    InputChannel::variable(in_l_slice),
+                    InputChannel::variable(in_r_slice),
+                ]),
+            }]);
+
+            let mut output_audio = self.output_ports.with_output_buffers([AudioPortBuffer {
+                latency: 0,
+                channels: AudioPortBufferType::f32_output_only([
+                    out_l_slice,
+                    out_r_slice,
+                ]),
+            }]);
+
+            let input_events = if first {
+                clack_host::events::io::InputEvents::from_buffer(&first_events)
+            } else {
+                clack_host::events::io::InputEvents::from_buffer(&empty_events)
+            };
+            let mut output_events = clack_host::events::io::OutputEvents::from_buffer(
+                &mut self.output_event_buffer,
             );
-        }
 
-        // Copy plugin output back to caller's buffers
-        for i in 0..frame_count.min(n) {
-            output_l[i] = self.out_l[i];
-            output_r[i] = self.out_r[i];
+            if let Some(processor) = self.processor.as_mut() {
+                let _ = processor.process(
+                    &input_audio,
+                    &mut output_audio,
+                    &input_events,
+                    &mut output_events,
+                    None,
+                    None,
+                );
+            }
+
+            // Copy this chunk's plugin output back to the caller's buffers.
+            for i in 0..chunk {
+                output_l[offset + i] = self.out_l[i];
+                output_r[offset + i] = self.out_r[i];
+            }
+
+            offset += chunk;
+            first = false;
         }
     }
 
@@ -1259,6 +1290,93 @@ mod tests {
         eprintln!("[ok] Deactivated cleanly");
     }
 
+    /// Regression: `process()` must fully cover a callback larger than the
+    /// `max_block` it was activated with. Previously it clamped to
+    /// `frame_count.min(max_block)` and left the tail untouched, so a 1024-
+    /// frame WASAPI buffer processed by a 512-frame plugin would chop.
+    ///
+    /// This is a deterministic test that does NOT require a real CLAP plugin:
+    /// we build a `ClapPluginProcessor` with `processor: None`, seed the
+    /// caller's output buffer with a non-zero marker, and verify that every
+    /// output frame is overwritten — proving the sub-block loop covers the
+    /// full `frame_count`, not just the first `max_block`. (With `processor:
+    /// None` the plugin call is skipped, so each written frame is the zeroed
+    /// `self.out_l`; the buggy clamp would have left frames
+    /// `[max_block..frame_count]` at the 0.5 marker.)
+    #[test]
+    fn test_process_covers_callback_larger_than_max_block() {
+        let descriptor = PluginDescriptor {
+            format: PluginFormat::Clap,
+            path: std::path::PathBuf::new(),
+            plugin_id: String::new(),
+            name: "NoProcessor".into(),
+            vendor: String::new(),
+            version: String::new(),
+            description: String::new(),
+            plugin_type: PluginType::Effect,
+            audio_inputs: 2,
+            audio_outputs: 2,
+            has_editor: false,
+            supports_state: false,
+        };
+
+        let max_block = 256usize;
+        let mut proc = ClapPluginProcessor {
+            processor: None,
+            descriptor,
+            sample_rate: 48000.0,
+            max_block,
+            in_l: vec![0.0; max_block],
+            in_r: vec![0.0; max_block],
+            out_l: vec![0.0; max_block],
+            out_r: vec![0.0; max_block],
+            input_ports: AudioPorts::with_capacity(2, 1),
+            output_ports: AudioPorts::with_capacity(2, 1),
+            _input_event_buffer: clack_host::events::io::EventBuffer::with_capacity(0),
+            output_event_buffer: clack_host::events::io::EventBuffer::with_capacity(0),
+            param_ring: Arc::new(ParamRingBuffer::new(64)),
+            param_scratch: Vec::new(),
+            note_events: std::collections::VecDeque::new(),
+            next_note_id: 0,
+        };
+
+        // 1024-frame callback = 4x max_block. Seed output with a non-zero
+        // marker so any frame process() fails to write stays detectable.
+        let total = 1024usize;
+        let input_l = vec![0.0f32; total];
+        let input_r = vec![0.0f32; total];
+        let mut out_l = vec![0.5f32; total];
+        let mut out_r = vec![0.5f32; total];
+        let transport = TransportInfo {
+            bpm: 120.0,
+            sample_rate: 48000.0,
+            sample_position: 0,
+            is_playing: true,
+        };
+
+        proc.process(&input_l, &input_r, &mut out_l, &mut out_r, total, &transport);
+
+        // Every frame must have been overwritten with the (zeroed) internal
+        // output buffer. With the buggy clamp, frames [max_block..total]
+        // would still hold the 0.5 marker.
+        let untouched = out_l
+            .iter()
+            .chain(out_r.iter())
+            .filter(|&&v| v != 0.0)
+            .count();
+        assert_eq!(
+            untouched, 0,
+            "process() left {untouched} output frames unwritten (marker 0.5 survived); \
+             it must cover the full callback even when frame_count > max_block"
+        );
+
+        // Spot-check frames in each sub-block past the first one.
+        for i in [256usize, 512, 768, 1023] {
+            assert_eq!(out_l[i], 0.0, "frame {i} (past max_block) was not written to out_l");
+            assert_eq!(out_r[i], 0.0, "frame {i} (past max_block) was not written to out_r");
+        }
+    }
+
     /// Integration test: process audio through TAL Reverb 4 with a longer
     /// signal to verify the reverb tail extends across multiple blocks.
     #[test]
@@ -1431,76 +1549,6 @@ mod tests {
             }
             Err(e) => {
                 eprintln!("[skip] Plugin doesn't support any GUI mode: {e}");
-            }
-        }
-    }
-
-    /// Integration test: open editor in embedded mode (no parent HWND).
-    /// TAL Reverb 4 only supports embedded; this is the typical path.
-    #[test]
-    fn test_open_editor_embedded_with_real_plugin() {
-        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
-        if !path.exists() {
-            eprintln!("[skip] TAL-Reverb-4.clap not found");
-            return;
-        }
-        let mut handle = ClapPluginHandle::load(path).expect("load failed");
-        let _processor = handle.activate(48000.0, 256).expect("activate failed");
-
-        // No parent HWND — should fall back to a top-level host window
-        let result = handle.open_editor(
-            crate::audio::plugins::EditorMode::Embedded,
-            None,
-        );
-        match result {
-            Ok(()) => {
-                assert!(handle.is_editor_open());
-                assert_eq!(handle.editor_mode(), Some(crate::audio::plugins::EditorMode::Embedded));
-                eprintln!("[ok] Opened embedded editor for {}", handle.descriptor().name);
-                // The host HWND should be set
-                #[cfg(windows)]
-                {
-                    assert!(handle.editor_hwnd().is_some(), "Embedded editor should expose an HWND");
-                }
-                handle.close_editor();
-                assert!(!handle.is_editor_open());
-                eprintln!("[ok] Closed embedded editor");
-            }
-            Err(e) => {
-                eprintln!("[warn] Embedded open failed (may be headless): {e}");
-            }
-        }
-    }
-
-    /// Integration test: open editor with explicit non-null parent HWND.
-    /// The plugin should be parented to that HWND via set_parent.
-    #[test]
-    fn test_open_editor_embedded_with_parent_hwnd() {
-        let _guard = WIN32_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
-        if !path.exists() {
-            eprintln!("[skip] TAL-Reverb-4.clap not found");
-            return;
-        }
-        let mut handle = ClapPluginHandle::load(path).expect("load failed");
-        let _processor = handle.activate(48000.0, 256).expect("activate failed");
-
-        // Pass a sentinel HWND. Plugin will accept it; rendering will look
-        // wrong but the test verifies the call doesn't crash.
-        let sentinel_hwnd = 0x1234ABCDusize as *mut std::ffi::c_void;
-        let result = handle.open_editor(
-            crate::audio::plugins::EditorMode::Embedded,
-            Some(sentinel_hwnd),
-        );
-        match result {
-            Ok(()) => {
-                assert!(handle.is_editor_open());
-                eprintln!("[ok] Opened embedded editor with parent HWND");
-                handle.close_editor();
-            }
-            Err(e) => {
-                eprintln!("[warn] Embedded open with parent failed: {e}");
             }
         }
     }
@@ -1716,14 +1764,11 @@ mod tests {
         let mut handle = ClapPluginHandle::load(path).expect("load failed");
         let _processor = handle.activate(48000.0, 256).expect("activate failed");
 
-        // Open the editor (any mode that the plugin supports). If the
-        // plugin is headless, the open_editor call will Err and we skip
-        // the test — the Drop is a no-op when the editor isn't open.
+        // Open the editor (floating). If the plugin is headless, the
+        // open_editor call will Err and we skip the test — the Drop is a
+        // no-op when the editor isn't open.
         let opened = handle.open_editor(
             crate::audio::plugins::EditorMode::Floating,
-            None,
-        ).is_ok() || handle.open_editor(
-            crate::audio::plugins::EditorMode::Embedded,
             None,
         ).is_ok();
 

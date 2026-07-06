@@ -8,7 +8,7 @@ use crate::audio::commands::AudioCommand;
 use crate::audio::plugins::clap_plugin::ClapPluginHandle;
 use crate::audio::plugins::{HostedPluginHandle, PluginDescriptor};
 use crate::audio::CommandSender;
-use crate::ui::style::FONT_BODY;
+use crate::ui::style::{FONT_BODY, FONT_CAPTION};
 use crate::ui::theme::TrackerTheme;
 
 /// Result of a plugin selection by the user. The dialog is closed after
@@ -38,6 +38,39 @@ impl PluginBrowserAction {
     }
 }
 
+/// Short type label shown in the browser (and folded into the filter
+/// haystack). Kept as the single source of truth so the display and the
+/// search never drift apart.
+fn plugin_type_label(d: &PluginDescriptor) -> &'static str {
+    match d.plugin_type {
+        crate::audio::plugins::PluginType::Instrument => "Inst",
+        crate::audio::plugins::PluginType::Effect => "FX",
+        crate::audio::plugins::PluginType::Both => "Inst+FX",
+        crate::audio::plugins::PluginType::Analyzer => "Analyzer",
+    }
+}
+
+/// Does `descriptor` match the quicksearch filter? An empty filter matches
+/// every plugin. Otherwise the filter is matched case-insensitively against
+/// the plugin's name, vendor, plugin_id, and type label (e.g. "fx",
+/// "inst+fx"). The filter is lowercased internally so callers can pass the
+/// raw text field contents.
+fn plugin_matches_filter(descriptor: &PluginDescriptor, filter: &str) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    let filter_lower = filter.to_lowercase();
+    let haystack = format!(
+        "{} {} {} {}",
+        descriptor.name,
+        descriptor.vendor,
+        descriptor.plugin_id,
+        plugin_type_label(descriptor),
+    )
+    .to_lowercase();
+    haystack.contains(&filter_lower)
+}
+
 /// Draw the plugin browser dialog. Returns `(result, action)` — `result` is
 /// the selection state (cancelled or selected), and `action` carries any
 /// side-channel requests (e.g. rescan) for the caller to process.
@@ -46,7 +79,7 @@ pub fn draw_plugin_browser(
     open: &mut bool,
     send_index: usize,
     bus_label: &str,
-    _theme: &TrackerTheme,
+    theme: &TrackerTheme,
     discovered: &[PluginDescriptor],
     status: &PluginBrowserStatus,
 ) -> (PluginSelectResult, PluginBrowserAction) {
@@ -91,6 +124,29 @@ pub fn draw_plugin_browser(
 
             ui.separator();
 
+            // Quicksearch filter. Persists per-window via egui temp storage:
+            // each browser instance (send bus A/B/C/D, each instrument) gets
+            // its own filter because `make_persistent_id` is scoped to the
+            // window Id. Matches name, vendor, plugin_id, and type label,
+            // case-insensitively.
+            let filter_id = ui.make_persistent_id("plugin_browser_filter");
+            let mut filter = ui.data(|d| d.get_temp::<String>(filter_id).unwrap_or_default());
+
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Filter:").size(FONT_BODY).color(theme.fg_dim));
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut filter)
+                        .hint_text("name, vendor, type...")
+                        .desired_width(ui.available_width()),
+                );
+                if resp.changed() {
+                    ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
+                }
+            });
+            ui.add_space(2.0);
+
+            let mut shown = 0usize;
+
             if discovered.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(40.0);
@@ -104,17 +160,17 @@ pub fn draw_plugin_browser(
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
                         for (i, d) in discovered.iter().enumerate() {
+                            let plugin_type = plugin_type_label(d);
+                            if !plugin_matches_filter(d, &filter) {
+                                continue;
+                            }
+                            shown += 1;
+
                             let is_busy = matches!(status, PluginBrowserStatus::Loading(_));
                             let label = if d.vendor.is_empty() || d.vendor == "Unknown" {
                                 format!("{}. {} ({})", i + 1, d.name, d.plugin_id)
                             } else {
                                 format!("{}. {} — {} ({})", i + 1, d.name, d.vendor, d.plugin_id)
-                            };
-                            let plugin_type = match d.plugin_type {
-                                crate::audio::plugins::PluginType::Instrument => "Inst",
-                                crate::audio::plugins::PluginType::Effect => "FX",
-                                crate::audio::plugins::PluginType::Both => "Inst+FX",
-                                crate::audio::plugins::PluginType::Analyzer => "Analyzer",
                             };
                             let resp = ui.add_enabled(!is_busy, egui::Button::new(
                                 egui::RichText::new(&label).size(FONT_BODY)
@@ -131,10 +187,24 @@ pub fn draw_plugin_browser(
                             )).size(FONT_BODY - 1.0).weak());
                         }
                     });
+
+                if shown == 0 && !filter.is_empty() {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(12.0);
+                        ui.label(egui::RichText::new(format!(
+                            "No plugins match \"{}\".", filter
+                        )).size(FONT_BODY).weak());
+                    });
+                }
             }
 
             ui.separator();
             ui.horizontal(|ui| {
+                if !discovered.is_empty() {
+                    ui.label(egui::RichText::new(format!(
+                        "{} of {} shown", shown, discovered.len()
+                    )).size(FONT_CAPTION).color(theme.fg_dim));
+                }
                 if ui.button("Rescan").clicked() {
                     // Request a rescan from the caller. The caller will
                     // call `HtrkApp::rescan_plugins()` and pass the new
@@ -370,5 +440,73 @@ mod tests {
     fn test_plugin_browser_status_default() {
         let status = PluginBrowserStatus::default();
         assert!(matches!(status, PluginBrowserStatus::Idle));
+    }
+
+    use crate::audio::plugins::{PluginDescriptor, PluginFormat, PluginType};
+    use std::path::PathBuf;
+
+    fn desc(name: &str, vendor: &str, id: &str, ty: PluginType) -> PluginDescriptor {
+        PluginDescriptor {
+            format: PluginFormat::Clap,
+            path: PathBuf::new(),
+            plugin_id: id.into(),
+            name: name.into(),
+            vendor: vendor.into(),
+            version: String::new(),
+            description: String::new(),
+            plugin_type: ty,
+            audio_inputs: 2,
+            audio_outputs: 2,
+            has_editor: false,
+            supports_state: false,
+        }
+    }
+
+    #[test]
+    fn filter_empty_matches_all() {
+        let d = desc("Vital", "Matt Tytel", "vital", PluginType::Instrument);
+        assert!(plugin_matches_filter(&d, ""));
+    }
+
+    #[test]
+    fn filter_matches_name_case_insensitive() {
+        let d = desc("TAL-Reverb-4", "TAL-Toge", "tal-reverb-4", PluginType::Effect);
+        assert!(plugin_matches_filter(&d, "reverb"));
+        assert!(plugin_matches_filter(&d, "TAL"));
+        assert!(plugin_matches_filter(&d, "tal-reverb"));
+        assert!(!plugin_matches_filter(&d, "chorus"));
+    }
+
+    #[test]
+    fn filter_matches_vendor() {
+        let d = desc("Dexed", "Digital Suburban", "dexed", PluginType::Instrument);
+        assert!(plugin_matches_filter(&d, "suburban"));
+        assert!(plugin_matches_filter(&d, "digital"));
+    }
+
+    #[test]
+    fn filter_matches_plugin_id() {
+        let d = desc("Surge XT", "Surge", "surge-xt", PluginType::Both);
+        assert!(plugin_matches_filter(&d, "surge-xt"));
+    }
+
+    #[test]
+    fn filter_matches_type_label() {
+        let fx = desc("XeniaFX", "Airwindows", "xeniafx", PluginType::Effect);
+        let inst = desc("Dexed", "Digital Suburban", "dexed", PluginType::Instrument);
+        let both = desc("Surge XT", "Surge", "surge-xt", PluginType::Both);
+        assert!(plugin_matches_filter(&fx, "fx"));
+        assert!(!plugin_matches_filter(&fx, "inst"));
+        assert!(plugin_matches_filter(&inst, "inst"));
+        assert!(!plugin_matches_filter(&inst, "fx"));
+        assert!(plugin_matches_filter(&both, "inst+fx"));
+        assert!(plugin_matches_filter(&both, "fx"));
+    }
+
+    #[test]
+    fn filter_no_match_returns_false() {
+        let d = desc("Vital", "Matt Tytel", "vital", PluginType::Instrument);
+        assert!(!plugin_matches_filter(&d, "reverb"));
+        assert!(!plugin_matches_filter(&d, "xyzzy"));
     }
 }

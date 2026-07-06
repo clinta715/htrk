@@ -1,6 +1,7 @@
 use crate::audio::commands::InterpolationType;
 use crate::audio::resampler;
 use crate::audio::voice::Voice;
+#[cfg(feature = "audio_debug")]
 use crate::debug_log;
 use crate::sequencer::effect::FilterType;
 use crate::sequencer::sample::LoopType;

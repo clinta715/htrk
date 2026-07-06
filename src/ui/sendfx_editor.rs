@@ -5,6 +5,7 @@ use crate::audio::plugins::{EditorMode, HostedPluginHandle};
 use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::ui::sendfx_panel::EframeHwnd;
+use crate::ui::style::{FONT_CAPTION, SP_XS};
 
 fn param_label(effect: SendEffectType, index: u32) -> &'static str {
     match effect {
@@ -49,6 +50,115 @@ fn param_label(effect: SendEffectType, index: u32) -> &'static str {
 
 fn send_bus_label(effect: SendEffectType) -> &'static str {
     effect.name()
+}
+
+/// Draw the hosted plugin's exposed parameters as a compact, multi-column
+/// slider panel — a "procedural GUI" for plugins whose native editor is
+/// unavailable or undesirable. The column count adapts to the available
+/// width (wide panels like the instrument editor get several columns;
+/// narrow ones like a send-bus slot collapse to one), a filter box narrows
+/// large param sets, and the grid is bounded by a scroll area so a 50+
+/// param plugin doesn't take over the whole window. Labels are truncated
+/// with the full name shown on hover.
+///
+/// The handle's `set_parameter` is called directly (queued into the
+/// plugin's SPSC param ring for the next `process()`), and `on_change` is
+/// invoked with `(param_id, value)` so the caller can dispatch the matching
+/// `AudioCommand` (`SetSendPluginParam` / `SetInstrumentPluginParam`).
+pub(crate) fn draw_plugin_parameter_sliders(
+    ui: &mut egui::Ui,
+    handle: &dyn HostedPluginHandle,
+    mut on_change: impl FnMut(u32, f32),
+) {
+    let params = handle.parameter_info();
+    if params.is_empty() {
+        return;
+    }
+    ui.collapsing(format!("Parameters ({})", params.len()), |ui| {
+        // Quick filter — invaluable for plugins with dozens of params.
+        let filter_id = ui.make_persistent_id("plugin_param_filter");
+        let mut filter = ui.data(|d| d.get_temp::<String>(filter_id).unwrap_or_default());
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Filter:")
+                    .size(FONT_CAPTION)
+                    .color(ui.visuals().weak_text_color()),
+            );
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut filter)
+                    .hint_text("parameter name…")
+                    .desired_width(ui.available_width()),
+            );
+            if resp.changed() {
+                ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
+            }
+        });
+        ui.add_space(SP_XS);
+
+        let filter_lower = filter.to_lowercase();
+        let visible: Vec<_> = params
+            .iter()
+            .filter(|p| {
+                filter_lower.is_empty() || p.name.to_lowercase().contains(&filter_lower)
+            })
+            .collect();
+        if visible.is_empty() {
+            ui.label(egui::RichText::new(format!("No parameters match \"{}\".", filter)).weak());
+            return;
+        }
+
+        // Column count adapts to width: ~220px per slider is comfortable.
+        // Use the floor so columns always fit within `avail`. The old
+        // `col_w = (avail / cols).max(target_col_w)` could make total
+        // width exceed `avail`, pushing the last column off-screen.
+        // Use horizontal_wrapped with fixed-width sliders so items naturally
+        // fill rows and wrap — no Grid column-width distribution issues.
+        egui::ScrollArea::vertical()
+            .max_height(360.0)
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    // Each slider gets a fixed ~340px (label + level value).
+                    // Once the row is full, wrapped layout starts the next row.
+                    let slider_w = 340.0;
+                    for p in &visible {
+                        let mut value = handle.get_parameter(p.id);
+                        let range = if (p.max - p.min).abs() > f32::EPSILON {
+                            (p.min, p.max)
+                        } else {
+                            (0.0, 1.0)
+                        };
+                        let full = if p.is_automatable {
+                            format!("{}  (A)", p.name)
+                        } else {
+                            p.name.clone()
+                        };
+                        let label = truncate_label(&full, 22);
+                        let resp = ui.add_sized(
+                            egui::vec2(slider_w, ui.spacing().interact_size.y),
+                            egui::Slider::new(&mut value, range.0..=range.1)
+                                .text(&label)
+                                .clamping(egui::SliderClamping::Always),
+                        );
+                        if resp.changed() {
+                            handle.set_parameter(p.id, value);
+                            on_change(p.id, value);
+                        }
+                        resp.on_hover_text(&full);
+                    }
+                });
+            });
+    });
+}
+
+/// Truncate a label to `max` chars, appending an ellipsis if shortened.
+fn truncate_label(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut t: String = s.chars().take(max.saturating_sub(1)).collect();
+    t.push('…');
+    t
 }
 
 pub fn draw_sendfx_view(
@@ -145,7 +255,6 @@ pub fn draw_sendfx_view(
                                 // Show the active mode as a small label
                                 let mode_label = match current_mode {
                                     Some(EditorMode::Floating) => "Floating",
-                                    Some(EditorMode::Embedded) => "Embedded",
                                     None => "",
                                 };
                                 ui.label(
@@ -154,32 +263,18 @@ pub fn draw_sendfx_view(
                                         .size(10.0),
                                 );
                             } else {
-                                // Default: "Edit..." (floating). The user can
-                                // hold Alt or use the menu for embedded mode.
+                                // "Edit..." opens the plugin's own floating
+                                // window. The in-app parameter sliders below
+                                // (Parameters section) provide the procedural
+                                // GUI; the old embedded native-GUI view was
+                                // removed.
                                 if ui.button("Edit...").clicked() {
                                     if let Some(ref mut handle) = plugin_handles[si] {
                                         if let Err(e) = handle.open_editor(
                                             EditorMode::Floating,
-                                            None,
+                                            eframe_hwnd.map(|h| h as *mut std::ffi::c_void),
                                         ) {
                                             eprintln!("[plugin] open editor failed: {e}");
-                                        }
-                                    }
-                                }
-                                if eframe_hwnd.is_some() {
-                                    if ui.button("Edit (in htrk)").clicked() {
-                                        if let Some(ref mut handle) = plugin_handles[si] {
-                                            // The HWND is stored as a usize token;
-                                            // convert back to *mut c_void for the
-                                            // trait method.
-                                            let parent: *mut std::ffi::c_void =
-                                                eframe_hwnd.unwrap() as *mut _;
-                                            if let Err(e) = handle.open_editor(
-                                                EditorMode::Embedded,
-                                                Some(parent),
-                                            ) {
-                                                eprintln!("[plugin] open editor (embedded) failed: {e}");
-                                            }
                                         }
                                     }
                                 }
@@ -219,56 +314,26 @@ pub fn draw_sendfx_view(
                     }
                 });
 
-                // ── Plugin Parameters (one Slider per param) ──
-                // When a CLAP plugin is loaded on this bus, list its
-                // exposed parameters and let the user set their values
-                // with a Slider. The slider's `set_parameter` call is
-                // queued to the audio-thread param ring; the plugin
-                // sees the new value on the next process() call.
+                // ── Plugin Parameters ──
+                // Procedural parameter GUI (multi-column slider panel with
+                // filter). Shared with the instrument editor via
+                // draw_plugin_parameter_sliders. The slider queues to the
+                // plugin's param ring; SetSendPluginParam mirrors the value
+                // to the audio-thread processor.
                 if let Some(ref handle) = plugin_handles[si] {
-                    let params = handle.parameter_info();
-                    if !params.is_empty() {
-                        ui.collapsing(format!("Parameters ({})", params.len()), |ui| {
-                            for (idx, p) in params.iter().enumerate() {
-                                let mut value = handle.get_parameter(p.id);
-                                let min = p.min;
-                                let max = p.max;
-                                let range = if (max - min).abs() > f32::EPSILON {
-                                    (min, max)
-                                } else {
-                                    (0.0, 1.0)
-                                };
-                                let label = if p.is_automatable {
-                                    format!("{}  (A)", p.name)
-                                } else {
-                                    p.name.clone()
-                                };
-                                if ui
-                                    .add(egui::Slider::new(&mut value, range.0..=range.1)
-                                        .text(&label))
-                                    .changed()
-                                {
-                                    if let Some(ref handle) = plugin_handles[si] {
-                                        handle.set_parameter(p.id, value);
-                                        // Also send a SetSendPluginParam command so
-                                        // the engine's send_buses[si].plugin is
-                                        // updated (it should be the same instance
-                                        // pointed to by the handle's param ring,
-                                        // but this keeps the audio-thread ring
-                                        // in sync if the processor is swapped).
-                                        if let Some(ref mut sender) = command_sender {
-                                            sender.send(AudioCommand::SetSendPluginParam {
-                                                send_index: si,
-                                                param_id: p.id,
-                                                value,
-                                            });
-                                        }
-                                    }
-                                    let _ = idx; // suppress unused
-                                }
+                    draw_plugin_parameter_sliders(
+                        ui,
+                        handle.as_ref(),
+                        |param_id, value| {
+                            if let Some(ref mut sender) = command_sender {
+                                sender.send(AudioCommand::SetSendPluginParam {
+                                    send_index: si,
+                                    param_id,
+                                    value,
+                                });
                             }
-                        });
-                    }
+                        },
+                    );
                 }
 
                 ui.separator();
@@ -362,90 +427,4 @@ pub fn draw_sendfx_view(
     // Embedded editor panel rendering now happens in
     // HtrkApp::tick_plugin_editors (called from the frame-level ui()
     // pass) so editors are visible in any tab.
-}
-
-#[cfg(windows)]
-pub(crate) fn is_editor_hwnd_visible(handle: &dyn HostedPluginHandle) -> bool {
-    use windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible;
-    let Some(hwnd) = handle.editor_hwnd() else {
-        // No editor HWND = probably floating mode. Always "visible" (the
-        // plugin manages its own window). Don't auto-close.
-        return true;
-    };
-    unsafe { IsWindowVisible(hwnd) != 0 }
-}
-
-#[cfg(not(windows))]
-pub(crate) fn is_editor_hwnd_visible(_handle: &dyn HostedPluginHandle) -> bool {
-    // Non-Windows: can't query the OS; assume visible. The plugin
-    // manages its own window in floating mode.
-    true
-}
-
-/// Render the egui rect for a single plugin's embedded editor. Reserves
-/// a fixed-height frame and resizes the plugin's child HWND to match.
-/// Shared between send-bus and instrument plugin embedded editors.
-///
-/// Includes a "Close" button in the header so the user can dismiss the
-/// editor from the dock itself (otherwise they'd have to switch to the
-/// Send FX / Instrument tab to find the close button, which is hidden
-/// behind several other UI elements).
-#[cfg(windows)]
-pub(crate) fn draw_embedded_editor_panel(
-    ui: &mut egui::Ui,
-    label: &str,
-    handle: &mut dyn HostedPluginHandle,
-) {
-    egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.set_min_height(280.0);
-        // Header: plugin label on the left, Close button on the right.
-        ui.horizontal(|ui| {
-            ui.label(label);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Close").clicked() {
-                    handle.close_editor();
-                }
-            });
-        });
-        // Reserve space for the plugin's child HWND. We position the
-        // host HWND at the actual screen-space rect of the allocated
-        // space, not at (0, 0) — the previous code overlapped the
-        // top-left of the eframe window and obscured the menu bar.
-        let available = ui.available_rect_before_wrap();
-        let width_pts = available.width();
-        let height_pts = available.height();
-        let rect = ui.allocate_space(egui::vec2(width_pts, height_pts));
-        if let Some(hwnd) = handle.editor_hwnd() {
-            // `ui.allocate_space` returns (Id, Rect) in egui 0.34 — pull
-            // out the Rect. Convert from egui points to physical pixels
-            // in the eframe's client area. egui's `content_rect` gives
-            // the egui render area's top-left in eframe client pixels
-            // (typically (0, 0)); `pixels_per_point` is the DPI scale.
-            let rect = rect.1;
-            let content_rect = ui.ctx().content_rect();
-            let ppp = ui.ctx().pixels_per_point();
-            let pos_x = (rect.min.x * ppp + content_rect.min.x) as i32;
-            let pos_y = (rect.min.y * ppp + content_rect.min.y) as i32;
-            let width_px = (rect.width() * ppp).max(0.0) as i32;
-            let height_px = (rect.height() * ppp).max(0.0) as i32;
-            // SAFETY: hwnd is a valid HWND owned by the plugin handle.
-            // MoveWindow uses the parent window's coordinate system;
-            // for our WS_CHILD of the eframe main window, that's the
-            // eframe's client area, which is exactly what `pos_x, pos_y`
-            // are in.
-            unsafe {
-                use windows_sys::Win32::UI::WindowsAndMessaging::MoveWindow;
-                MoveWindow(hwnd, pos_x, pos_y, width_px, height_px, 1);
-            }
-        }
-    });
-}
-
-#[cfg(not(windows))]
-pub(crate) fn draw_embedded_editor_panel(
-    _ui: &mut egui::Ui,
-    _label: &str,
-    _handle: &mut dyn HostedPluginHandle,
-) {
-    // No-op on non-Windows.
 }

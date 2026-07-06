@@ -219,7 +219,7 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
         InstrumentEditEvent::PluginUnload => {
             return;
         }
-        InstrumentEditEvent::OpenPluginEditor { .. } => {
+        InstrumentEditEvent::OpenPluginEditor => {
             return;
         }
         InstrumentEditEvent::ClosePluginEditor => {

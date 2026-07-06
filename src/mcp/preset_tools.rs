@@ -214,7 +214,6 @@ mod tests {
     use crate::audio::plugins::PresetLibrary;
     use crate::audio::plugins::PluginLibrary;
     use crate::mcp::library::SampleLibrary;
-    use crate::mcp::protocol::*;
 
     fn test_ctx() -> ToolContext {
         test_ctx_with_lib(PresetLibrary::new())
@@ -230,11 +229,6 @@ mod tests {
             preset_library: Arc::new(RwLock::new(lib)),
             preset_scan_in_progress: Arc::new(AtomicBool::new(false)),
         }
-    }
-
-    fn add_test_preset(lib: &PresetLibrary) {
-        // We need to modify the library — use the write lock
-        // This is tested indirectly via list/info tests
     }
 
     #[test]

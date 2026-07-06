@@ -12,3 +12,6 @@ protracker/
 /libxmp-4.7.0/
 /ocp-3.2.0/
 /test_files/
+.edev-instances/
+.mcp.json
+launch.ps1

@@ -126,6 +126,13 @@ pub fn draw_menu_bar(
 ) -> MenuResponse {
     let mut resp = MenuResponse::default();
 
+    // Close all existing popups if force-opening a new menu (prevents stacking
+    // when switching menus with Alt+letter -- the old menu stays open until
+    // Memory::end_pass runs, so we explicitly close it here).
+    if force_open_menu.is_some() {
+        egui::Popup::close_all(ui.ctx());
+    }
+
     egui::MenuBar::new().ui(ui, |ui| {
         let _ = top_menu_button(ui, "File", 0, menu_bar_active, active_menu, force_open_menu, |ui| {
             if ui.dev_button("menu.file.new_song", "New Song    Ctrl+N").clicked() {

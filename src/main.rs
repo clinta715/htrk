@@ -60,6 +60,8 @@ fn main() -> eframe::Result<()> {
     }
 
     let options = eframe::NativeOptions {
+        #[cfg(feature = "devtools")]
+        renderer: eframe::Renderer::Glow,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([
                 config.window_width.unwrap_or(1200.0),

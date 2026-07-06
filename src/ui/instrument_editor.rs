@@ -1,5 +1,7 @@
 use eframe::egui;
+use crate::audio::engine::CommandSender;
 use crate::audio::playback_state::AtomicPlaybackState;
+use crate::audio::plugins::HostedPluginHandle;
 use crate::edit::EnvelopeType;
 use crate::sequencer::instrument::{EnvelopeFlags, EnvelopePoint, Instrument};
 use crate::sequencer::Module;
@@ -41,11 +43,10 @@ pub enum InstrumentEditEvent {
     ExportInstrument(usize),
     ImportInstrument,
     PluginUnload,
-    /// Open the loaded CLAP instrument plugin's editor in floating
-    /// (true) or embedded (false) mode. Caller is responsible for
-    /// looking up the handle and supplying the parent HWND for
-    /// embedded mode.
-    OpenPluginEditor { floating: bool },
+    /// Open the loaded CLAP instrument plugin's editor (floating window).
+    /// The in-app parameter sliders (drawn in `handle_instrument_tab`)
+    /// provide the procedural GUI; the embedded native-GUI mode was removed.
+    OpenPluginEditor,
     /// Close the loaded CLAP instrument plugin's editor window.
     ClosePluginEditor,
 }
@@ -59,7 +60,8 @@ pub fn draw_instrument_editor(
     playback_state: &AtomicPlaybackState,
     instrument_editor: &mut crate::ui::instrument_editor_panel::InstrumentEditor,
     config: &mut crate::app_config::AppConfig,
-    eframe_hwnd: Option<crate::ui::sendfx_panel::EframeHwnd>,
+    plugin_handle: Option<&dyn HostedPluginHandle>,
+    command_sender: &mut Option<CommandSender>,
 ) -> Option<InstrumentEditEvent> {
     let mut event = None;
 
@@ -210,22 +212,23 @@ pub fn draw_instrument_editor(
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new("CLAP Instrument:").strong());
-                            if !instrument_editor.plugin_name.is_empty() {
-                                ui.label(egui::RichText::new(&instrument_editor.plugin_name).color(theme.fg_instrument));
-                            } else {
-                                ui.label(egui::RichText::new("(none — sample-based)").weak());
+                            match plugin_handle {
+                                Some(h) => ui.label(
+                                    egui::RichText::new(h.descriptor().name.as_str())
+                                        .color(theme.fg_instrument),
+                                ),
+                                None => ui.label(egui::RichText::new("(none — sample-based)").weak()),
                             }
                         });
-                        if !instrument_editor.plugin_name.is_empty() {
+                        if let Some(handle) = plugin_handle {
                             ui.horizontal(|ui| {
-                                if instrument_editor.plugin_has_editor {
-                                    if instrument_editor.plugin_editor_is_open {
+                                if handle.has_editor() {
+                                    if handle.is_editor_open() {
                                         if ui.button("Close Editor").clicked() {
                                             event = Some(InstrumentEditEvent::ClosePluginEditor);
                                         }
-                                        let mode_label = match instrument_editor.plugin_editor_mode {
+                                        let mode_label = match handle.editor_mode() {
                                             Some(crate::audio::plugins::EditorMode::Floating) => "Floating",
-                                            Some(crate::audio::plugins::EditorMode::Embedded) => "Embedded",
                                             None => "",
                                         };
                                         ui.label(
@@ -234,16 +237,14 @@ pub fn draw_instrument_editor(
                                                 .size(10.0),
                                         );
                                     } else {
+                                        // "Edit..." opens the plugin's own
+                                        // floating window. The parameter sliders
+                                        // below provide the procedural GUI.
                                         if ui.button("Edit...").clicked() {
-                                            event = Some(InstrumentEditEvent::OpenPluginEditor { floating: true });
-                                        }
-                                        if eframe_hwnd.is_some() {
-                                            if ui.button("Edit (in htrk)").clicked() {
-                                                event = Some(InstrumentEditEvent::OpenPluginEditor { floating: false });
-                                            }
+                                            event = Some(InstrumentEditEvent::OpenPluginEditor);
                                         }
                                     }
-                                    if let Some(ref err) = instrument_editor.plugin_editor_error {
+                                    if let Some(err) = handle.last_editor_error() {
                                         ui.colored_label(
                                             egui::Color32::from_rgb(255, 100, 100),
                                             err,
@@ -254,6 +255,28 @@ pub fn draw_instrument_editor(
                                     event = Some(InstrumentEditEvent::PluginUnload);
                                 }
                             });
+
+                            // Procedural parameter GUI — one slider per
+                            // exposed parameter. Replaces the old embedded
+                            // native-GUI view. Values are queued to the
+                            // plugin's param ring and mirrored to the
+                            // audio-thread processor via SetInstrumentPluginParam.
+                            let inst_idx = *selected_instrument;
+                            crate::ui::sendfx_editor::draw_plugin_parameter_sliders(
+                                ui,
+                                handle,
+                                |param_id, value| {
+                                    if let Some(ref mut sender) = command_sender {
+                                        sender.send(
+                                            crate::audio::commands::AudioCommand::SetInstrumentPluginParam {
+                                                instrument_idx: inst_idx,
+                                                param_id,
+                                                value,
+                                            },
+                                        );
+                                    }
+                                },
+                            );
                         } else {
                             ui.horizontal(|ui| {
                                 if ui.button("Load CLAP Plugin…").clicked() {
@@ -534,10 +557,10 @@ fn draw_maps_row(
                 ui.label(egui::RichText::new("Sample Map").strong());
                 ui.add_space(8.0);
                 if ui.button(" - ").on_hover_text("Shrink grid").clicked() {
-                    config.sample_map_cell_size = (config.sample_map_cell_size - 2.0).max(16.0);
+                    config.map_cell_size = (config.map_cell_size - 2.0).max(16.0);
                 }
                 if ui.button(" + ").on_hover_text("Grow grid").clicked() {
-                    config.sample_map_cell_size = (config.sample_map_cell_size + 2.0).min(80.0);
+                    config.map_cell_size = (config.map_cell_size + 2.0).min(80.0);
                 }
                 ui.separator();
                 if ui.dev_button("inst.map.browse", "Browse...").clicked() {
@@ -551,7 +574,7 @@ fn draw_maps_row(
             ui.add_space(4.0);
             crate::ui::sample_palette::draw_inline_sample_palette(ui, module, paint_sample_idx, playback_state, theme);
             if let Some(map_event) = crate::ui::sample_map::draw_sample_map(
-                ui, &inst.sample_map, *paint_sample_idx, module, config.sample_map_cell_size, theme,
+                ui, &inst.sample_map, *paint_sample_idx, module, config.map_cell_size, theme,
             ) {
                 match map_event {
                     crate::ui::sample_map::SampleMapEvent::NoteClicked(note) |
@@ -582,16 +605,10 @@ fn draw_maps_row(
             ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new("Note Map (Transpose)").strong());
                 ui.add_space(8.0);
-                if ui.button(" - ").on_hover_text("Shrink grid").clicked() {
-                    config.note_map_cell_size = (config.note_map_cell_size - 2.0).max(16.0);
-                }
-                if ui.button(" + ").on_hover_text("Grow grid").clicked() {
-                    config.note_map_cell_size = (config.note_map_cell_size + 2.0).min(80.0);
-                }
                 ui.separator();
             });
             ui.add_space(4.0);
-            if let Some(nm_event) = crate::ui::note_map::draw_note_map(ui, &inst.note_map, *paint_sample_idx, theme, config.note_map_cell_size) {
+            if let Some(nm_event) = crate::ui::note_map::draw_note_map(ui, &inst.note_map, *paint_sample_idx, theme, config.map_cell_size) {
                 if inst.note_map[nm_event.note as usize] != nm_event.new_dest {
                     event = Some(InstrumentEditEvent::NoteMapChanged(nm_event.note, nm_event.new_dest));
                 }

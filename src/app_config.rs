@@ -161,10 +161,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub file_browser_modified_width: Option<f32>,
 
-    #[serde(default = "default_grid_cell_size")]
-    pub sample_map_cell_size: f32,
-    #[serde(default = "default_grid_cell_size")]
-    pub note_map_cell_size: f32,
+    #[serde(default = "default_grid_cell_size", alias = "sample_map_cell_size")]
+    pub map_cell_size: f32,
 
     #[serde(default = "default_true")]
     pub confirm_on_exit: bool,
@@ -278,8 +276,7 @@ impl Default for AppConfig {
             file_browser_type_width: None,
             file_browser_size_width: None,
             file_browser_modified_width: None,
-            sample_map_cell_size: default_grid_cell_size(),
-            note_map_cell_size: default_grid_cell_size(),
+            map_cell_size: default_grid_cell_size(),
             confirm_on_exit: true,
             recent_files: Vec::new(),
             mcp_enabled: false,

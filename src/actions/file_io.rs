@@ -49,7 +49,7 @@ pub(crate) fn load_file(app: &mut HtrkApp, path: &str) {
     }
 }
 
-fn add_recent_file(app: &mut HtrkApp, path: &str) {
+pub(crate) fn add_recent_file(app: &mut HtrkApp, path: &str) {
     let path_str = path.to_string();
     app.config.recent_files.retain(|p| p != &path_str);
     app.config.recent_files.insert(0, path_str);
@@ -113,6 +113,7 @@ fn save_file_inner(app: &mut HtrkApp, path: &str) {
     app.save_all_send_bus_plugin_states();
     app.save_all_instrument_plugin_states();
     app.core.save_file(path);
+    add_recent_file(app, path);
 }
 
 pub(crate) fn open_wav_export_dialog(app: &mut HtrkApp) {

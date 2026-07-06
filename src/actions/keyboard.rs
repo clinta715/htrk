@@ -54,7 +54,10 @@ fn handle_alt_menu(app: &mut HtrkApp, ctx: &egui::Context, any_dialog_open: bool
     }
 
     // --- Alt+letter menu shortcuts (work in any view / mode) ---
-    if alt_now && !any_dialog_open {
+    // Note: we check event-level modifiers directly, not alt_now (frame-level),
+    // because eguidev script injection sets per-event modifiers but not the
+    // frame-level modifier state, so alt_now is false under scripted input.
+    if !any_dialog_open {
         let found_menu: Option<usize> = ctx.input(|i| {
             for event in &i.events {
                 if let egui::Event::Key { key, pressed: true, modifiers, .. } = event {

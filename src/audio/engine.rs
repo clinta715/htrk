@@ -7,6 +7,7 @@ use crate::audio::mixer;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::audio::sendfx;
 use crate::audio::sequencer_engine::SequencerEngine;
+#[cfg(feature = "audio_debug")]
 use crate::debug_log;
 use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::effect::NUM_SEND_BUSES;
@@ -498,25 +499,39 @@ impl AudioEngine {
                     };
                     self.module = Some(module.clone());
                     self.sequencer.load_module(module.clone());
-                    // Rebuild send buses from module config
+                    // Rebuild send buses from module config, PRESERVING any
+                    // currently-installed plugin processor on each bus
+                    // (reconciled by index). `sync_module_to_audio` sends a
+                    // LoadModule after every module edit, so naively dropping
+                    // the running processor here would make send-FX plugins go
+                    // silent after the first pattern edit. Plugin processors are
+                    // still NOT auto-created from `module.send_bus_plugins`
+                    // slots here — the main thread installs them via
+                    // `SetSendPlugin` (on first load via
+                    // `sync_send_bus_plugin_state`). We only carry over
+                    // processors that are already running on the audio thread.
                     let buf_size = self.mix_left.len().max(BUFFER_SIZE);
+                    let sr_f32 = self.output_sample_rate as f32;
+                    let return_levels = &module.send_return_levels;
+                    let pre_faders = &module.send_pre_fader;
+                    let mut old_buses = std::mem::take(&mut self.send_buses);
                     self.send_buses = module.send_bus_config.iter().enumerate().map(|(i, &effect_type)| {
-                        let bus = SendBus {
+                        // Carry over the running plugin processor from the
+                        // previous bus at the same index, if any. Buses beyond
+                        // the new config length (and their processors) are
+                        // dropped when `old_buses` falls out of scope below.
+                        let plugin = old_buses.get_mut(i).and_then(|b| b.plugin.take());
+                        SendBus {
                             buffer: vec![0.0; buf_size * 2],
-                            return_level: module.send_return_levels.get(i).copied().unwrap_or(0.0),
-                            pre_fader: module.send_pre_fader.get(i).copied().unwrap_or(false),
-                            effect: sendfx::create_send_effect(effect_type, self.output_sample_rate as f32),
-                            // Plugin processors are sent by the main thread via
-                            // SetSendPlugin commands after module load. The
-                            // plugin is loaded + activated on the main thread
-                            // (where the PluginInstance lives), then handed off
-                            // to the audio thread. For now, plugins are not
-                            // auto-reloaded from the module on .htk load — the
-                            // user re-assigns them via the UI or MCP.
-                            plugin: None,
-                        };
-                        bus
+                            return_level: return_levels.get(i).copied().unwrap_or(0.0),
+                            pre_fader: pre_faders.get(i).copied().unwrap_or(false),
+                            effect: sendfx::create_send_effect(effect_type, sr_f32),
+                            plugin,
+                        }
                     }).collect();
+                    // `old_buses` is dropped here; any remaining processors
+                    // (buses removed from the config) are dropped on the audio
+                    // thread, matching the existing SetSendPlugin semantics.
                     #[cfg(feature = "audio_debug")]
                     debug_log!("[AUDIO] Module loaded: format={} {}/{} samples have data, {} instruments, {} patterns ({} rows, non_empty={}), order_list_len={}, first_order={}, BPM={} speed={}",
                         _debug_info.0,
@@ -1317,5 +1332,105 @@ mod tests {
         assert_eq!(s.note_ons[0], (0, 60, 100));
         assert_eq!(s.note_offs.len(), 1, "expected one note-off, got {}", s.note_offs.len());
         assert_eq!(s.note_offs[0], (0, 60));
+    }
+
+    /// Regression: a `LoadModule` (sent by `sync_module_to_audio` after every
+    /// module edit) must NOT discard a running send-bus plugin processor.
+    /// Previously the `LoadModule` handler rebuilt `send_buses` with
+    /// `plugin: None`, so the first pattern edit after installing a CLAP send
+    /// effect silently killed it.
+    #[test]
+    fn load_module_preserves_send_bus_plugin_processor() {
+        use crate::audio::plugins::HostedPluginProcessor;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Debug, Default)]
+        struct MockState {
+            params: Vec<(u32, f32)>,
+        }
+
+        #[derive(Debug, Default)]
+        struct MockProcessor {
+            state: Arc<Mutex<MockState>>,
+        }
+
+        impl HostedPluginProcessor for MockProcessor {
+            fn process(
+                &mut self, _in_l: &[f32], _in_r: &[f32],
+                _out_l: &mut [f32], _out_r: &mut [f32],
+                _n: usize, _t: &crate::audio::plugins::TransportInfo,
+            ) {}
+            fn stop(self: Box<Self>) -> Box<dyn std::any::Any> { Box::new(()) }
+            fn set_parameter(&mut self, id: u32, v: f32) {
+                self.state.lock().unwrap().params.push((id, v));
+            }
+            fn get_parameter(&self, _: u32) -> f32 { 0.0 }
+            fn parameter_count(&self) -> u32 { 0 }
+            fn latency(&self) -> u32 { 0 }
+            fn name(&self) -> &str { "MockSend" }
+            fn send_note_on(&mut self, _: u8, _: u8, _: u8) {}
+            fn send_note_off(&mut self, _: u8, _: u8) {}
+        }
+
+        let state = Arc::new(Mutex::new(MockState::default()));
+        let proc: Box<dyn HostedPluginProcessor> =
+            Box::new(MockProcessor { state: state.clone() });
+
+        let (mut engine, mut sender) = create_engine_and_sender(
+            Arc::new(crate::audio::playback_state::AtomicPlaybackState::default()),
+            48000, 2,
+        );
+
+        // 1. Initial module load sets up the default 4 send buses.
+        sender.send(AudioCommand::LoadModule(Arc::new(
+            crate::sequencer::Module::default(),
+        )));
+        engine.process_callback(&mut [0.0f32; 64]);
+        assert!(!engine.send_buses.is_empty(), "default module should create send buses");
+
+        // 2. Install the mock processor on send bus 0.
+        sender.send(AudioCommand::SetSendPlugin {
+            send_index: 0,
+            processor: Some(proc),
+        });
+        engine.process_callback(&mut [0.0f32; 64]);
+        assert!(engine.send_buses[0].plugin.is_some(), "plugin should be installed");
+
+        // 3. Send a param change to prove the installed processor is live.
+        sender.send(AudioCommand::SetSendPluginParam {
+            send_index: 0, param_id: 5, value: 0.5,
+        });
+        engine.process_callback(&mut [0.0f32; 64]);
+        {
+            let s = state.lock().unwrap();
+            assert_eq!(s.params, [(5, 0.5)], "first param change should reach the processor");
+        }
+
+        // 4. Simulate `sync_module_to_audio()` firing after any edit — this is
+        //    the sequence that used to wipe the processor.
+        sender.send(AudioCommand::LoadModule(Arc::new(
+            crate::sequencer::Module::default(),
+        )));
+        engine.process_callback(&mut [0.0f32; 64]);
+
+        // 5. The processor must still be there.
+        assert!(
+            engine.send_buses[0].plugin.is_some(),
+            "LoadModule must preserve the running send-bus plugin processor"
+        );
+
+        // 6. And it must be the SAME instance: a second param change appends
+        //    to the recorded history rather than starting fresh.
+        sender.send(AudioCommand::SetSendPluginParam {
+            send_index: 0, param_id: 7, value: 0.25,
+        });
+        engine.process_callback(&mut [0.0f32; 64]);
+        {
+            let s = state.lock().unwrap();
+            assert_eq!(
+                s.params, [(5, 0.5), (7, 0.25)],
+                "the same processor instance must survive LoadModule"
+            );
+        }
     }
 }
