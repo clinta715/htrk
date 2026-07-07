@@ -5,7 +5,7 @@ use crate::audio::plugins::{EditorMode, HostedPluginHandle};
 use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::ui::sendfx_panel::EframeHwnd;
-use crate::ui::style::{FONT_CAPTION, SP_XS};
+use crate::ui::style::{FONT_CAPTION, SP_SM, SP_XS};
 
 fn param_label(effect: SendEffectType, index: u32) -> &'static str {
     match effect {
@@ -107,22 +107,42 @@ pub(crate) fn draw_plugin_parameter_sliders(
             return;
         }
 
-        // Column count adapts to width: ~220px per slider is comfortable.
-        // Use the floor so columns always fit within `avail`. The old
-        // `col_w = (avail / cols).max(target_col_w)` could make total
-        // width exceed `avail`, pushing the last column off-screen.
-        // Use horizontal_wrapped with fixed-width sliders so items naturally
-        // fill rows and wrap — no Grid column-width distribution issues.
+        // Fixed 3-column layout with visible vertical dividers between
+        // columns and a subtle striped row background, so the grid is easy
+        // to scan at a glance. We allocate each row as a fixed-size rect
+        // up front, then `ui.put` each slider at a precisely computed cell
+        // rect so columns land at exact x positions and dividers are drawn
+        // at the real column boundaries.
+        const NUM_COLS: usize = 3;
         egui::ScrollArea::vertical()
             .id_salt("plugin_param_scroll")
             .max_height(360.0)
             .auto_shrink([false; 2])
             .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    // Each slider gets a fixed ~340px (label + level value).
-                    // Once the row is full, wrapped layout starts the next row.
-                    let slider_w = 340.0;
-                    for p in &visible {
+                let total_w = ui.available_width();
+                let col_w = (total_w / NUM_COLS as f32).max(120.0);
+                let row_h = ui.spacing().interact_size.y.max(18.0);
+                let div_color = ui.visuals().widgets.noninteractive.bg_stroke;
+                let stripe = ui.visuals().faint_bg_color;
+                let base = ui.visuals().extreme_bg_color;
+                let row_gap = SP_XS;
+
+                for (row_idx, row) in visible.chunks(NUM_COLS).enumerate() {
+                    // Allocate the row rect at a fixed size, so its
+                    // top-left x is the true left edge of the grid.
+                    let (row_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(total_w, row_h), egui::Sense::hover());
+                    let row_left = row_rect.left();
+                    let row_top = row_rect.top();
+
+                    // Alternating row background spanning the full width.
+                    ui.painter().rect_filled(
+                        row_rect,
+                        0.0,
+                        if row_idx % 2 == 0 { base } else { stripe },
+                    );
+
+                    for (col, p) in row.iter().enumerate() {
                         let mut value = handle.get_parameter(p.id);
                         let range = if (p.max - p.min).abs() > f32::EPSILON {
                             (p.min, p.max)
@@ -135,8 +155,18 @@ pub(crate) fn draw_plugin_parameter_sliders(
                             p.name.clone()
                         };
                         let label = truncate_label(&full, 22);
-                        let resp = ui.add_sized(
-                            egui::vec2(slider_w, ui.spacing().interact_size.y),
+
+                        // Cell rect at an exact column boundary. Inset
+                        // horizontally so sliders don't kiss the dividers.
+                        let inset = SP_SM;
+                        let cell_min = egui::pos2(row_left + col as f32 * col_w + inset, row_top);
+                        let cell = egui::Rect::from_min_size(
+                            cell_min,
+                            egui::vec2(col_w - inset * 2.0, row_h),
+                        );
+
+                        let resp = ui.put(
+                            cell,
                             egui::Slider::new(&mut value, range.0..=range.1)
                                 .text(&label)
                                 .clamping(egui::SliderClamping::Always),
@@ -146,8 +176,23 @@ pub(crate) fn draw_plugin_parameter_sliders(
                             on_change(p.id, value);
                         }
                         resp.on_hover_text(&full);
+
+                        // Vertical divider at the boundary to the next
+                        // column (drawn for every column except the last).
+                        if col + 1 < NUM_COLS {
+                            let x = row_left + (col as f32 + 1.0) * col_w;
+                            ui.painter().line_segment(
+                                [
+                                    egui::pos2(x, row_top),
+                                    egui::pos2(x, row_top + row_h),
+                                ],
+                                div_color,
+                            );
+                        }
                     }
-                });
+
+                    ui.add_space(row_gap);
+                }
             });
     });
 }
