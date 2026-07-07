@@ -8,6 +8,15 @@ use crate::sequencer::pattern::Cell;
 
 use super::theme::TrackerTheme;
 
+/// Single hex-digit characters as `&'static str`, indexed by nibble value
+/// (0–15). Used by `format_effect` for the effect-type column so dynamic
+/// legacy `Raw` effect codes avoid a `format!("{:X}", n)` heap allocation
+/// per cell per frame.
+const HEX_DIGITS: [&str; 16] = [
+    "0", "1", "2", "3", "4", "5", "6", "7",
+    "8", "9", "A", "B", "C", "D", "E", "F",
+];
+
 pub struct AutomationOverlayInfo {
     pub target: AutomationTarget,
     pub track: Option<std::sync::Arc<AutomationTrack>>,
@@ -445,6 +454,12 @@ pub fn draw_pattern_grid(
         Vec::new()
     };
 
+    // Hover position is frame-constant; read it ONCE before the row×channel
+    // loop rather than re-locking egui input state per cell (the old code
+    // called `ui.input(|i| i.pointer.hover_pos())` inside the inner loop,
+    // i.e. visible_rows × visible_channels times per frame).
+    let hover_pos = ui.input(|i| i.pointer.hover_pos());
+
     for row in first_row..last_row {
         let display_row = row - first_row;
         let y = rect.top() + display_row as f32 * metrics.row_height;
@@ -542,7 +557,7 @@ pub fn draw_pattern_grid(
                 );
             }
 
-            if let Some(hover_pos) = ui.input(|i| i.pointer.hover_pos()) {
+            if let Some(hover_pos) = hover_pos {
                 let cell_rect = Rect::from_min_size(
                     Pos2::new(x, y),
                     egui::vec2(metrics.channel_width - 2.0, metrics.row_height),
@@ -851,16 +866,19 @@ fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: Grid
     let center_y = y + metrics.row_height * 0.5;
 
     if col_vis.note {
-        let note_text = match cell.note {
+        // Note::On needs a heap String (octave digit varies), but the
+        // Off/Cut/Fade/None sentinels are constant — use &'static str
+        // to avoid a per-cell allocation every frame.
+        let note_text: std::borrow::Cow<str> = match cell.note {
             Note::On(key) => {
                 let tone = key % 12;
                 let octave = key / 12;
-                format!("{}{}", TONE_NAMES[tone as usize], octave)
+                format!("{}{}", TONE_NAMES[tone as usize], octave).into()
             }
-            Note::Off => "===".to_string(),
-            Note::Cut => "^^^".to_string(),
-            Note::Fade => "~~~".to_string(),
-            Note::None => "---".to_string(),
+            Note::Off => "===".into(),
+            Note::Cut => "^^^".into(),
+            Note::Fade => "~~~".into(),
+            Note::None => "---".into(),
         };
         let note_color = match cell.note {
             Note::On(_) => theme.fg_note,
@@ -873,9 +891,9 @@ fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: Grid
     }
 
     if col_vis.instrument {
-        let ins_text = match cell.instrument {
-            Some(i) => format!("{:02}", i),
-            None => "..".to_string(),
+        let ins_text: std::borrow::Cow<str> = match cell.instrument {
+            Some(i) => format!("{:02}", i).into(),
+            None => "..".into(),
         };
         let ins_color = if cell.instrument.is_some() {
             theme.fg_instrument
@@ -892,9 +910,9 @@ fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: Grid
     }
 
     if col_vis.volume {
-        let vol_text = match cell.volume {
-            Some(v) => format!("{:02}", v),
-            None => "..".to_string(),
+        let vol_text: std::borrow::Cow<str> = match cell.volume {
+            Some(v) => format!("{:02}", v).into(),
+            None => "..".into(),
         };
         let vol_color = if cell.volume.is_some() {
             theme.fg_volume
@@ -1162,98 +1180,99 @@ fn sub_column_tooltips(col_vis: ColumnVisibility) -> ColumnHeaderTooltips {
 }
 
 
-fn format_effect(effect: &Effect) -> (String, String) {
+fn format_effect(effect: &Effect) -> (&'static str, String) {
     match effect {
-        Effect::None => (".".to_string(), "..".to_string()),
-        Effect::Arpeggio { note1, note2 } => ("0".to_string(), format!("{:X}{:X}", note1, note2)),
-        Effect::PortamentoUp { speed } => ("1".to_string(), format!("{:02X}", speed)),
-        Effect::PortamentoDown { speed } => ("2".to_string(), format!("{:02X}", speed)),
-        Effect::TonePortamento { speed } => ("3".to_string(), format!("{:02X}", speed)),
-        Effect::Vibrato { speed, depth } => ("4".to_string(), format!("{:X}{:X}", speed, depth)),
-        Effect::TonePortamentoVolumeSlide { up } => ("5".to_string(), format!("{:02X}", *up as u8)),
-        Effect::VibratoVolumeSlide { up } => ("6".to_string(), format!("{:02X}", *up as u8)),
-        Effect::Tremolo { speed, depth } => ("7".to_string(), format!("{:X}{:X}", speed, depth)),
-        Effect::SetPanning { pan } => ("8".to_string(), format!("{:02X}", pan)),
-        Effect::SetSampleOffset { offset } => ("9".to_string(), format!("{:02X}", offset >> 8)),
-        Effect::VolumeSlide { up, down } => ("A".to_string(), format!("{:X}{:X}", up, down)),
-        Effect::PositionJump { order } => ("B".to_string(), format!("{:02X}", order)),
-        Effect::SetVolume { volume } => ("C".to_string(), format!("{:02X}", volume)),
-        Effect::PatternBreak { row } => ("D".to_string(), format!("{:02X}", row)),
-        Effect::PanningSlide { speed } => (".".to_string(), format!("P{:+}", speed)),
-        Effect::ExtendedEffect { param } => ("E".to_string(), format!("{:02X}", param)),
-        Effect::SetSpeed { speed } => ("F".to_string(), format!("{:02X}", speed)),
-        Effect::SetTempo { bpm } => ("F".to_string(), format!("{:02X}", bpm)),
-        Effect::SetGlobalVolume { volume } => ("G".to_string(), format!("{:02X}", volume)),
-        Effect::GlobalVolumeSlide { up, down } => ("H".to_string(), format!("{:X}{:X}", (*up).max(0) as u8, (*down).unsigned_abs().min(15) as u8)),
-        Effect::SetEnvelopePosition { tick } => ("L".to_string(), format!("{:02X}", tick)),
-        Effect::Panbrello { speed, depth } => ("Y".to_string(), format!("{:X}{:X}", speed, depth)),
-        Effect::PatternDelay { ticks } => ("E".to_string(), format!("E{:X}", ticks)),
-        Effect::SetPanPosition { pan } => ("E".to_string(), format!("8{:X}", pan >> 4)),
-        Effect::GlissandoControl { on } => ("E".to_string(), if *on { "3F".to_string() } else { "30".to_string() }),
-        Effect::VibratoWaveform { waveform } => ("E".to_string(), format!("4{:X}", waveform & 0x03)),
-        Effect::SetFineTune { tune } => ("E".to_string(), format!("5{:X}", tune)),
-        Effect::PatternLoop { count } => ("E".to_string(), format!("6{:X}", count)),
-        Effect::TremoloWaveform { waveform } => ("E".to_string(), format!("7{:X}", waveform & 0x03)),
-        Effect::SetPanning16 { pan } => ("E".to_string(), format!("8{:X}", pan >> 4)),
-        Effect::Retrigger { interval } => ("E".to_string(), format!("9{:X}", interval)),
-        Effect::NoteCutAfter { ticks } => ("E".to_string(), format!("C{:X}", ticks)),
-        Effect::NoteDelay { ticks } => ("E".to_string(), format!("D{:X}", ticks)),
-        Effect::ExtraFinePortamentoUp { speed } => ("F".to_string(), format!("1{:X}", speed & 0xF)),
-        Effect::ExtraFinePortamentoDown { speed } => ("F".to_string(), format!("2{:X}", speed & 0xF)),
-        Effect::FinePortamentoUp { speed } => ("E".to_string(), format!("1{:X}", speed >> 4)),
-        Effect::FinePortamentoDown { speed } => ("E".to_string(), format!("2{:X}", speed >> 4)),
-        Effect::FineVolumeSlideUp { amount } => ("E".to_string(), format!("A{:X}", amount)),
-        Effect::FineVolumeSlideDown { amount } => ("E".to_string(), format!("B{:X}", amount)),
-        Effect::Tremor { ontime, offtime } => ("I".to_string(), format!("{:X}{:X}", ontime, offtime)),
-        Effect::VolSetVolume { vol } => (".".to_string(), format!("{:02X}", (*vol).min(64))),
-        Effect::VolFineSlideUp { amount } => (".".to_string(), format!("+{:X}", amount)),
-        Effect::VolFineSlideDown { amount } => (".".to_string(), format!("-{:X}", amount)),
-        Effect::VolSlideUp { amount } => (".".to_string(), format!("U{:X}", amount)),
-        Effect::VolSlideDown { amount } => (".".to_string(), format!("D{:X}", amount)),
-        Effect::VolPortamento { speed } => (".".to_string(), format!("~{:02X}", speed)),
-        Effect::VolVibrato { speed } => (".".to_string(), format!("V{:X}", speed)),
-        Effect::SetFilterCutoff { cutoff } => ("Z".to_string(), format!("{:02X}", cutoff >> 8)),
-        Effect::SetFilterResonance { resonance } => ("R".to_string(), format!("{:02X}", resonance)),
-        Effect::SetFilterType { filter_type } => ("X".to_string(), format!("{:02X}", filter_type)),
-        Effect::FilterCutoffSlide { amount } => ("Y".to_string(), format!("{:+03}", amount)),
-        Effect::SetSendLevel { send_index, level } => ("S".to_string(), format!("{:X}{:X}", send_index, level)),
-        Effect::SetSendBusParam { bus, param, value: _ } => ("P".to_string(), format!("{:X}{:X}", bus, param)),
+        Effect::None => (".", "..".to_string()),
+        Effect::Arpeggio { note1, note2 } => ("0", format!("{:X}{:X}", note1, note2)),
+        Effect::PortamentoUp { speed } => ("1", format!("{:02X}", speed)),
+        Effect::PortamentoDown { speed } => ("2", format!("{:02X}", speed)),
+        Effect::TonePortamento { speed } => ("3", format!("{:02X}", speed)),
+        Effect::Vibrato { speed, depth } => ("4", format!("{:X}{:X}", speed, depth)),
+        Effect::TonePortamentoVolumeSlide { up } => ("5", format!("{:02X}", *up as u8)),
+        Effect::VibratoVolumeSlide { up } => ("6", format!("{:02X}", *up as u8)),
+        Effect::Tremolo { speed, depth } => ("7", format!("{:X}{:X}", speed, depth)),
+        Effect::SetPanning { pan } => ("8", format!("{:02X}", pan)),
+        Effect::SetSampleOffset { offset } => ("9", format!("{:02X}", offset >> 8)),
+        Effect::VolumeSlide { up, down } => ("A", format!("{:X}{:X}", up, down)),
+        Effect::PositionJump { order } => ("B", format!("{:02X}", order)),
+        Effect::SetVolume { volume } => ("C", format!("{:02X}", volume)),
+        Effect::PatternBreak { row } => ("D", format!("{:02X}", row)),
+        Effect::PanningSlide { speed } => (".", format!("P{:+}", speed)),
+        Effect::ExtendedEffect { param } => ("E", format!("{:02X}", param)),
+        Effect::SetSpeed { speed } => ("F", format!("{:02X}", speed)),
+        Effect::SetTempo { bpm } => ("F", format!("{:02X}", bpm)),
+        Effect::SetGlobalVolume { volume } => ("G", format!("{:02X}", volume)),
+        Effect::GlobalVolumeSlide { up, down } => ("H", format!("{:X}{:X}", (*up).max(0) as u8, (*down).unsigned_abs().min(15) as u8)),
+        Effect::SetEnvelopePosition { tick } => ("L", format!("{:02X}", tick)),
+        Effect::Panbrello { speed, depth } => ("Y", format!("{:X}{:X}", speed, depth)),
+        Effect::PatternDelay { ticks } => ("E", format!("E{:X}", ticks)),
+        Effect::SetPanPosition { pan } => ("E", format!("8{:X}", pan >> 4)),
+        Effect::GlissandoControl { on } => ("E", if *on { "3F".to_string() } else { "30".to_string() }),
+        Effect::VibratoWaveform { waveform } => ("E", format!("4{:X}", waveform & 0x03)),
+        Effect::SetFineTune { tune } => ("E", format!("5{:X}", tune)),
+        Effect::PatternLoop { count } => ("E", format!("6{:X}", count)),
+        Effect::TremoloWaveform { waveform } => ("E", format!("7{:X}", waveform & 0x03)),
+        Effect::SetPanning16 { pan } => ("E", format!("8{:X}", pan >> 4)),
+        Effect::Retrigger { interval } => ("E", format!("9{:X}", interval)),
+        Effect::NoteCutAfter { ticks } => ("E", format!("C{:X}", ticks)),
+        Effect::NoteDelay { ticks } => ("E", format!("D{:X}", ticks)),
+        Effect::ExtraFinePortamentoUp { speed } => ("F", format!("1{:X}", speed & 0xF)),
+        Effect::ExtraFinePortamentoDown { speed } => ("F", format!("2{:X}", speed & 0xF)),
+        Effect::FinePortamentoUp { speed } => ("E", format!("1{:X}", speed >> 4)),
+        Effect::FinePortamentoDown { speed } => ("E", format!("2{:X}", speed >> 4)),
+        Effect::FineVolumeSlideUp { amount } => ("E", format!("A{:X}", amount)),
+        Effect::FineVolumeSlideDown { amount } => ("E", format!("B{:X}", amount)),
+        Effect::Tremor { ontime, offtime } => ("I", format!("{:X}{:X}", ontime, offtime)),
+        Effect::VolSetVolume { vol } => (".", format!("{:02X}", (*vol).min(64))),
+        Effect::VolFineSlideUp { amount } => (".", format!("+{:X}", amount)),
+        Effect::VolFineSlideDown { amount } => (".", format!("-{:X}", amount)),
+        Effect::VolSlideUp { amount } => (".", format!("U{:X}", amount)),
+        Effect::VolSlideDown { amount } => (".", format!("D{:X}", amount)),
+        Effect::VolPortamento { speed } => (".", format!("~{:02X}", speed)),
+        Effect::VolVibrato { speed } => (".", format!("V{:X}", speed)),
+        Effect::SetFilterCutoff { cutoff } => ("Z", format!("{:02X}", cutoff >> 8)),
+        Effect::SetFilterResonance { resonance } => ("R", format!("{:02X}", resonance)),
+        Effect::SetFilterType { filter_type } => ("X", format!("{:02X}", filter_type)),
+        Effect::FilterCutoffSlide { amount } => ("Y", format!("{:+03}", amount)),
+        Effect::SetSendLevel { send_index, level } => ("S", format!("{:X}{:X}", send_index, level)),
+        Effect::SetSendBusParam { bus, param, value: _ } => ("P", format!("{:X}{:X}", bus, param)),
         Effect::FormatSpecific(fe) => {
             match fe {
                 FormatEffect::Xm(xe) => match xe {
-                    XmEffect::SetSampleOffset(o) => ("9".to_string(), format!("{:02X}", o >> 8)),
-                    XmEffect::KeyOff { .. } => ("K".to_string(), "00".to_string()),
-                    XmEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
-                    _ => ("x".to_string(), "??".to_string()),
+                    XmEffect::SetSampleOffset(o) => ("9", format!("{:02X}", o >> 8)),
+                    XmEffect::KeyOff { .. } => ("K", "00".to_string()),
+                    // Dynamic hex digit — rare, accept the allocation.
+                    XmEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    _ => ("x", "??".to_string()),
                 },
                 FormatEffect::It(ie) => match ie {
-                    ItEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
-                    _ => ("i".to_string(), "??".to_string()),
+                    ItEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    _ => ("i", "??".to_string()),
                 },
                 FormatEffect::Mod(me) => match me {
-                    ModEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
-                    ModEffect::Filter(enabled) => ("E".to_string(), if *enabled { "00".to_string() } else { "01".to_string() }),
-                    ModEffect::FunkIt { speed } => ("EF".to_string(), format!("{:01X}", speed)),
-                    ModEffect::KarplusStrong { param } => ("E8".to_string(), format!("{:01X}", param)),
+                    ModEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    ModEffect::Filter(enabled) => ("E", if *enabled { "00".to_string() } else { "01".to_string() }),
+                    ModEffect::FunkIt { speed } => ("EF", format!("{:01X}", speed)),
+                    ModEffect::KarplusStrong { param } => ("E8", format!("{:01X}", param)),
                 },
                 FormatEffect::S3m(se) => match se {
-                    S3mEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
-                    _ => ("s".to_string(), "??".to_string()),
+                    S3mEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    _ => ("s", "??".to_string()),
                 },
                 FormatEffect::C669(ce) => match ce {
-                    C669Effect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
-                    _ => ("?".to_string(), "??".to_string()),
+                    C669Effect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    _ => ("?", "??".to_string()),
                 },
                 FormatEffect::Mmd(me) => match me {
-                    MmdEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
-                    _ => ("?".to_string(), "??".to_string()),
+                    MmdEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    _ => ("?", "??".to_string()),
                 },
                 FormatEffect::Ult(ue) => match ue {
-                    UltEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
-                    _ => ("?".to_string(), "??".to_string()),
+                    UltEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    _ => ("?", "??".to_string()),
                 },
                 FormatEffect::Stm(se) => match se {
-                    StmEffect::Raw { effect, param } => (format!("{:X}", effect), format!("{:02X}", param)),
+                    StmEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
                 },
             }
         }

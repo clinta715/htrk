@@ -2,6 +2,50 @@
 
 All notable changes to htrk will be documented in this file.
 
+## [0.26.0] - 2026-07-07
+
+### Fixed
+
+- **Clippy build blocker (3 deny-level errors)**: `src/formats/s3m.rs` had `channel < MAX_CHANNELS && channel < S3M_MAX_CHANNELS` in three places (note/volume/effect column parsing). Since `MAX_CHANNELS` (64) ≥ `S3M_MAX_CHANNELS` (32), the first clause was dead, and `clippy::redundant_comparisons` (deny-by-default) made `cargo clippy` fail outright. Removed the redundant clause; behavior unchanged (the tighter bound wins).
+
+- **Unguarded buffer indexing in audio realtime loop**: `mix_voices_per_channel` (`src/audio/mixer.rs`) indexed `ch_mix`/`pre_ch_mix` with `base + offset + i` inside the per-sample loop with no in-loop bounds check — correctness depended entirely on the caller sizing the buffer to `num_channels * 2 * stride`. Today's callers are correct, but a future buffer-sizing change would have panicked on the audio thread. Added a `debug_assert!` (zero cost in release) documenting the invariant.
+
+- **`.expect()` panics at CLAP FFI boundary**: `get_parameter` and `has_editor` (`src/audio/plugins/clap_plugin.rs`) called `.expect("instance is null")` on a raw-pointer-to-mut-ref cast. The preceding `as_ref()` check made it safe in practice, but a misbehaving plugin returning a null extension pointer would have panicked the host. Replaced with graceful early returns (`0.0` / `false`).
+
+### Performance
+
+- **MCP snapshot no longer serialized every frame**: when the MCP server is enabled, `draw_preamble` was rebuilding the full module JSON snapshot (every pattern row → `Vec<Vec<Cell>>`, every instrument/sample `serde_json::to_value`, plus the entire module serialized) on **every 60 fps frame**. Now gated behind an `Arc<Module>` pointer-identity dirty flag (`mcp_last_module_ptr`) — the snapshot is rebuilt only when an edit changes the `Arc` pointer (via `ensure_module_ownership`). The cheap playback snapshot (atomic reads) stays live every frame so MCP clients still see current transport position.
+
+- **Per-cell String allocations eliminated in pattern grid**: `format_effect` returned `(String, String)`; the effect-type column (a single hex char) heap-allocated per cell per frame. Changed to `(&'static str, String)` — the type is now a `&str` literal, and dynamic legacy `Raw` codes use a `HEX_DIGITS` lookup table instead of `format!("{:X}", n)`. `draw_cell`'s constant note/instrument/volume sentinels (`"==="`, `"---"`, `".."`) now use `Cow::Borrowed(&'static str)` instead of `.to_string()`. Only dynamic `Note::On` / numeric values allocate.
+
+- **`ui.input()` hoisted out of cell loop**: `draw_pattern_grid` called `ui.input(|i| i.pointer.hover_pos())` inside the row×channels loop — `visible_rows × visible_channels` times per frame, each re-locking egui input state. Now read once before the loop.
+
+- **`channel_panning` clone avoided**: `draw_pattern_view` was cloning the `Vec<u8>` every frame to pass to `draw_channel_headers`; now borrows the slice directly from the module.
+
+### Notes
+
+- **Audio-path `Module.clone()` intentionally left as-is**: the initial audit flagged `m.clone()` in `evaluate_automation`, `cell.rs`, `advance.rs`, `period.rs`, and the effect processors as "deep Module clones every tick." Verified that `SequencerEngine.module` is `Option<Arc<Module>>`, so these are `Arc` refcount bumps (~1ns atomic ops), not deep copies. They exist to release the `&self` borrow so `&mut self` can be used afterward. Refactoring audio-thread code for a nanosecond-scale gain was deemed not worth the regression risk.
+
+## [0.25.0] - 2026-07-06
+
+### Changed
+
+- Instrument list hard cap removed (`module.instruments.len().max(100).min(100)` → `.len()`); all 256 max instrument slots are now shown.
+- Sample palette scroll resets to top when switching instruments (tracks `prev_selected_instrument` in egui temp storage).
+- Five radio-button clusters in the instrument editor (filter type, NNA, DCT, DNA, vibrato type) wrapped in `egui::Frame::group(...)` for visual grouping.
+- Plugin parameter `ScrollArea` given explicit `id_salt("plugin_param_scroll")` so changing filter text no longer resets scroll position.
+- Envelope type/visibility moved from ephemeral egui temp storage to `InstrumentEditor` struct fields persisted via `AppConfig`.
+
+## [0.24.0] - 2026-07-04
+
+### Changed
+
+- CLAP plugin GUI fixes.
+- Procedural plugin parameter sliders.
+- Embedded-fallback popup for plugin editors.
+- File browser filter.
+- Misc cleanup.
+
 ## [0.23.0] - 2026-06-26
 
 ### Added

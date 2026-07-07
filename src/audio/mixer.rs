@@ -25,6 +25,21 @@ pub fn mix_voices_per_channel(
 ) {
     #[cfg(feature = "audio_debug")]
     static VD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    // Defensive bounds check: ch_mix / pre_ch_mix must be sized
+    // num_channels * 2 * stride by the caller. A future buffer-sizing
+    // change that breaks this invariant would otherwise panic in the
+    // realtime audio thread; this catches it in debug builds only
+    // (zero cost in release).
+    debug_assert!(
+        num_channels == 0 || num_channels * 2 * stride <= ch_mix.len(),
+        "ch_mix buffer too small: need {} samples for {} channels, have {}",
+        num_channels * 2 * stride, num_channels, ch_mix.len()
+    );
+    debug_assert!(
+        num_channels == 0 || num_channels * 2 * stride <= pre_ch_mix.len(),
+        "pre_ch_mix buffer too small: need {} samples for {} channels, have {}",
+        num_channels * 2 * stride, num_channels, pre_ch_mix.len()
+    );
     for voice in voices.iter_mut() {
         if !voice.active {
             continue;

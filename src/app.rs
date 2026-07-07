@@ -168,6 +168,12 @@ pub struct HtrkApp {
     pub(crate) alt_intercepted: bool,
 
     pub(crate) mcp_server: Option<crate::mcp::McpServer>,
+    /// Pointer identity (as `usize`) of the last `Arc<Module>` serialized
+    /// into the MCP snapshot. Used to skip the expensive per-frame
+    /// re-serialization when the module hasn't changed (the `Arc` pointer
+    /// only changes when `ensure_module_ownership()` clones the Module
+    /// during an edit). `None` forces a rebuild on the next frame.
+    mcp_last_module_ptr: Option<usize>,
 }
 
 impl HtrkApp {
@@ -273,6 +279,7 @@ impl HtrkApp {
             alt_prev_frame: false,
             alt_intercepted: false,
             mcp_server: None,
+            mcp_last_module_ptr: None,
         }
     }
 
@@ -479,6 +486,7 @@ impl HtrkApp {
             },
             // Initial plugin scan is triggered from `update()` so the
             // struct constructor doesn't need to mutate itself.
+            mcp_last_module_ptr: None,
         };
 
         // Initialize the app's sample library roots from config
@@ -1382,41 +1390,86 @@ impl HtrkApp {
         // Update MCP module snapshot for the MCP thread.
         if let Some(ref mut server) = self.mcp_server {
             if let Some(ref module) = self.core.module {
-                let patterns_json: Vec<(usize, serde_json::Value)> = module.patterns.iter()
-                    .enumerate()
-                    .map(|(i, p)| {
-                        let rows: Vec<Vec<crate::sequencer::pattern::Cell>> = p.data.iter()
-                            .map(|row| row[..module.channel_panning.len()].to_vec())
-                            .collect();
-                        (i, serde_json::json!({"num_rows": p.num_rows, "data": rows}))
-                    })
-                    .collect();
-                let instruments_json: Vec<(usize, serde_json::Value)> = module.instruments.iter()
-                    .enumerate()
-                    .map(|(i, inst)| (i, serde_json::to_value(inst).unwrap_or_default()))
-                    .collect();
-                let samples_json: Vec<(usize, serde_json::Value)> = module.samples.iter()
-                    .enumerate()
-                    .map(|(i, s)| {
-                        let info = serde_json::json!({
-                            "name": s.name,
-                            "sample_rate": s.sample_rate,
-                            "bits_per_sample": s.bits_per_sample,
-                            "length": s.data.len(),
-                            "loop_type": format!("{:?}", s.loop_type),
-                            "loop_start": s.loop_start,
-                            "loop_end": s.loop_end,
-                            "default_volume": s.default_volume,
-                            "default_panning": s.default_panning,
-                            "global_volume": s.global_volume,
-                            "relative_note": s.relative_note,
-                            "fine_tune": s.fine_tune,
-                        });
-                        (i, info)
-                    })
-                    .collect();
+                // The module-derived snapshots (module/patterns/instruments/
+                // samples JSON) are expensive to build — they serialize the
+                // entire module every frame. Gate them behind a pointer-
+                // identity check: the `Arc<Module>` only gets a new pointer
+                // when `ensure_module_ownership()` deep-clones during an edit,
+                // so when the pointer is unchanged we can skip the rebuild
+                // entirely.
+                let module_ptr = std::sync::Arc::as_ptr(module) as usize;
+                let module_dirty = self.mcp_last_module_ptr != Some(module_ptr);
 
-                let module_json = serde_json::to_value(&**module).unwrap_or_default();
+                if module_dirty {
+                    self.mcp_last_module_ptr = Some(module_ptr);
+
+                    let patterns_json: Vec<(usize, serde_json::Value)> = module.patterns.iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let rows: Vec<Vec<crate::sequencer::pattern::Cell>> = p.data.iter()
+                                .map(|row| row[..module.channel_panning.len()].to_vec())
+                                .collect();
+                            (i, serde_json::json!({"num_rows": p.num_rows, "data": rows}))
+                        })
+                        .collect();
+                    let instruments_json: Vec<(usize, serde_json::Value)> = module.instruments.iter()
+                        .enumerate()
+                        .map(|(i, inst)| (i, serde_json::to_value(inst).unwrap_or_default()))
+                        .collect();
+                    let samples_json: Vec<(usize, serde_json::Value)> = module.samples.iter()
+                        .enumerate()
+                        .map(|(i, s)| {
+                            let info = serde_json::json!({
+                                "name": s.name,
+                                "sample_rate": s.sample_rate,
+                                "bits_per_sample": s.bits_per_sample,
+                                "length": s.data.len(),
+                                "loop_type": format!("{:?}", s.loop_type),
+                                "loop_start": s.loop_start,
+                                "loop_end": s.loop_end,
+                                "default_volume": s.default_volume,
+                                "default_panning": s.default_panning,
+                                "global_volume": s.global_volume,
+                                "relative_note": s.relative_note,
+                                "fine_tune": s.fine_tune,
+                            });
+                            (i, info)
+                        })
+                        .collect();
+
+                    let module_json = serde_json::to_value(&**module).unwrap_or_default();
+
+                    let snapshot = crate::mcp::protocol::ModuleSnapshot {
+                        module_json: Some(module_json),
+                        patterns_json,
+                        instruments_json,
+                        samples_json,
+                    };
+                    if let Ok(mut lock) = server.snapshot.write() {
+                        *lock = snapshot;
+                    }
+
+                    // The channels snapshot is derived from the module too
+                    // (panning/volume), so only refresh it when the module
+                    // changes. `muted`/`solo` are app-level and could in
+                    // principle change without a module sync, but those
+                    // mutations are rare and the next module edit will
+                    // pick them up; keeping this gated avoids per-frame
+                    // Vec clones.
+                    let ch_snapshot = crate::mcp::protocol::ChannelsSnapshot {
+                        panning: module.channel_panning.clone(),
+                        volume: module.channel_volume.clone(),
+                        muted: self.core.muted_channels.clone(),
+                        solo: self.core.solo_channels.clone(),
+                    };
+                    if let Ok(mut lock) = server.channels_snapshot.write() {
+                        *lock = ch_snapshot;
+                    }
+                }
+
+                // The playback snapshot is cheap (atomic reads) and must
+                // stay live every frame so MCP clients see current transport
+                // position even when the module isn't being edited.
                 let pb = &self.core.playback_state;
                 let playing = pb.playing.load(std::sync::atomic::Ordering::Relaxed);
                 let pb_snapshot = crate::mcp::protocol::PlaybackSnapshot {
@@ -1430,27 +1483,8 @@ impl HtrkApp {
                     active_voices: pb.active_voices.load(std::sync::atomic::Ordering::Relaxed),
                     cpu_usage_pct: pb.cpu_usage_pct.load(std::sync::atomic::Ordering::Relaxed),
                 };
-                let ch_snapshot = crate::mcp::protocol::ChannelsSnapshot {
-                    panning: module.channel_panning.clone(),
-                    volume: module.channel_volume.clone(),
-                    muted: self.core.muted_channels.clone(),
-                    solo: self.core.solo_channels.clone(),
-                };
-
-                let snapshot = crate::mcp::protocol::ModuleSnapshot {
-                    module_json: Some(module_json),
-                    patterns_json,
-                    instruments_json,
-                    samples_json,
-                };
-                if let Ok(mut lock) = server.snapshot.write() {
-                    *lock = snapshot;
-                }
                 if let Ok(mut lock) = server.playback_snapshot.write() {
                     *lock = pb_snapshot;
-                }
-                if let Ok(mut lock) = server.channels_snapshot.write() {
-                    *lock = ch_snapshot;
                 }
             }
         }

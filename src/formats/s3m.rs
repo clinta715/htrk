@@ -386,7 +386,7 @@ impl FormatHandler for S3mHandler {
                                 }
                             }
                         };
-                        if channel < MAX_CHANNELS && channel < S3M_MAX_CHANNELS {
+                        if channel < S3M_MAX_CHANNELS {
                             let cell = &mut pattern.data[row][channel];
                             cell.note = note;
                             cell.instrument = instrument;
@@ -399,7 +399,7 @@ impl FormatHandler for S3mHandler {
                         }
                         let vol_byte = packed[pos];
                         pos += 1;
-                        if channel < MAX_CHANNELS && channel < S3M_MAX_CHANNELS && vol_byte <= 64 {
+                        if channel < S3M_MAX_CHANNELS && vol_byte <= 64 {
                             pattern.data[row][channel].volume = Some(vol_byte);
                         }
                     }
@@ -411,7 +411,7 @@ impl FormatHandler for S3mHandler {
                         let effect_code = packed[pos];
                         let effect_param = packed[pos + 1];
                         pos += 2;
-                        if channel < MAX_CHANNELS && channel < S3M_MAX_CHANNELS {
+                        if channel < S3M_MAX_CHANNELS {
                             pattern.data[row][channel].effect = convert_s3m_effect(effect_code, effect_param);
                         }
                     }

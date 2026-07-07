@@ -94,6 +94,14 @@ impl PatternView {
             flash
         };
 
+        // Borrow the panning slice directly from the module rather than
+        // cloning the `Vec<u8>` every frame (channel_panning only changes
+        // when the module is edited, which re-syncs the Arc).
+        let empty_panning: [u8; 0] = [];
+        let channel_panning: &[u8] = match core.module.as_ref() {
+            Some(m) => &m.channel_panning,
+            None => &empty_panning,
+        };
         let ch_resp = crate::ui::channel_headers::draw_channel_headers(
             ui,
             num_channels,
@@ -102,7 +110,7 @@ impl PatternView {
             &core.muted_channels,
             &core.solo_channels,
             &self.channel_names,
-            &core.module.as_ref().map(|m| m.channel_panning.clone()).unwrap_or_default(),
+            channel_panning,
             &core.send_levels,
             &mut self.channel_rename_state,
             theme,

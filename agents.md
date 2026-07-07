@@ -247,10 +247,12 @@ All phrase generator parameters persist via `egui::Id` temp storage (`ui.data()`
 - Effect hex strings like `"C02"`, `"A04"`, `"H83"` parsed via `parse_hex_effect()` into `Effect` enum variants.
 
 ### Snapshots
-- Built per egui frame in `draw_preamble()` after playback state is read.
+- Built in `draw_preamble()` after playback state is read.
 - `ModuleSnapshot` stores module-level JSON plus pattern/instrument/sample entries (skipping sample PCM data).
-- `PlaybackSnapshot` and `ChannelsSnapshot` store lightweight playback state.
+- `PlaybackSnapshot` is rebuilt every frame (cheap: a handful of `AtomicU32` reads) so MCP clients see live transport position.
+- `ModuleSnapshot` and `ChannelsSnapshot` are **gated behind a dirty flag** (`HtrkApp.mcp_last_module_ptr`): they are only rebuilt when the `Arc<Module>` pointer identity changes, which happens only when `ensure_module_ownership()` deep-clones the Module during an edit. Re-serializing the entire module to JSON every frame was a major per-frame cost and is now skipped when the module is unchanged.
 - Read by MCP thread under `RwLock::read()` — never blocks main thread.
+- When adding a new module-derived field to the snapshot, it belongs inside the `if module_dirty { ... }` block in `draw_preamble` so it is only rebuilt on edit. Transport/playback fields go outside the gate.
 
 ## 18. UI Style Conventions
 
@@ -280,6 +282,13 @@ Use the SP_* constants instead of inline `.add_space()`:
 - When adding a new `.size(N)` call, use the corresponding FONT_* constant.
 - When adding a new `section_header`-like label, use `style::section_header()`.
 - When adding a colored label outside standard widgets, check if an existing `theme.*` token fits before creating a new literal.
+
+### Per-Frame Allocation Discipline (Pattern Grid)
+`draw_pattern_grid` runs every frame and iterates every visible cell (visible_rows × visible_channels × 5 sub-columns). String allocations inside this loop are the dominant per-frame heap traffic. Rules:
+- `format_effect` returns `(&'static str, String)` — the effect-type column is always a `&str` literal; only the param column allocates. Use the `HEX_DIGITS: [&str; 16]` table in `pattern_grid.rs` for single hex-digit lookups instead of `format!("{:X}", n)`.
+- `draw_cell` uses `Cow<'_, str>` for note/instrument/volume text: `Cow::Borrowed` for constant sentinels (`"==="`, `"---"`, `".."`), `Cow::Owned` only for dynamic `Note::On` / numeric values. `painter.text` accepts both.
+- `ui.input(...)` must be read ONCE before the row×channel loop, never inside it — it locks egui input state per call.
+- When borrowing module data for rendering (e.g. `channel_panning`), pass `&[T]` directly rather than `.clone()`-ing the `Vec` per frame.
 
 ## 19. Sample Library (Phase 1)
 
@@ -495,4 +504,35 @@ Alt+F/E/V/A/H take priority for menu opening. The following pattern-editor short
 - The `force_open_menu` field is a one-shot — always consume it via `.take()` in `handle_menu_bar`, never read it directly.
 - Sub-menus inside top-level menus (Track, Column, Open Recent, etc.) still use `dev_menu_button` — only the 5 top-level menus use `top_menu_button`.
 - When `menu_bar_active` is true and no popup is open, navigation keys (arrows, enter, escape, menu letters) are stripped from the event queue so they don't reach the pattern editor.
+
+## 25. Instrument Editor Session (2026-07-06)
+
+### Instrument List Hard Cap
+- **File**: `src/ui/instrument_editor.rs:100`
+- Changed `module.instruments.len().max(100).min(100)` → `module.instruments.len()`
+- Shows all 256 max instrument slots; eliminates clippy warning about `.min(100)` being a no-op after `.max(100)`.
+
+### Palette Scroll Reset
+- **Files**: `src/ui/sample_palette.rs`, `src/ui/instrument_editor.rs`
+- When switching instruments, the inline sample palette scroll resets to top so the first samples of the new instrument are immediately visible.
+- Implementation: `draw_instrument_editor` tracks `prev_selected_instrument` in egui temp storage. When it changes, `draw_inline_sample_palette` receives `reset_scroll: true` and calls `ui.scroll_to_rect(top_left_pixel, Align::TOP)` on the first frame.
+
+### Radio-Button Grouping
+- **File**: `src/ui/instrument_editor.rs`
+- Five radio-button clusters (filter type, NNA action, DCT, DNA, vibrato type) are now wrapped in `egui::Frame::group(...)` with `inner_margin(3, 1)`.
+- Adds a visual border around each mutually-exclusive group, distinguishing them from adjacent controls.
+
+### Plugin Parameter Scroll Stability
+- **File**: `src/ui/sendfx_editor.rs`
+- Added `id_salt("plugin_param_scroll")` to the `ScrollArea` inside `draw_plugin_parameter_sliders`.
+- Without an explicit `id_salt`, changing the filter text changed the content height, which changed the auto-generated scroll-ID, which reset the scroll position.
+
+### Envelope State Persistence
+- **Files**: `src/ui/instrument_editor_panel.rs`, `src/ui/instrument_editor.rs`, `src/app_config.rs`, `src/app.rs`, `src/actions/file_io.rs`
+- Moved `env_type` and `env_visible` from ephemeral `ui.data()` / `ui.data_mut()` egui temp storage to `InstrumentEditor` struct fields with `AppConfig` save/load.
+- `generator_open` remains non-persistent (dialog state).
+- `InstrumentEditor` now has `envelope_type: EnvelopeType` and `envelope_visible: bool` fields with `Default`.
+- `AppConfig` has `instrument_envelope_type: Option<u8>` (0=Vol, 1=Pan, 2=Pitch, 3=Flt) and `instrument_envelope_visible: Option<bool>`.
+- Saved in `save_app_config()` and loaded in both `HtrkApp` constructors.
+- The `Show Envelopes` toggle button reads/writes `envelope_visible` on the struct directly (no intermediate `env_visible_id`).
 

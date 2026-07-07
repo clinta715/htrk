@@ -298,7 +298,13 @@ impl ClapPluginHandle {
             return 0.0;
         };
         let raw_mut = raw_ptr as *mut PluginInstance<HtrkHost>;
-        let mut_instance_mut = unsafe { raw_mut.as_mut() }.expect("instance is null");
+        // Gracefully handle a null instance pointer rather than panicking
+        // at this CLAP FFI boundary; the preceding as_ref() check should
+        // make this unreachable, but a misbehaving plugin could still
+        // return a null extension pointer.
+        let Some(mut_instance_mut) = (unsafe { raw_mut.as_mut() }) else {
+            return 0.0;
+        };
         let _ = mut_instance; // silence unused
         let mut handle = mut_instance_mut.plugin_handle();
         let Some(params) = handle.get_extension::<PluginParams>() else {
@@ -571,7 +577,7 @@ impl HostedPluginHandle for ClapPluginHandle {
                             GetAncestor, GA_PARENT, GetParent, GetWindowRect, GetWindowTextW,
                             IsWindowVisible, IsChild,
                         };
-                        let mut log_one = |h: HWND, label: &str| {
+                        let log_one = |h: HWND, label: &str| {
                             let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
                             GetWindowRect(h, &mut rect);
                             let parent = GetParent(h);
@@ -676,8 +682,12 @@ impl HostedPluginHandle for ClapPluginHandle {
         // reference to the instance. PluginInstance is !Send and we only call this
         // on the main thread, so this is safe.
         let raw_ptr: *const PluginInstance<HtrkHost> = instance;
-        let mut_instance = unsafe { (raw_ptr as *mut PluginInstance<HtrkHost>).as_mut() }
-            .expect("instance pointer is null");
+        // Gracefully handle a null instance pointer at this FFI boundary
+        // rather than panicking; the preceding as_ref() check should make
+        // this unreachable, but be defensive with plugin host code.
+        let Some(mut_instance) = (unsafe { (raw_ptr as *mut PluginInstance<HtrkHost>).as_mut() }) else {
+            return false;
+        };
         let handle = mut_instance.plugin_handle();
         // Just check whether the plugin exposes the GUI extension at all.
         // We do NOT probe is_api_supported here — some plugins (JC303)
