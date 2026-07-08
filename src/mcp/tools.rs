@@ -22,6 +22,7 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "sample_library.import",
     "phrase.generate",
     "pattern.transform",
+    "midi.import",
     "undo.last", "undo.to", "redo.last",
 ];
 
@@ -433,6 +434,16 @@ pub fn list_tools() -> Vec<ToolDefinition> {
                 "seed": {"type": "integer", "description": "RNG seed for humanize/thin (default 0)"}
             },
             "required": ["ops"]
+        })),
+
+        tool_def("midi.import", "Import a Standard MIDI File (.mid/.midi) into the current song. Each MIDI track becomes one tracker channel; notes are quantized to a rows-per-beat grid. Patterns are spliced into the order list after the target_order position. Not undoable.", json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the .mid/.midi file"},
+                "rows_per_beat": {"type": "integer", "description": "Quantization grid (4 = 16th notes, 8 = 32nds). Default 4.", "minimum": 1, "maximum": 64},
+                "target_order": {"type": "integer", "description": "Order-list position after which to splice the new patterns (default: current selected_order)"}
+            },
+            "required": ["path"]
         })),
 
         tool_def("undo.last", "Undo the most recent mutation. Returns the undone id and label.", json!({

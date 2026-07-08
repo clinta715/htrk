@@ -35,6 +35,7 @@ mod automation;
 mod envelope;
 mod history;
 mod instrument;
+mod midi;
 mod mixer;
 mod module;
 mod order;
@@ -114,6 +115,7 @@ pub fn execute_mutation(core: &mut HtrkCore, method: &str, params: &serde_json::
         // ── Phrase generation / transforms / history ──
         "phrase.generate"      => phrase::cmd_phrase_generate(core, params),
         "pattern.transform"    => transform::cmd_pattern_transform(core, params),
+        "midi.import"          => midi::cmd_midi_import(core, params),
         "undo.last"            => history::cmd_undo_last(core, params),
         "undo.to"              => history::cmd_undo_to(core, params),
         "redo.last"            => history::cmd_redo_last(core, params),

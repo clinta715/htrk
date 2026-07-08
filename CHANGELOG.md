@@ -4,6 +4,11 @@ All notable changes to htrk will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **MIDI file import (`.mid` / `.midi`).** Open a Standard MIDI File from the in-app file browser (now accepts `.mid`/`.midi`) and it imports into the *current* song rather than replacing it. Each MIDI track becomes one tracker channel (track 0 → ch 0, …, capped at 64); note timing is quantized to a `rows_per_beat` grid (default 4 = 16th notes, so `row = round(midi_tick / ticks_per_row)`); velocity maps to the volume column (0–64). The resulting patterns are appended to `module.patterns` and spliced into the order list immediately after the user's current edit position, so playback flows from the cursor into the imported material. The MIDI tempo meta-event is honored only when the current module is still at the default BPM. **Not undoable** (structural merge, like `module.load`). Decoding lives in `src/formats/midi.rs` (`midly` crate); the action is `crate::actions::import_midi`. Limitations (v1): only the first tempo is honored; pitch bend / CC / program changes are dropped; MIDI channel 10 (drums) is not specially mapped; sub-tick timing is quantized away.
+- **MCP `midi.import` tool.** Same importer exposed over MCP with params `path` (required), `rows_per_beat` (optional, default 4), and `target_order` (optional, default current position). Registered in `MUTATION_TOOLS` and given a full `tool_def` schema in `list_tools()`.
+
 ### Changed
 
 - **Split `src/mcp/mutations.rs` into a per-domain module directory.** The 2,102-line flat file (45 mutation handlers + helpers in one place) is now `src/mcp/mutations/` — a 14-file directory with one file per domain (`module`, `order`, `pattern`, `transform`, `instrument`, `sample`, `envelope`, `automation`, `playback`, `mixer`, `phrase`, `history`, plus `common` for shared helpers and `mod.rs` for dispatch). Each handler retains its uniform `fn(&mut HtrkCore, &serde_json::Value) -> CmdResult` signature and `pub(super)` visibility. The public entry point `crate::mcp::mutations::execute_mutation` is unchanged, so the sole caller (`app.rs`) needed no edits. **No behavior change** — pure code organization verified by the full 401-test suite.

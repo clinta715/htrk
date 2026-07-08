@@ -34,7 +34,7 @@ impl Default for DialogMode {
 impl BrowserMode {
     pub fn extensions(&self) -> Vec<&'static str> {
         match self {
-            BrowserMode::Modules => vec!["htk", "it", "xm", "s3m", "mod", "669", "ult", "mmd1", "mmd3", "stm"],
+            BrowserMode::Modules => vec!["htk", "it", "xm", "s3m", "mod", "669", "ult", "mmd1", "mmd3", "stm", "mid", "midi"],
             BrowserMode::Samples => vec!["wav"],
             BrowserMode::Instruments => vec!["hti"],
             BrowserMode::Projects => vec!["htk"],

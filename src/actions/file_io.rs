@@ -95,6 +95,110 @@ pub(crate) fn import_wav(app: &mut HtrkApp, path: &str) {
     }
 }
 
+/// Import a Standard MIDI File (`.mid`/`.midi`) into the current song.
+///
+/// Each MIDI track becomes one tracker channel; timing is quantized to a
+/// `rows_per_beat` grid (default 4 = 16th notes). The resulting patterns are
+/// appended to `module.patterns` and spliced into the order list immediately
+/// after the user's current `selected_order` position, so playback continues
+/// from the current spot into the imported material.
+///
+/// Like `load_file`, this is **not undoable** — it's a structural merge.
+pub(crate) fn import_midi(app: &mut HtrkApp, path: &str) {
+    import_midi_with_opts(app, path, 4);
+}
+
+/// Import MIDI with an explicit `rows_per_beat` quantization grid.
+pub(crate) fn import_midi_with_opts(app: &mut HtrkApp, path: &str, rows_per_beat: u32) {
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Failed to read MIDI file: {}", e);
+            return;
+        }
+    };
+
+    let imported = match crate::formats::midi::import_midi(&data, rows_per_beat) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("Failed to import MIDI: {}", e);
+            return;
+        }
+    };
+
+    if imported.patterns.is_empty() {
+        eprintln!("MIDI import produced no patterns (empty file?)");
+        return;
+    }
+
+    if app.core.module.is_none() {
+        app.new_song();
+    }
+
+    let stem = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("MIDI import")
+        .to_string();
+
+    app.core.with_module_mut(|module, core| {
+        // Base index where the new patterns will live.
+        let base = module.patterns.len();
+        if base + imported.patterns.len() > 256 {
+            eprintln!(
+                "MIDI import needs {} pattern slots but only {} are free (max 256); truncating",
+                imported.patterns.len(),
+                256usize.saturating_sub(base)
+            );
+        }
+        let take = imported.patterns.len().min(256usize.saturating_sub(base));
+        for p in imported.patterns.into_iter().take(take) {
+            module.patterns.push(p);
+        }
+
+        // Splice the new pattern indices into the order list right after the
+        // current position so playback flows into the imported material.
+        let insert_at = (core.selected_order + 1).min(module.order_list.len());
+        for (i, off) in imported.order_offsets.iter().enumerate().take(take) {
+            let pat_idx = base + i;
+            if pat_idx <= u8::MAX as usize {
+                module.order_list.insert(insert_at + i, pat_idx as u8);
+            }
+            let _ = off; // off == i by construction
+        }
+
+        // Honor the MIDI tempo only if the current module is at the default
+        // tempo (don't clobber a deliberate user tempo).
+        if imported.bpm > 0
+            && module.initial_bpm == crate::sequencer::module::DEFAULT_BPM
+        {
+            module.initial_bpm = imported.bpm;
+        }
+
+        // Make sure channel_volume / channel_panning are wide enough for the
+        // imported channels.
+        let need = imported.channels_used.max(module.channel_panning.len());
+        if module.channel_panning.len() < need {
+            module.channel_panning.resize(need, crate::sequencer::module::PANNING_CENTER);
+        }
+        if module.channel_volume.len() < need {
+            module.channel_volume.resize(need, crate::sequencer::module::VOLUME_MAX);
+        }
+
+        let _ = stem;
+        if imported.tracks_skipped > 0 {
+            eprintln!(
+                "MIDI import: {} tracks skipped (beyond {}-channel limit)",
+                imported.tracks_skipped, crate::sequencer::pattern::MAX_CHANNELS
+            );
+        }
+    });
+
+    // Re-size per-channel state arrays to match the new channel count.
+    app.core.sync_channel_fields();
+    add_recent_file(app, path);
+}
+
 pub(crate) fn save_current_file(app: &mut HtrkApp) {
     let path = match &app.core.file_path {
         Some(p) => p.clone(),

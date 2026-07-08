@@ -3,6 +3,7 @@ pub mod c669;
 pub mod htk;
 pub mod hti;
 pub mod it;
+pub mod midi;
 pub mod mmd;
 pub mod s3m;
 pub mod stm;

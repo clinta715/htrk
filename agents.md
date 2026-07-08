@@ -537,3 +537,30 @@ Alt+F/E/V/A/H take priority for menu opening. The following pattern-editor short
 - Saved in `save_app_config()` and loaded in both `HtrkApp` constructors.
 - The `Show Envelopes` toggle button reads/writes `envelope_visible` on the struct directly (no intermediate `env_visible_id`).
 
+# Session Pitfalls (2026-07-08)
+
+## 26. MIDI File Import
+
+### Architecture
+- **Decoder**: `src/formats/midi.rs` — `pub fn import_midi(data: &[u8], rows_per_beat: u32) -> FormatResult<MidiImport>`. Pure parsing + conversion, no `HtrkCore`/UI coupling. Uses the `midly` crate (`Smf::parse`). Returns a `MidiImport { patterns, order_offsets, bpm, track_names, channels_used, rows_per_pattern, tracks_skipped }`.
+- **Action**: `crate::actions::import_midi(app, path)` (and `import_midi_with_opts(app, path, rows_per_beat)`) in `src/actions/file_io.rs`. Reads bytes, calls `import_midi`, then merges via `app.core.with_module_mut`: appends patterns, splices order list at `selected_order + 1`, grows `channel_volume`/`channel_panning`. Modeled on `import_wav`. Calls `sync_channel_fields()` + `add_recent_file()`.
+- **MCP**: `src/mcp/mutations/midi.rs` — `cmd_midi_import(core, params)`. Same merge logic, params `path`/`rows_per_beat`/`target_order`. Registered in `mutations/mod.rs` dispatch + `MUTATION_TOOLS` + a full `tool_def` schema in `tools.rs`.
+
+### Conversion Rules
+- **Track → channel**: 1 MIDI track = 1 tracker channel (track 0 → ch 0). Tracks beyond `MAX_CHANNELS` (64) are skipped (`tracks_skipped` count returned). MIDI channel 10 (drums) is **not** specially mapped in v1 — it lands on its track's assigned channel like any other.
+- **Timing**: quantized to a `rows_per_beat` grid (default 4 = 16th notes). `ticks_per_row = ppq / rows_per_beat` (rounded, min 1); `row = round(midi_tick / ticks_per_row)`. Sub-tick timing is quantized away (no NoteDelay/EDx effects emitted). Songs are sliced into fixed 64-row `Pattern`s (`ROWS_PER_PATTERN`).
+- **Note-on** → `Note::On(midi_key)` (the `Note::On(u8)` payload IS a raw MIDI key; key 60 = C-4). **Note-off** → `Note::Off`, placed only on empty cells; note-ons overwrite note-offs at the same (row, channel) so retriggers win. Velocity 1–127 → volume column 0–64 (`(vel*64+63)/127`). `instrument` is set to `channel + 1` as a placeholder.
+- **Tempo**: only the first `Set Tempo` meta-event is honored (`bpm = 60000000 / mpqn`); later tempo changes are ignored. The action applies it only when `module.initial_bpm == DEFAULT_BPM` (doesn't clobber a deliberate user tempo).
+- **Dropped events**: pitch bend, CC, aftertouch, program changes, SysEx — no meaningful tracker representation in v1. `TrackName` meta-events are captured into `track_names` for reporting.
+
+### Merge Semantics (NOT song-replace)
+- Import merges into the **current** song (like WAV import), unlike `load_file` which replaces. New patterns are appended at `module.patterns.len()` (the `base`); their indices are spliced into `order_list` at `selected_order + 1` (shifts later entries down), so the imported material plays immediately after the current position.
+- **Not undoable** — structural merge, same as `module.load`. Documented in the CHANGELOG.
+- Channel arrays (`channel_volume`, `channel_panning`) are grown (with defaults `VOLUME_MAX`/`PANNING_CENTER`) if the import uses more channels than the module currently has.
+
+### Rule for Future Changes
+- The browser dispatch for `.mid`/`.midi` is in `app.rs` `BrowserPurpose::General` arm (`else if ext == "mid" || ext == "midi" => crate::actions::import_midi`). The extension list is `file_browser.rs` `BrowserMode::Modules`.
+- When extending the decoder (e.g. sub-tick NoteDelay, drum mapping, tempo-effect maps), keep `import_midi` pure (no `HtrkCore`) — all module mutation belongs in the action or the MCP mutation, which own the `ensure_module_ownership`/`sync_module_to_audio` contract (§5).
+- Add new `MidiImport` fields with `#[serde(...)]`-free plain `pub` fields — `MidiImport` is not serialized, it's passed by value from decoder to action.
+- The midly API note: `midly = "0.5"` (not 0.8). `TrackEvent.delta` is a `u28` accessed via `.as_int()` (returns `u32`); deltas are **relative** and must be accumulated into absolute ticks. Velocity-0 note-ons are note-offs (SMF convention).
+

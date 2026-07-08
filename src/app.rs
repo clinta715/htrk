@@ -1903,6 +1903,8 @@ impl HtrkApp {
                                     .to_lowercase();
                                 if ext == "wav" {
                                     crate::actions::import_wav(self, &path_str);
+                                } else if ext == "mid" || ext == "midi" {
+                                    crate::actions::import_midi(self, &path_str);
                                 } else {
                                     crate::actions::load_file(self, &path_str);
                                 }
