@@ -231,8 +231,8 @@ All phrase generator parameters persist via `egui::Id` temp storage (`ui.data()`
 - **Mutation path**: When `tools::call_tool` returns `"Requires mutation dispatch"`, the server thread creates an `McpCommand { method, params, response_tx }` and sends it via `mpsc::Sender<McpCommand>` to the main thread. It then blocks on `response_rx.recv()` waiting for the result.
 - **Main thread** (`HtrkApp::draw_preamble`): Drains `server.command_rx.try_recv()` in a loop, calling `crate::mcp::mutations::execute_mutation(&mut self.core, &cmd.method, &cmd.params)` for each pending command. Result is sent back via `cmd.response_tx.send()`.
 
-### Mutation Tool Implementation (`src/mcp/mutations.rs`)
-- `execute_mutation()` dispatches by `method` string to per-tool handler functions.
+### Mutation Tool Implementation (`src/mcp/mutations/`)
+- `execute_mutation()` in `mutations/mod.rs` dispatches by `method` string to per-domain handler functions. The handlers live in one file per domain: `module.rs`, `order.rs`, `pattern.rs`, `transform.rs`, `instrument.rs`, `sample.rs`, `envelope.rs`, `automation.rs`, `playback.rs`, `mixer.rs` (channel + sendfx), `phrase.rs`, `history.rs` (undo/redo). Shared helpers (`parse_note`, the `get_*!` typed-param extraction macros) live in `common.rs`.
 - Each handler follows the pattern:
   1. `core.ensure_module_ownership()`
   2. `if let Some(arc_module) = Arc::get_mut(module)` for direct mutations
@@ -241,10 +241,11 @@ All phrase generator parameters persist via `egui::Id` temp storage (`ui.data()`
 - `MUTATION_TOOLS` constant in `tools.rs` lists all tools requiring main-thread dispatch.
 - `mcp_enabled` and `mcp_port` fields in `AppConfig` control server lifecycle.
 - Server started in `HtrkApp::default()` if `mcp_enabled == true`; stopped in `on_exit()`.
+- **Rule for Future Changes**: when adding a new mutation tool, (a) add the handler `fn` to the appropriate domain file (or create a new domain file + `mod` declaration in `mod.rs` if it's a new domain), (b) mark it `pub(super)`, (c) add a match arm in `execute_mutation()` in `mod.rs`, (d) if the tool needs main-thread dispatch, also add it to `MUTATION_TOOLS` in `tools.rs`. The dispatch table is the single source of truth for which methods exist.
 
 ### Note Parsing
-- `parse_note(s)` in `mutations.rs` accepts IT/XM note names (`C-5`, `D#4`, `---`, `===`, `^^^`, `~~~`) and bare MIDI key numbers (`60`).
-- Effect hex strings like `"C02"`, `"A04"`, `"H83"` parsed via `parse_hex_effect()` into `Effect` enum variants.
+- `parse_note(s)` in `mutations/common.rs` accepts IT/XM note names (`C-5`, `D#4`, `---`, `===`, `^^^`, `~~~`) and bare MIDI key numbers (`60`).
+- Effect hex strings like `"C02"`, `"A04"`, `"H83"` parsed via `parse_hex_effect()` in `mutations/pattern.rs` into `Effect` enum variants.
 
 ### Snapshots
 - Built in `draw_preamble()` after playback state is read.

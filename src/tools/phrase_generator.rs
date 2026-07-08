@@ -156,19 +156,23 @@ impl Default for PhraseParams {
     }
 }
 
-struct Lcg(u64);
+/// Tiny deterministic PRNG (numerical-recipes LCG) used by the phrase
+/// generator and shared with the MCP `pattern.transform` mutation. Kept
+/// `pub(crate)` so the transform tool can reuse it instead of carrying a
+/// duplicate copy.
+pub(crate) struct Lcg(u64);
 
 impl Lcg {
-    fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         Lcg(seed.wrapping_add(1) | 1)
     }
 
-    fn next(&mut self) -> u32 {
+    pub(crate) fn next(&mut self) -> u32 {
         self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         (self.0 >> 32) as u32
     }
 
-    fn f32(&mut self) -> f32 {
+    pub(crate) fn f32(&mut self) -> f32 {
         (self.next() >> 8) as f32 * 1.0 / 16777216.0
     }
 }

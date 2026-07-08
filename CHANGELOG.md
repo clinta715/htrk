@@ -2,6 +2,14 @@
 
 All notable changes to htrk will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **Split `src/mcp/mutations.rs` into a per-domain module directory.** The 2,102-line flat file (45 mutation handlers + helpers in one place) is now `src/mcp/mutations/` — a 14-file directory with one file per domain (`module`, `order`, `pattern`, `transform`, `instrument`, `sample`, `envelope`, `automation`, `playback`, `mixer`, `phrase`, `history`, plus `common` for shared helpers and `mod.rs` for dispatch). Each handler retains its uniform `fn(&mut HtrkCore, &serde_json::Value) -> CmdResult` signature and `pub(super)` visibility. The public entry point `crate::mcp::mutations::execute_mutation` is unchanged, so the sole caller (`app.rs`) needed no edits. **No behavior change** — pure code organization verified by the full 401-test suite.
+
+- **De-duplicated the `Lcg` RNG.** A byte-identical numerical-recipes LCG existed in both `tools/phrase_generator.rs` and `mcp/mutations.rs` (with a comment admitting the copy was made "to avoid touching the pub surface"). `phrase_generator::Lcg` is now `pub(crate)` and shared by the `pattern.transform` mutation via `use`. The duplicate copy and its apologetic comment are gone.
+
 ## [0.26.0] - 2026-07-07
 
 ### Fixed
