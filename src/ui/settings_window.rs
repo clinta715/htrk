@@ -58,6 +58,7 @@ pub struct SettingsState {
 
     default_interpolation: String,
     limiter_mode: String,
+    anti_click_ramping: bool,
     output_device_names: Vec<String>,
     selected_device_name: Option<String>,
     preferred_sample_rate: Option<u32>,
@@ -107,6 +108,7 @@ impl SettingsState {
 
             default_interpolation: config.default_interpolation.clone(),
             limiter_mode: config.limiter_mode.clone(),
+            anti_click_ramping: config.anti_click_ramping,
             output_device_names: Vec::new(),
             selected_device_name: None,
             preferred_sample_rate: config.preferred_sample_rate,
@@ -151,6 +153,7 @@ impl SettingsState {
 
         config.default_interpolation = self.default_interpolation.clone();
         config.limiter_mode = self.limiter_mode.clone();
+        config.anti_click_ramping = self.anti_click_ramping;
         if let Some(ref name) = self.selected_device_name {
             config.output_device_name = Some(name.clone());
         }
@@ -518,6 +521,16 @@ fn draw_audio_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerT
                 }
             }
         });
+
+    ui.add_space(8.0);
+    super::style::section_header(ui, "Volume Ramping", theme);
+    ui.add_space(4.0);
+    ui.checkbox(&mut state.anti_click_ramping, "Anti-click ramping")
+        .on_hover_text(
+            "Ramp per-voice volume/panning per-sample to eliminate note-onset \
+             clicks and zipper noise on volume changes. Disable for bit-exact \
+             legacy playback. Applies to all formats.",
+        );
 
     ui.add_space(8.0);
     super::style::section_header(ui, "Preferred Sample Rate", theme);

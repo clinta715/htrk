@@ -667,6 +667,7 @@ impl LegacyProcessor {
         if engine.amiga_led_filter {
             engine.voice_pool.voices[voice_idx].amiga_led_filter = true;
         }
+        engine.voice_pool.voices[voice_idx].ramp_enabled = engine.ramp_enabled;
         if sample.loop_type == LoopType::Backward {
             engine.voice_pool.voices[voice_idx].direction = -1.0;
             if sample_offset == 0 {

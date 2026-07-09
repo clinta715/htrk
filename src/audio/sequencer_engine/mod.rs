@@ -29,6 +29,11 @@ pub struct SequencerEngine {
     pub(crate) output_sample_rate: f64,
     pub(crate) use_xm_model: bool,
     pub(crate) amiga_led_filter: bool,
+    /// When true, newly triggered voices get `ramp_enabled = true` so the
+    /// mixer ramps their volume/panning per-sample (note-onset anti-click +
+    /// inter-tick zipper smoothing). Mirrors the `amiga_led_filter` push-to-
+    /// voice pattern. Set from `AppConfig.anti_click_ramping`.
+    pub(crate) ramp_enabled: bool,
     pub pending_send_fx_params: Vec<(usize, u32, f32)>,
     /// Pending plugin-param automation values, populated by
     /// `apply_automation_to_channel` and drained by the audio engine
@@ -68,6 +73,7 @@ impl SequencerEngine {
             output_sample_rate,
             use_xm_model: false,
             amiga_led_filter: false,
+            ramp_enabled: true,
             pending_send_fx_params: Vec::new(),
             pending_plugin_param_changes: Vec::new(),
             pending_instrument_plugin_param_changes: Vec::new(),

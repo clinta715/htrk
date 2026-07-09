@@ -37,6 +37,10 @@ pub enum AudioCommand {
 
     SetInterpolation(InterpolationType),
     SetLimiterMode(LimiterMode),
+    /// Enable/disable per-voice volume/panning ramping (anti-click + zipper
+    /// smoothing). Sets `SequencerEngine.ramp_enabled`, which is pushed to
+    /// voices at trigger.
+    SetAntiClickRamping(bool),
 
     TriggerPreviewNote {
         sample_index: usize,

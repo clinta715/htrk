@@ -926,6 +926,10 @@ impl HtrkApp {
             _ => crate::audio::commands::LimiterMode::HardClip,
         };
         self.core.send_command(crate::audio::commands::AudioCommand::SetLimiterMode(limiter));
+
+        self.core.send_command(crate::audio::commands::AudioCommand::SetAntiClickRamping(
+            self.config.anti_click_ramping,
+        ));
     }
 
     fn apply_config_to_live_state(&mut self) {

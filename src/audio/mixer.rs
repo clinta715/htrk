@@ -8,6 +8,98 @@ use crate::sequencer::sample::LoopType;
 
 use crate::audio::playback_state::MAX_CHANNELS;
 
+/// Maximum length (in samples) of the note-onset anti-click fade-in. When a
+/// voice triggers, `smoothed_volume` starts at 0 and ramps to `final_volume`
+/// over at most this many samples (≈1.3 ms at 48 kHz), regardless of the tick
+/// chunk length, so the fade is always a quick de-click rather than a slow
+/// swell. After the onset ramp completes, gentle inter-tick ramping takes over.
+const ONSET_RAMP_SAMPLES: usize = 64;
+
+/// Per-voice per-sample gain ramp state. Holds only copied `f32`/`bool` values
+/// (no borrow of `Voice`), so it can be advanced inside the mix loop while an
+/// immutable borrow of `voice.sample` is live. The final smoothed values are
+/// written back to the voice via `finish` after the loop.
+struct GainRamp {
+    target_vol: f32,
+    target_pan: f32,
+    vol_step: f32,
+    pan_step: f32,
+    cur_vol: f32,
+    cur_pan: f32,
+    ramp: bool,
+}
+
+impl GainRamp {
+    /// Build the ramp setup for a voice about to render `len` samples.
+    #[inline]
+    fn new(voice: &Voice, master_volume: f32, len: usize) -> Self {
+        let target_vol = voice.final_volume * master_volume;
+        let target_pan = voice.final_panning;
+        if voice.ramp_enabled {
+            // Onset ramp: cap the fade-in length so a long tick chunk doesn't
+            // turn the de-click into a slow swell. Inter-tick ramping (once
+            // smoothed_volume ≈ target) naturally uses the full chunk length.
+            let ramp_len = if voice.smoothed_volume == 0.0 {
+                len.clamp(1, ONSET_RAMP_SAMPLES)
+            } else {
+                len.max(1)
+            };
+            let inv = 1.0 / ramp_len as f32;
+            let vol_step = (target_vol - voice.smoothed_volume) * inv;
+            let pan_step = (target_pan - voice.smoothed_panning) * inv;
+            GainRamp {
+                target_vol,
+                target_pan,
+                vol_step,
+                pan_step,
+                cur_vol: voice.smoothed_volume,
+                cur_pan: voice.smoothed_panning,
+                ramp: true,
+            }
+        } else {
+            // Flat-gain bit-exact path: start at the target, zero step.
+            GainRamp {
+                target_vol,
+                target_pan,
+                vol_step: 0.0,
+                pan_step: 0.0,
+                cur_vol: target_vol,
+                cur_pan: target_pan,
+                ramp: false,
+            }
+        }
+    }
+
+    /// Advance one sample and return `(vol, pan)`, clamped to the target so a
+    /// fractional step never overshoots in either direction.
+    #[inline]
+    fn next(&mut self) -> (f32, f32) {
+        if self.ramp {
+            let nv = self.cur_vol + self.vol_step;
+            self.cur_vol = if self.target_vol >= self.cur_vol {
+                nv.min(self.target_vol)
+            } else {
+                nv.max(self.target_vol)
+            };
+            let np = self.cur_pan + self.pan_step;
+            self.cur_pan = if self.target_pan >= self.cur_pan {
+                np.min(self.target_pan)
+            } else {
+                np.max(self.target_pan)
+            };
+        }
+        (self.cur_vol, self.cur_pan)
+    }
+
+    /// Write the final smoothed values back to the voice so the next chunk
+    /// continues smoothly. Called once after the render loop.
+    #[inline]
+    fn finish(self, voice: &mut Voice) {
+        voice.smoothed_volume = self.cur_vol;
+        voice.smoothed_panning = self.cur_pan;
+    }
+}
+
 pub fn mix_voices_per_channel(
     voices: &mut [Voice],
     output_left: &mut [f32],
@@ -64,12 +156,7 @@ pub fn mix_voices_per_channel(
                 voice.active = false;
                 continue;
             }
-            let vol = voice.final_volume * master_volume;
-            let pan = voice.final_panning;
-            let left_gain = vol * (1.0 - pan);
-            let right_gain = vol * pan;
-            let pre_left_gain = left_gain;
-            let pre_right_gain = right_gain;
+            let mut ramp = GainRamp::new(voice, master_volume, len);
             let ch_idx = voice.channel.unwrap_or(MAX_CHANNELS);
             for i in 0..len {
                 if voice.ks_pos >= delay_len {
@@ -82,20 +169,21 @@ pub fn mix_voices_per_channel(
                     voice.ks_delay_line[0]
                 };
                 voice.ks_delay_line[voice.ks_pos] = (s + next) * 0.5 * voice.ks_feedback;
-                let fl = s * left_gain;
-                let fr = s * right_gain;
+                let (vol, pan) = ramp.next();
+                let fl = s * (vol * (1.0 - pan));
+                let fr = s * (vol * pan);
                 output_left[i] += fl;
                 output_right[i] += fr;
                 if ch_idx < num_channels {
                     let base = ch_idx * 2 * stride;
                     ch_mix[base + offset + i] += fl;
                     ch_mix[base + stride + offset + i] += fr;
-                    let pfl = s * pre_left_gain;
-                    let pfr = s * pre_right_gain;
-                    pre_ch_mix[base + offset + i] += pfl;
-                    pre_ch_mix[base + stride + offset + i] += pfr;
+                    // Pre-fader uses the same ramped gain.
+                    pre_ch_mix[base + offset + i] += fl;
+                    pre_ch_mix[base + stride + offset + i] += fr;
                 }
             }
+            ramp.finish(voice);
             continue;
         }
 
@@ -111,10 +199,7 @@ pub fn mix_voices_per_channel(
         let loop_start = voice.loop_start;
         let loop_end = voice.loop_end;
 
-        let vol = voice.final_volume * master_volume;
-        let pan = voice.final_panning;
-        let left_gain = vol * (1.0 - pan);
-        let right_gain = vol * pan;
+        let mut ramp = GainRamp::new(voice, master_volume, len);
 
         let has_filter = voice.filter_cutoff < 65534.0
             && voice.filter_resonance > 0.001
@@ -132,8 +217,6 @@ pub fn mix_voices_per_channel(
         };
 
         let ch_idx = voice.channel.unwrap_or(MAX_CHANNELS);
-        let pre_left_gain = vol * (1.0 - pan);
-        let pre_right_gain = vol * pan;
 
         for i in 0..len {
             if voice.position < 0.0 || voice.position as usize >= sample_data.len() {
@@ -162,8 +245,9 @@ pub fn mix_voices_per_channel(
                 filtered
             };
 
-            let fl = led_filtered * left_gain;
-            let fr = led_filtered * right_gain;
+            let (vol, pan) = ramp.next();
+            let fl = led_filtered * (vol * (1.0 - pan));
+            let fr = led_filtered * (vol * pan);
             output_left[i] += fl;
             output_right[i] += fr;
 
@@ -171,11 +255,9 @@ pub fn mix_voices_per_channel(
                 let base = ch_idx * 2 * stride;
                 ch_mix[base + offset + i] += fl;
                 ch_mix[base + stride + offset + i] += fr;
-
-                let pfl = led_filtered * pre_left_gain;
-                let pfr = led_filtered * pre_right_gain;
-                pre_ch_mix[base + offset + i] += pfl;
-                pre_ch_mix[base + stride + offset + i] += pfr;
+                // Pre-fader metering uses the same ramped gain.
+                pre_ch_mix[base + offset + i] += fl;
+                pre_ch_mix[base + stride + offset + i] += fr;
             }
 
             voice.position += voice.sample_delta * voice.direction;
@@ -235,6 +317,7 @@ pub fn mix_voices_per_channel(
                 }
             }
         }
+        ramp.finish(voice);
     }
 }
 
@@ -273,11 +356,9 @@ pub fn mix_voices(
                 voice.active = false;
                 continue;
             }
-            let vol = voice.final_volume * master_volume;
-            let pan = voice.final_panning;
-            let left_gain = vol * (1.0 - pan);
-            let right_gain = vol * pan;
-            for i in 0..output_left.len() {
+            let len = output_left.len();
+            let mut ramp = GainRamp::new(voice, master_volume, len);
+            for i in 0..len {
                 if voice.ks_pos >= delay_len {
                     voice.ks_pos = 0;
                 }
@@ -288,10 +369,12 @@ pub fn mix_voices(
                     voice.ks_delay_line[0]
                 };
                 voice.ks_delay_line[voice.ks_pos] = (s + next) * 0.5 * voice.ks_feedback;
-                output_left[i] += s * left_gain;
-                output_right[i] += s * right_gain;
+                let (vol, pan) = ramp.next();
+                output_left[i] += s * (vol * (1.0 - pan));
+                output_right[i] += s * (vol * pan);
                 voice.ks_pos += 1;
             }
+            ramp.finish(voice);
             continue;
         }
 
@@ -307,10 +390,8 @@ pub fn mix_voices(
         let loop_start = voice.loop_start;
         let loop_end = voice.loop_end;
 
-        let vol = voice.final_volume * master_volume;
-        let pan = voice.final_panning;
-        let left_gain = vol * (1.0 - pan);
-        let right_gain = vol * pan;
+        let len = output_left.len();
+        let mut ramp = GainRamp::new(voice, master_volume, len);
 
         let has_filter = voice.filter_cutoff < 65534.0
             && voice.filter_resonance > 0.001
@@ -327,7 +408,7 @@ pub fn mix_voices(
             0.0
         };
 
-        for i in 0..output_left.len() {
+        for i in 0..len {
             if voice.position < 0.0 || voice.position as usize >= sample_data.len() {
                 voice.active = false;
                 break;
@@ -354,8 +435,9 @@ pub fn mix_voices(
                 filtered
             };
 
-            output_left[i] += led_filtered * left_gain;
-            output_right[i] += led_filtered * right_gain;
+            let (vol, pan) = ramp.next();
+            output_left[i] += led_filtered * (vol * (1.0 - pan));
+            output_right[i] += led_filtered * (vol * pan);
 
             voice.position += voice.sample_delta * voice.direction;
 
@@ -414,6 +496,7 @@ pub fn mix_voices(
                 }
             }
         }
+        ramp.finish(voice);
     }
 }
 
@@ -845,5 +928,174 @@ mod tests {
         let ratio_expected = 1.6 / 1.4;
         assert!((ratio - ratio_expected).abs() < 0.001,
             "uniform gain preserves left/right ratio");
+    }
+
+    /// Helper: a voice reading a constant-1.0 sample (DC), so the only thing
+    /// that varies in the output is the applied gain — making ramp values
+    /// trivial to assert. Center-panned, `final_volume` configurable.
+    fn make_dc_voice(final_volume: f32) -> Voice {
+        let data = vec![1.0_f32; 4096];
+        let mut voice = Voice::default();
+        voice.active = true;
+        voice.sample = Some(Arc::new(data));
+        voice.sample_rate = 48000.0;
+        voice.loop_type = LoopType::None;
+        voice.position = 0.0;
+        voice.sample_delta = 1.0; // advance one sample per output sample
+        voice.base_volume = final_volume;
+        voice.envelope_volume = 1.0;
+        voice.fade_out_volume = 1.0;
+        voice.final_volume = final_volume;
+        voice.final_panning = 0.5; // center
+        voice.ramp_enabled = false;
+        voice
+    }
+
+    #[test]
+    fn mix_voice_ramp_onset_fades_in_from_silence() {
+        // A freshly triggered voice starts smoothed_volume at 0 and ramps up.
+        // With ramp_enabled, sample[0] should be near-silent and the final
+        // sample of the onset ramp should reach the target.
+        let mut voice = make_dc_voice(1.0);
+        voice.ramp_enabled = true;
+        voice.smoothed_volume = 0.0; // simulate post-trigger onset state
+        voice.smoothed_panning = 0.5;
+
+        let len = ONSET_RAMP_SAMPLES; // onset ramp completes within this
+        let mut left = vec![0.0_f32; len];
+        let mut right = vec![0.0_f32; len];
+        mix_voices(
+            std::slice::from_mut(&mut voice),
+            &mut left, &mut right,
+            1.0, // master_volume
+            InterpolationType::Nearest,
+            &[],
+            48000.0,
+        );
+
+        // First sample is near-silence (ramp just started).
+        assert!(left[0].abs() < 0.1, "onset sample[0] should be near 0, got {}", left[0]);
+        // Last sample of the onset ramp reaches the target gain (1.0 * center pan = 0.5).
+        assert!((left[len - 1] - 0.5).abs() < 0.05,
+            "onset ramp end should reach target gain 0.5, got {}", left[len - 1]);
+        // Monotonic increase across the ramp.
+        assert!(left[len - 1] > left[0], "onset ramp must rise");
+    }
+
+    #[test]
+    fn mix_voice_ramp_inter_tick_smooths_volume_change() {
+        // smoothed_volume=0.5, final_volume=1.0 → ramp across the chunk from
+        // 0.5 toward 1.0. Mid-sample should be ~midpoint, end should hit target.
+        let mut voice = make_dc_voice(1.0);
+        voice.ramp_enabled = true;
+        voice.smoothed_volume = 0.5;
+        voice.smoothed_panning = 0.5;
+
+        let len = 100;
+        let mut left = vec![0.0_f32; len];
+        let mut right = vec![0.0_f32; len];
+        mix_voices(
+            std::slice::from_mut(&mut voice),
+            &mut left, &mut right,
+            1.0,
+            InterpolationType::Nearest,
+            &[],
+            48000.0,
+        );
+
+        // gain at sample i (center pan) = cur_vol * 0.5 after stepping.
+        // Start cur_vol 0.5, step = (1.0-0.5)/100 = 0.005. At sample 50,
+        // cur_vol ≈ 0.5 + 51*0.005 ≈ 0.755 → output ≈ 0.755*0.5 ≈ 0.38.
+        let mid_gain = left[50];
+        assert!((mid_gain - 0.375).abs() < 0.02,
+            "mid-ramp gain should be ~0.375 (0.75 vol * 0.5 center-pan), got {}", mid_gain);
+        // End reaches target (center-panned: 1.0 * 0.5 = 0.5).
+        assert!((left[len - 1] - 0.5).abs() < 0.01,
+            "end of inter-tick ramp should reach target 0.5, got {}", left[len - 1]);
+    }
+
+    #[test]
+    fn mix_voice_ramp_disabled_uses_flat_gain() {
+        // ramp_enabled=false → bit-exact flat path. All samples equal the
+        // target gain regardless of smoothed_volume's starting value.
+        let mut voice = make_dc_voice(0.8);
+        voice.ramp_enabled = false;
+        voice.smoothed_volume = 0.0; // would ramp if enabled; ignored when disabled
+        voice.smoothed_panning = 0.5;
+
+        let len = 50;
+        let mut left = vec![0.0_f32; len];
+        let mut right = vec![0.0_f32; len];
+        mix_voices(
+            std::slice::from_mut(&mut voice),
+            &mut left, &mut right,
+            1.0,
+            InterpolationType::Nearest,
+            &[],
+            48000.0,
+        );
+
+        let expected = 0.8 * 0.5; // vol * center-pan
+        for i in 0..len {
+            assert!((left[i] - expected).abs() < 0.001,
+                "flat-path sample[{}] should be {}, got {}", i, expected, left[i]);
+        }
+    }
+
+    #[test]
+    fn mix_voice_ramp_clamps_no_overshoot() {
+        // smoothed_volume already at 0.9, target 1.0, long chunk. The ramp
+        // must land exactly on 1.0 and never overshoot.
+        let mut voice = make_dc_voice(1.0);
+        voice.ramp_enabled = true;
+        voice.smoothed_volume = 0.9;
+        voice.smoothed_panning = 0.5;
+
+        let len = 200;
+        let mut left = vec![0.0_f32; len];
+        let mut right = vec![0.0_f32; len];
+        mix_voices(
+            std::slice::from_mut(&mut voice),
+            &mut left, &mut right,
+            1.0,
+            InterpolationType::Nearest,
+            &[],
+            48000.0,
+        );
+
+        // Center-panned target gain = 1.0 * 0.5 = 0.5. No sample exceeds it.
+        for i in 0..len {
+            assert!(left[i] <= 0.5 + 0.001,
+                "sample[{}] overshoots target: {}", i, left[i]);
+        }
+        assert!((left[len - 1] - 0.5).abs() < 0.01,
+            "ramp end should be exactly target, got {}", left[len - 1]);
+    }
+
+    #[test]
+    fn mix_voice_ramp_descending_volume() {
+        // Target LOWER than current (volume slide down): ramp must decrease,
+        // not be blocked by an ascending-only clamp.
+        let mut voice = make_dc_voice(0.4);
+        voice.ramp_enabled = true;
+        voice.smoothed_volume = 0.8;
+        voice.smoothed_panning = 0.5;
+
+        let len = 80;
+        let mut left = vec![0.0_f32; len];
+        let mut right = vec![0.0_f32; len];
+        mix_voices(
+            std::slice::from_mut(&mut voice),
+            &mut left, &mut right,
+            1.0,
+            InterpolationType::Nearest,
+            &[],
+            48000.0,
+        );
+
+        // Start ~0.8*0.5=0.4, end ~0.4*0.5=0.2 (descending).
+        assert!(left[0] > left[len - 1], "descending ramp must decrease");
+        assert!((left[len - 1] - 0.2).abs() < 0.01,
+            "descending ramp end should reach 0.2, got {}", left[len - 1]);
     }
 }

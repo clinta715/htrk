@@ -37,12 +37,19 @@ pub struct Voice {
     pub fade_out_volume: f32,
     pub final_volume: f32,
 
+    /// Current per-sample ramp position the mixer advances toward
+    /// `final_volume`. Starts at 0.0 on `trigger` (note-onset anti-click
+    /// fade-in) and is ramped each sample by the mixer toward the current
+    /// `final_volume`. When `ramp_enabled` is false the mixer holds this equal
+    /// to `final_volume` (bit-exact flat-gain path).
     pub smoothed_volume: f32,
 
     pub base_panning: f32,
     pub envelope_panning: f32,
     pub final_panning: f32,
 
+    /// Current per-sample ramp position toward `final_panning` (see
+    /// `smoothed_volume`).
     pub smoothed_panning: f32,
 
     pub vol_env: Option<EnvelopeState>,
@@ -59,6 +66,12 @@ pub struct Voice {
     pub amiga_led_svf: StateVariableFilter,
     pub filter_enabled: bool,
     pub amiga_led_filter: bool,
+    /// When true, the mixer ramps `smoothed_volume`/`smoothed_panning` toward
+    /// `final_volume`/`final_panning` per-sample, eliminating note-onset
+    /// clicks and inter-tick zipper noise. When false, the mixer applies a
+    /// flat per-chunk gain (bit-exact legacy behavior). Set at trigger from
+    /// the engine's `ramp_enabled` flag (mirrors `amiga_led_filter`).
+    pub ramp_enabled: bool,
 
     pub vibrato_phase: f32,
     pub vibrato_speed: u8,
@@ -149,7 +162,11 @@ impl Voice {
         self.tremolo_volume = 0.0;
         self.fade_out_volume = 1.0;
         self.final_volume = volume;
-        self.smoothed_volume = volume;
+        // Start the ramp from silence so the first chunk fades in (note-onset
+        // anti-click). The mixer advances this toward `final_volume` each
+        // sample. `ramp_enabled` gates whether the mixer actually ramps; when
+        // false it forces `smoothed_volume = final_volume` (no onset ramp).
+        self.smoothed_volume = 0.0;
         self.base_panning = panning;
         self.envelope_panning = 0.0;
         self.final_panning = panning;
@@ -167,6 +184,7 @@ self.filter_type = FilterType::LowPass;
         self.amiga_led_svf = StateVariableFilter::default();
         self.filter_enabled = true;
         self.amiga_led_filter = false;
+        self.ramp_enabled = false;
         self.vibrato_phase = 0.0;
         self.vibrato_speed = 0;
         self.vibrato_depth = 0;
@@ -247,6 +265,7 @@ impl Default for Voice {
             amiga_led_svf: StateVariableFilter::default(),
             filter_enabled: true,
             amiga_led_filter: false,
+            ramp_enabled: false,
             vibrato_phase: 0.0,
             vibrato_speed: 0,
             vibrato_depth: 0,

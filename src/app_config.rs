@@ -108,6 +108,12 @@ pub struct AppConfig {
     pub default_interpolation: String,
     #[serde(default = "default_limiter")]
     pub limiter_mode: String,
+    /// When true, the mixer ramps per-voice volume/panning per-sample toward
+    /// the tick target (eliminating note-onset clicks and inter-tick zipper
+    /// noise). When false, the mixer applies flat per-tick gains (bit-exact
+    /// legacy reproduction). Default ON for all formats.
+    #[serde(default = "default_true")]
+    pub anti_click_ramping: bool,
     #[serde(default)]
     pub output_device_name: Option<String>,
     #[serde(default)]
@@ -257,6 +263,7 @@ impl Default for AppConfig {
             row_highlight_major: default_row_highlight_major(),
             default_interpolation: default_interpolation(),
             limiter_mode: default_limiter(),
+            anti_click_ramping: default_true(),
             output_device_name: None,
             preferred_sample_rate: None,
 

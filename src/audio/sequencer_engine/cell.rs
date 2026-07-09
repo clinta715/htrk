@@ -8,6 +8,59 @@ use crate::sequencer::pattern::Cell;
 use crate::sequencer::sample::Sample;
 
 impl SequencerEngine {
+    /// Release the most recent held note on `channel` if that channel's
+    /// current instrument is backed by a CLAP plugin.
+    ///
+    /// Tracks are monophonic from the sequencer's point of view: just like a
+    /// new sample note cuts off the previous sample voice (via `handle_nna`),
+    /// a new plugin note must first release the previous one, an explicit
+    /// `Note::Off` must reach the plugin, and `Note::Cut` / `Note::Fade` must
+    /// also silence any sounding plugin voice. The CLAP note-off identifies
+    /// the note to release by `(channel, key)`, so the *real* key from the
+    /// channel's `last_note` is used — never a placeholder 0.
+    ///
+    /// `hard_cut` selects the release style: `true` emits an immediate
+    /// note-off (used for `Note::Cut` and new-note interruption), `false`
+    /// also emits a note-off (CLAP synths treat the release-velocity/
+    /// envelope tail themselves, matching the sample path's `Note::Fade`
+    /// behavior of letting the instrument's release phase run).
+    ///
+    /// This is a no-op when the channel has no plugin instrument or no
+    /// prior `Note::On` is recorded.
+    fn emit_plugin_note_off(&mut self, channel: usize, instrument_idx: u8, hard_cut: bool) {
+        let _ = hard_cut; // CLAP note-off carries no cut/fade distinction; both send NoteOffEvent.
+        let key = match self.state.channels.get(channel) {
+            Some(ch) => match ch.last_note {
+                Note::On(k) if k < 120 => k,
+                _ => return, // No held note to release.
+            },
+            None => return,
+        };
+        let midi_ch = {
+            let module = match self.module.as_ref() {
+                Some(m) => m,
+                None => return,
+            };
+            let idx = instrument_idx as usize;
+            if idx == 0 || idx >= module.instruments.len() {
+                return;
+            }
+            if module.instruments[idx].plugin.is_none() {
+                return;
+            }
+            module.instruments[idx]
+                .midi_base_channel
+                .wrapping_add(channel as u8) % 16
+        };
+        self.pending_plugin_note_events.push(PluginNoteEvent {
+            instrument_idx,
+            midi_channel: midi_ch,
+            key,
+            velocity: 0,
+            note_on: false,
+        });
+    }
+
     pub(crate) fn process_tick_zero_unified(&mut self) {
         let pattern_index = self.state.current_pattern as usize;
         let row = self.state.current_row as usize;
@@ -53,6 +106,11 @@ impl SequencerEngine {
         if channel >= self.state.channels.len() {
             return;
         }
+        // Snapshot the channel's instrument BEFORE this cell updates it, so a
+        // new Note::On can release the previously-held note on the PREVIOUS
+        // instrument's plugin (instrument changes mid-channel).
+        let prev_instrument = self.state.channels[channel].last_instrument;
+
         // Common: instrument
         if cell.instrument.is_some() {
             self.state.channels[channel].last_instrument = cell.instrument.unwrap();
@@ -134,14 +192,21 @@ impl SequencerEngine {
                 } else {
                     match cell.note {
                         Note::On(key) => {
-                            self.state.channels[channel].last_note = Note::On(key);
-
                             let has_plugin = has_instruments
                                 && instrument_idx > 0
                                 && instrument_idx < module.instruments.len()
                                 && module.instruments[instrument_idx].plugin.is_some();
 
                             if has_plugin {
+                                // Monophonic interruption: a track plays one
+                                // note at a time, so a new Note::On must first
+                                // release the previously-held plugin note on
+                                // this channel (mirrors the sample path calling
+                                // `handle_nna(NoteCut)` before `allocate_voice`).
+                                // Must run BEFORE updating `last_note` below, so
+                                // the helper reads the OLD key from channel state.
+                                self.emit_plugin_note_off(channel, prev_instrument, true);
+
                                 let midi_ch = module.instruments[instrument_idx]
                                     .midi_base_channel
                                     .wrapping_add(channel as u8) % 16;
@@ -176,6 +241,10 @@ impl SequencerEngine {
                             } else {
                                 self.with_processor_mut(|processor, engine| processor.trigger_note(engine, channel, key, remapped_key, sample, sample_idx, cell, instrument_idx));
                             }
+                            // Record the new note as the channel's held note
+                            // (after the plugin release above so it doesn't
+                            // shadow the previous note being interrupted).
+                            self.state.channels[channel].last_note = Note::On(key);
                         }
                 Note::Off => {
                     let has_plugin = has_instruments
@@ -183,24 +252,25 @@ impl SequencerEngine {
                         && instrument_idx < module.instruments.len()
                         && module.instruments[instrument_idx].plugin.is_some();
                     if has_plugin {
-                        let midi_ch = module.instruments[instrument_idx]
-                            .midi_base_channel
-                            .wrapping_add(channel as u8) % 16;
-                        self.pending_plugin_note_events.push(PluginNoteEvent {
-                            instrument_idx: instrument_idx as u8,
-                            midi_channel: midi_ch,
-                            key: 0,
-                            velocity: 0,
-                            note_on: false,
-                        });
+                        // Release the held plugin note by its real key. A CLAP
+                        // note-off matches the sounding voice by (channel, key),
+                        // so we must use the previously-played key, not a
+                        // placeholder, or the synth never sees the release.
+                        self.emit_plugin_note_off(channel, instrument_idx as u8, false);
                     } else {
                         self.with_processor_mut(|processor, engine| processor.handle_note_off(engine, channel));
                     }
                 }
                 Note::Cut => {
+                    // Cut must also silence any sounding plugin voice on this
+                    // channel, not just sample voices.
+                    self.emit_plugin_note_off(channel, instrument_idx as u8, true);
                     self.cut_channel_voices(channel);
                 }
                 Note::Fade => {
+                    // Fade releases plugin voices (the synth's own release tail
+                    // runs) in addition to starting sample-voice fades.
+                    self.emit_plugin_note_off(channel, instrument_idx as u8, false);
                     self.fade_channel_voices(channel);
                 }
                 Note::None => {}

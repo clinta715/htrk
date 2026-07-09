@@ -1526,16 +1526,134 @@ fn test_plugin_instrument_queues_note_off() {
     module.instruments[1].plugin = Some(PluginSlot::new("clap", "/dev/null", "test.plugin"));
     engine.load_module(Arc::new(module));
 
+    // A Note::Off with no held note is a no-op: there is nothing to release.
     let cell = Cell {
         note: Note::Off,
         instrument: Some(1),
         ..Default::default()
     };
     engine.process_cell_unified(0, &cell);
+    assert_eq!(
+        engine.collect_plugin_note_events().len(),
+        0,
+        "note-off with no held note must not queue an event"
+    );
+
+    // Now play a note, then release it. The off must carry the REAL key.
+    let on = Cell { note: Note::On(60), instrument: Some(1), ..Default::default() };
+    engine.process_cell_unified(0, &on);
+    engine.collect_plugin_note_events(); // drain the note-on
+
+    let off = Cell { note: Note::Off, instrument: Some(1), ..Default::default() };
+    engine.process_cell_unified(0, &off);
 
     let events = engine.collect_plugin_note_events();
     assert_eq!(events.len(), 1);
     assert!(!events[0].note_on);
+    assert_eq!(events[0].key, 60, "note-off must carry the held note's key, not 0");
+}
+
+#[test]
+fn test_plugin_new_note_interrupts_previous() {
+    use crate::sequencer::plugin::PluginSlot;
+
+    let mut engine = SequencerEngine::new(48000.0);
+    let mut module = Module::default();
+    module.instruments[1].plugin = Some(PluginSlot::new("clap", "/dev/null", "test.plugin"));
+    engine.load_module(Arc::new(module));
+
+    // Play C-4 on track 0.
+    let on1 = Cell { note: Note::On(60), instrument: Some(1), ..Default::default() };
+    engine.process_cell_unified(0, &on1);
+    engine.collect_plugin_note_events(); // drain
+
+    // Play E-4 on the SAME track. Tracks are monophonic, so this must first
+    // release C-4 (note-off for key 60) before queuing the E-4 note-on.
+    let on2 = Cell { note: Note::On(64), instrument: Some(1), ..Default::default() };
+    engine.process_cell_unified(0, &on2);
+
+    let events = engine.collect_plugin_note_events();
+    assert_eq!(events.len(), 2, "interruption must emit note-off then note-on");
+    assert!(!events[0].note_on, "first event must be the release of the old note");
+    assert_eq!(events[0].key, 60, "old note (C-4) must be released by its real key");
+    assert!(events[1].note_on, "second event must be the new note-on");
+    assert_eq!(events[1].key, 64, "new note must be E-4");
+}
+
+#[test]
+fn test_plugin_note_cut_releases_held_note() {
+    use crate::sequencer::plugin::PluginSlot;
+
+    let mut engine = SequencerEngine::new(48000.0);
+    let mut module = Module::default();
+    module.instruments[1].plugin = Some(PluginSlot::new("clap", "/dev/null", "test.plugin"));
+    engine.load_module(Arc::new(module));
+
+    let on = Cell { note: Note::On(60), instrument: Some(1), ..Default::default() };
+    engine.process_cell_unified(0, &on);
+    engine.collect_plugin_note_events(); // drain
+
+    // Note::Cut must reach the plugin, releasing the held note by its key.
+    let cut = Cell { note: Note::Cut, instrument: Some(1), ..Default::default() };
+    engine.process_cell_unified(0, &cut);
+
+    let events = engine.collect_plugin_note_events();
+    assert_eq!(events.len(), 1, "Note::Cut must queue a plugin note-off");
+    assert!(!events[0].note_on);
+    assert_eq!(events[0].key, 60);
+}
+
+#[test]
+fn test_plugin_note_off_no_held_note_is_noop() {
+    use crate::sequencer::plugin::PluginSlot;
+
+    let mut engine = SequencerEngine::new(48000.0);
+    let mut module = Module::default();
+    module.instruments[1].plugin = Some(PluginSlot::new("clap", "/dev/null", "test.plugin"));
+    engine.load_module(Arc::new(module));
+
+    // Cut and Fade with no held note must not emit spurious events.
+    let cut = Cell { note: Note::Cut, instrument: Some(1), ..Default::default() };
+    engine.process_cell_unified(0, &cut);
+    let fade = Cell { note: Note::Fade, instrument: Some(1), ..Default::default() };
+    engine.process_cell_unified(0, &fade);
+
+    assert_eq!(
+        engine.collect_plugin_note_events().len(),
+        0,
+        "cut/fade with no held note must not queue plugin events"
+    );
+}
+
+#[test]
+fn test_plugin_interruption_releases_previous_instrument_note() {
+    use crate::sequencer::plugin::PluginSlot;
+
+    // Instrument change mid-channel: the new note must release the note held
+    // on the PREVIOUS instrument's plugin, using prev_instrument.
+    let mut engine = SequencerEngine::new(48000.0);
+    let mut module = Module::default();
+    module.instruments[1].plugin = Some(PluginSlot::new("clap", "/dev/null", "inst1"));
+    module.instruments[2].plugin = Some(PluginSlot::new("clap", "/dev/null", "inst2"));
+    engine.load_module(Arc::new(module));
+
+    // Play on instrument 1.
+    let on1 = Cell { note: Note::On(60), instrument: Some(1), ..Default::default() };
+    engine.process_cell_unified(0, &on1);
+    engine.collect_plugin_note_events(); // drain
+
+    // Switch to instrument 2 with a new note: must release inst 1's note.
+    let on2 = Cell { note: Note::On(64), instrument: Some(2), ..Default::default() };
+    engine.process_cell_unified(0, &on2);
+
+    let events = engine.collect_plugin_note_events();
+    assert_eq!(events.len(), 2);
+    assert!(!events[0].note_on);
+    assert_eq!(events[0].instrument_idx, 1, "release must target the previous instrument");
+    assert_eq!(events[0].key, 60);
+    assert!(events[1].note_on);
+    assert_eq!(events[1].instrument_idx, 2);
+    assert_eq!(events[1].key, 64);
 }
 
 #[test]

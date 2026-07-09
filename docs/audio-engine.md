@@ -784,6 +784,30 @@ impl AudioEngine {
 }
 ```
 
+### Per-Sample Gain Ramping (v0.27.0)
+
+The pseudocode above shows `output = sample_value * voice.final_volume` with a
+flat gain per buffer. The actual mixer now **ramps** the per-voice gain
+per-sample rather than holding it flat across the tick chunk:
+
+- `Voice.smoothed_volume` / `smoothed_panning` are the per-sample ramp
+  position, advanced each sample toward `final_volume` / `final_panning` by a
+  `GainRamp` helper. A linear step sized to reach the target exactly at chunk
+  end means there is zero discontinuity at the next tick seam.
+- **Note-onset anti-click**: `smoothed_volume` starts at `0.0` on `trigger`, so
+  a fresh voice fades in over at most `ONSET_RAMP_SAMPLES` (64 samples / ≈1.3 ms
+  @48k) regardless of chunk length. After the onset, `smoothed_volume ≈
+  final_volume` and subsequent chunks do gentle inter-tick smoothing.
+- The step is clamped to the target so fractional steps never overshoot (in
+  either direction — handles rising and falling volume slides).
+- Gated by `Voice.ramp_enabled`, set from `SequencerEngine.ramp_enabled` at
+  trigger (mirrors `amiga_led_filter`). When `false`, the mixer applies the
+  flat per-chunk gain shown in the pseudocode above (bit-exact legacy mode).
+  Default ON for all formats, toggleable via `AppConfig.anti_click_ramping`.
+
+This is purely a mixer concern: the effect/envelope engine still computes
+`final_volume` once per tick — only its *rendering* is smoothed.
+
 ### Constant Power Panning Law
 
 Standard linear panning creates a "hole in the middle" effect. Constant power

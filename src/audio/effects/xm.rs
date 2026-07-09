@@ -593,6 +593,7 @@ impl XmProcessor {
             fade_out,
         );
         voice.channel = Some(channel);
+        voice.ramp_enabled = engine.ramp_enabled;
         if sample.loop_type == LoopType::Backward {
             voice.direction = -1.0;
             let max_pos = sample.data.len().max(1) - 1;

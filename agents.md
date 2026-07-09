@@ -356,12 +356,13 @@ Use the SP_* constants instead of inline `.add_space()`:
 - `PluginSlot` struct in `mod.rs` (re-exported in sequencer module) holds `{ format, path, plugin_id, state }`.
 - Phase 2 send FX integration will add `send_bus_plugins: [Option<PluginSlot>; 4]` to `Module`.
 
-### CLAP Integration Status (Phases 1-5.1)
+### CLAP Integration Status (Phases 1-5.2 + instrument note lifecycle)
 - **Phase 1-2 (done)**: trait, types, discovery, library, dependencies, real CLAP process() with AudioPorts/EventBuffer, send FX wiring, persistence (`Module.send_bus_plugins`), MCP tools.
 - **Phase 5 (done, Windows only)**: plugin editor windows. `open_editor(mode, parent_hwnd)` probes floating first, falls back to embedded. macOS/Linux deferred.
 - **Phase 5.1 (done)**: `HtrkHostShared` implements `HostLog` + `HostGui`. `tracing` integration with stderr default and optional file via `AppConfig.log_file_path`. `EditorMode` enum (Floating | Embedded). X-close detection via `IsWindowVisible` polling. Editor errors surfaced as red labels. F6 = Send FX, F7 = Automation.
-- **Phase 5.2 (done)**: CLAP plugin parameter extension. `HostedPluginHandle::parameter_info()` enumerates params via clack `PluginParams` ext (id, name, min/max, IS_AUTOMATABLE, IS_MODULATABLE). `get_parameter`/`set_parameter` on the trait, routed through `param_ring: Arc<ParamRingBuffer>` (SPSC, 256 slots, lock-free) shared with `ClapPluginProcessor` which drains the ring in `process()` and pushes `ParamValueEvent`s to the plugin's input. New `AutomationTarget::PluginParam { send_bus, host_index, param_id }` variant (serde-skip) — sequencer queues automation values; audio engine routes them to the right plugin's ring after each `process_tick()`. Send FX view has a "Parameters" collapsible section with one slider per param. Persisted mapping: the `param_index_to_id` cache in `ClapPluginHandle` survives a load (re-enumerated on the next access). Currently: 347 tests pass.
-- **Phase 3-4, 6 (future)**: instrument plugins, VST3, plugin param envelopes (sustain/release curves over time). See `docs/parameter-extension-todo.md` for the full plan.
+- **Phase 5.2 (done)**: CLAP plugin parameter extension. `HostedPluginHandle::parameter_info()` enumerates params via clack `PluginParams` ext (id, name, min/max, IS_AUTOMATABLE, IS_MODULATABLE). `get_parameter`/`set_parameter` on the trait, routed through `param_ring: Arc<ParamRingBuffer>` (SPSC, 256 slots, lock-free) shared with `ClapPluginProcessor` which drains the ring in `process()` and pushes `ParamValueEvent`s to the plugin's input. New `AutomationTarget::PluginParam { send_bus, host_index, param_id }` variant (serde-skip) — sequencer queues automation values; audio engine routes them to the right plugin's ring after each `process_tick()`. Send FX view has a "Parameters" collapsible section with one slider per param. Persisted mapping: the `param_index_to_id` cache in `ClapPluginHandle` survives a load (re-enumerated on the next access).
+- **Instrument plugins + note lifecycle (done)**: `Instrument.plugin: Option<PluginSlot>` discriminates sample vs plugin instruments. The sequencer checks this in `process_cell_unified` (`src/audio/sequencer_engine/cell.rs`); when set, it queues a `PluginNoteEvent` instead of calling `trigger_note`, and the audio engine drains events each tick into `instrument_plugin_processors: [Option<Box<dyn HostedPluginProcessor>>; 255]` (1-based instrument index), installed via `AudioCommand::InstallInstrumentPlugin`. MIDI channel routing is `instruments[idx].midi_base_channel + channel_index`. **Monophonic track semantics (fixed v0.27.0)**: tracks play one note at a time, mirroring the sample path's `handle_nna(NoteCut)`. The `emit_plugin_note_off` helper releases the channel's previously-held note by its real key (from `channels[channel].last_note`) on `Note::On` (interruption, using `prev_instrument` so an instrument change mid-channel targets the right plugin), `Note::Off`, `Note::Cut`, and `Note::Fade`. No-op when no plugin or no held note. A chord requires N tracks feeding N notes to a polyphonic VST.
+- **Phase 6 (future)**: VST3, plugin param envelopes (sustain/release curves over time). See `docs/parameter-extension-todo.md` for the full plan. Currently: 416 tests pass.
 
 ### Editor Threading
 - `HostedPluginHandle` is `!Send` (CLAP `PluginInstance` is `!Send`). It must live on the main thread.
@@ -564,3 +565,30 @@ Alt+F/E/V/A/H take priority for menu opening. The following pattern-editor short
 - Add new `MidiImport` fields with `#[serde(...)]`-free plain `pub` fields — `MidiImport` is not serialized, it's passed by value from decoder to action.
 - The midly API note: `midly = "0.5"` (not 0.8). `TrackEvent.delta` is a `u28` accessed via `.as_int()` (returns `u32`); deltas are **relative** and must be accumulated into absolute ticks. Velocity-0 note-ons are note-offs (SMF convention).
 
+## 27. Mixer Per-Sample Gain Ramping + Note-Onset Anti-Click (2026-07-09)
+
+### The Problem
+The mixer stepped per-voice volume/panning once per tick-aligned chunk (gains hoisted before the per-sample loop and held flat). Because the engine renders one tick chunk per `mix_voices_per_channel` call and `final_volume`/`final_panning` change once per tick in `advance_envelopes`, every volume slide / panning change / tremolo tick produced a hard discontinuity at the tick boundary (zipper noise), and every note onset produced a click from a sudden full-volume start.
+
+### The Fix
+Per-sample gain ramping inside the mixer's render loop. Two modes share one mechanism:
+
+1. **Note-onset anti-click**: `Voice::trigger` initializes `smoothed_volume = 0.0` (from silence). The mixer ramps it toward `final_volume` over at most `ONSET_RAMP_SAMPLES` (64 samples, ≈1.3 ms @48k), regardless of chunk length, so the fade is always a quick de-click rather than a slow swell. After the onset ramp, `smoothed_volume ≈ final_volume`.
+2. **Inter-tick zipper smoothing**: within each chunk of length `len`, the ramp advances from the previous chunk's rendered value toward the current `final_volume`/`final_panning`, landing exactly on target at chunk end (zero discontinuity at the next seam).
+
+### Architecture
+- `Voice.smoothed_volume` / `smoothed_panning` (previously dead — written in `trigger`/`default`/tests, never read) are repurposed as the per-sample ramp position. The mixer advances them each sample.
+- `Voice.ramp_enabled: bool` gates the behavior, set at trigger from `SequencerEngine.ramp_enabled` (mirrors the `amiga_led_filter` engine-flag → per-voice-bool pattern). When `false`, the mixer snaps `smoothed_*` to the targets and applies flat per-chunk gains (bit-exact legacy reproduction).
+- `GainRamp` helper (`mixer.rs`) holds all ramp state as copied `f32`/`bool` values (no `&Voice` borrow), so it advances inside the per-sample loop without conflicting with the immutable `voice.sample` borrow. `next()` clamps to the target so fractional steps never overshoot in either direction (handles both rising volume slides and falling ones). `finish(self, voice)` writes the final smoothed values back to the voice after the loop.
+- Applies to all four render paths: sample playback + Karplus-Strong, in both `mix_voices_per_channel` (production) and `mix_voices` (test/offline).
+
+### Configuration
+- `AppConfig.anti_click_ramping: bool` (default **true**, persisted). Threaded via `AudioCommand::SetAntiClickRamping` → `SequencerEngine.ramp_enabled` → per-voice `ramp_enabled` at the two `trigger_note` sites (`legacy.rs`, `xm.rs`) and all three preview-note paths (`engine.rs`).
+- Wired in `apply_audio_settings_to_engine` (`app.rs`), which is called on startup and when Settings is saved. Audio settings tab has a "Volume Ramping" → "Anti-click ramping" checkbox with a tooltip explaining the bit-exact tradeoff.
+
+### Rule for Future Changes
+- The ramp is **purely a mixer concern** — no change to the effect/envelope engine, preserving legacy timing fidelity (§8). Effects and envelopes continue to set `final_volume`/`final_panning` once per tick; the mixer smooths their *rendering*, not their *computation*.
+- When adding a new render path to the mixer, it must use the `GainRamp` helper (call `GainRamp::new` before the loop, `.next()` per sample, `.finish(voice)` after) so it gets ramping for free. Set the voice's `ramp_enabled` at its trigger site.
+- `ONSET_RAMP_SAMPLES` (64) is a `const` at the top of `mixer.rs`. Tunable; do not make it a runtime value without considering the per-voice branch in the inner loop.
+- Do **not** repurpose `smoothed_volume`/`smoothed_panning` for anything else — they are load-bearing ramp state read by the mixer every sample.
+- Per-sample **filter cutoff** ramping is deferred (cutoff steps per-tick too, but filter zipper is far less audible than gain zipper). If added later, follow the same `GainRamp`-style struct-of-values pattern to avoid the `voice.sample` borrow conflict.

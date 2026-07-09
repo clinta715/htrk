@@ -476,11 +476,14 @@ struct Voice {
     global_volume: f32,                  // Global module volume factor
     fade_out_volume: f32,                // Current fade-out level (1.0 → 0.0)
     final_volume: f32,                   // Computed: product of all volume factors
+    smoothed_volume: f32,                // Per-sample ramp position toward final_volume (mixer advances each sample; 0.0 on trigger for anti-click)
 
     // Panning
     base_panning: f32,                   // 0.0 = left, 0.5 = center, 1.0 = right
     envelope_panning: f32,               // Envelope panning offset (-0.5 to +0.5)
     final_panning: f32,                  // Computed: clamped base + envelope offset
+    smoothed_panning: f32,               // Per-sample ramp position toward final_panning (mixer)
+    ramp_enabled: bool,                  // When true, mixer ramps smoothed_* per-sample (anti-click + zipper smoothing); false = flat bit-exact gain
 
     // Envelope state
     vol_env: Option<EnvelopeState>,

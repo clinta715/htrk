@@ -578,6 +578,9 @@ impl AudioEngine {
                     self.limiter_mode = mode;
                     self.limiter_gain = 1.0;
                 }
+                AudioCommand::SetAntiClickRamping(enabled) => {
+                    self.sequencer.ramp_enabled = enabled;
+                }
                 AudioCommand::TriggerPreviewNote { sample_index, note_key, volume, panning } => {
                     self.trigger_preview_note(sample_index, note_key, volume, panning);
                 }
@@ -863,6 +866,7 @@ impl AudioEngine {
             crate::sequencer::instrument::NewNoteAction::NoteCut,
             0,
         );
+        voice.ramp_enabled = self.sequencer.ramp_enabled;
     }
 
     pub fn trigger_preview_note(&mut self, sample_index: usize, note_key: u8, volume: f32, panning: f32) {
@@ -903,6 +907,7 @@ impl AudioEngine {
             NewNoteAction::NoteCut,
             0,
         );
+        voice.ramp_enabled = self.sequencer.ramp_enabled;
     }
 
     pub fn trigger_preview_buffer(&mut self, data: Arc<Vec<f32>>, sample_rate: u32, note_key: u8, volume: f32, panning: f32) {
@@ -933,6 +938,7 @@ impl AudioEngine {
             NewNoteAction::NoteCut,
             0,
         );
+        voice.ramp_enabled = self.sequencer.ramp_enabled;
     }
 
     fn apply_pending_send_params(&mut self) {
