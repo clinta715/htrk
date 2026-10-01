@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use crate::app::HtrkApp;
-use crate::edit::{
-    SampleProperty, SetSampleDataCommand, SetSamplePropertyCommand,
-};
+use crate::edit::{SampleProperty, SetSampleDataCommand, SetSamplePropertyCommand};
 use crate::ui::sample_editor::SampleEditEvent;
 
 pub(crate) enum SelectionUpdate {
@@ -11,7 +9,10 @@ pub(crate) enum SelectionUpdate {
     Set(usize, usize),
 }
 
-pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> Option<SelectionUpdate> {
+pub(crate) fn handle_sample_edit(
+    app: &mut HtrkApp,
+    event: SampleEditEvent,
+) -> Option<SelectionUpdate> {
     // Handle events that don't need the current sample
     if let SampleEditEvent::DeleteSamples(indices) = event {
         handle_delete_samples(app, indices);
@@ -19,14 +20,8 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> O
     }
 
     let sample_idx = app.core.selected_sample;
-    let module = match &app.core.module {
-        Some(m) => m,
-        None => return None,
-    };
-    let sample = match module.samples.get(sample_idx) {
-        Some(s) => s,
-        None => return None,
-    };
+    let module = app.core.module.as_ref()?;
+    let sample = module.samples.get(sample_idx)?;
 
     let cmd: Box<dyn crate::edit::EditCommand> = match event {
         SampleEditEvent::NameChanged(n) => Box::new(SetSamplePropertyCommand {
@@ -104,11 +99,12 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> O
             let mut data = (*sample.data).clone();
             app.sample_editor.clipboard = Some(Arc::new(data[s..e].to_vec()));
             data.drain(s..e);
-            app.core.execute_edit_command(Box::new(SetSampleDataCommand {
-                sample_index: sample_idx,
-                old_data: sample.data.clone(),
-                new_data: Arc::new(data),
-            }));
+            app.core
+                .execute_edit_command(Box::new(SetSampleDataCommand {
+                    sample_index: sample_idx,
+                    old_data: sample.data.clone(),
+                    new_data: Arc::new(data),
+                }));
             return Some(SelectionUpdate::Clear);
         }
         SampleEditEvent::CopyRegion(s, e) => {
@@ -118,10 +114,7 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> O
             return None;
         }
         SampleEditEvent::PasteRegion(pos) => {
-            let clip = match app.sample_editor.clipboard.as_ref() {
-                Some(c) => c.clone(),
-                None => return None,
-            };
+            let clip = app.sample_editor.clipboard.as_ref()?.clone();
             let data = (*sample.data).clone();
             let pos = pos.min(data.len());
             let mut new_data = Vec::with_capacity(data.len() + clip.len());
@@ -139,11 +132,12 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> O
             let e = s.max(e);
             let new_len = e - s;
             let data = sample.data[s..e].to_vec();
-            app.core.execute_edit_command(Box::new(SetSampleDataCommand {
-                sample_index: sample_idx,
-                old_data: sample.data.clone(),
-                new_data: Arc::new(data),
-            }));
+            app.core
+                .execute_edit_command(Box::new(SetSampleDataCommand {
+                    sample_index: sample_idx,
+                    old_data: sample.data.clone(),
+                    new_data: Arc::new(data),
+                }));
             return Some(SelectionUpdate::Set(0, new_len));
         }
         SampleEditEvent::Amplify(factor) => {
@@ -174,8 +168,16 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> O
             let data = &sample.data;
             let threshold = 0.001;
             let start = data.iter().position(|&x| x.abs() > threshold).unwrap_or(0);
-            let end = data.iter().rposition(|&x| x.abs() > threshold).map(|p| p + 1).unwrap_or(data.len());
-            let trimmed = if start < end { data[start..end].to_vec() } else { Vec::new() };
+            let end = data
+                .iter()
+                .rposition(|&x| x.abs() > threshold)
+                .map(|p| p + 1)
+                .unwrap_or(data.len());
+            let trimmed = if start < end {
+                data[start..end].to_vec()
+            } else {
+                Vec::new()
+            };
             Box::new(SetSampleDataCommand {
                 sample_index: sample_idx,
                 old_data: sample.data.clone(),
@@ -198,33 +200,34 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> O
                 property: SampleProperty::LoopType(crate::sequencer::sample::LoopType::Forward),
                 old_property: SampleProperty::LoopType(sample.loop_type),
             });
-            app.core.execute_edit_commands(vec![start_cmd, end_cmd, type_cmd]);
+            app.core
+                .execute_edit_commands(vec![start_cmd, end_cmd, type_cmd]);
             return None;
         }
         SampleEditEvent::ImportSample => {
-            app.file_browser.open(crate::ui::file_browser::BrowserMode::Samples, crate::ui::file_browser::DialogMode::Open, &mut app.config);
+            app.file_browser.open(
+                crate::ui::file_browser::BrowserMode::Samples,
+                crate::ui::file_browser::DialogMode::Open,
+                &mut app.config,
+            );
             return None;
         }
         SampleEditEvent::ExportSample(idx) => {
-            let module = match &app.core.module {
-                Some(m) => m,
-                None => return None,
-            };
+            let module = app.core.module.as_ref()?;
             let sample = match module.samples.get(idx) {
                 Some(s) if !s.data.is_empty() => s,
                 _ => return None,
             };
             let default_dir = app.config.default_wav_path.as_deref();
             let bit_depth = app.config.get_sample_export_bit_depth();
-            app.sample_export_dialog = Some(
-                crate::ui::sample_export_dialog::SampleExportDialog::new(
+            app.sample_export_dialog =
+                Some(crate::ui::sample_export_dialog::SampleExportDialog::new(
                     idx,
                     sample.name.clone(),
                     sample.sample_rate,
                     default_dir,
                     bit_depth,
-                )
-            );
+                ));
             return None;
         }
         SampleEditEvent::SliceToInstrument => {
@@ -239,7 +242,9 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> O
             let s = s.min(e);
             let e = s.max(e);
             let len = e.saturating_sub(s);
-            if len == 0 { return None; }
+            if len == 0 {
+                return None;
+            }
             let mut data = (*sample.data).clone();
             for i in 0..len {
                 let gain = i as f32 / len as f32;
@@ -255,7 +260,9 @@ pub(crate) fn handle_sample_edit(app: &mut HtrkApp, event: SampleEditEvent) -> O
             let s = s.min(e);
             let e = s.max(e);
             let len = e.saturating_sub(s);
-            if len == 0 { return None; }
+            if len == 0 {
+                return None;
+            }
             let mut data = (*sample.data).clone();
             for i in 0..len {
                 let gain = 1.0 - (i as f32 / len as f32);
@@ -282,12 +289,16 @@ fn handle_delete_samples(app: &mut HtrkApp, indices: Vec<usize>) {
             sorted.sort_unstable();
             sorted.dedup();
             sorted.retain(|&i| i > 0 && i < arc_module.samples.len());
-            if sorted.is_empty() { return; }
+            if sorted.is_empty() {
+                return;
+            }
 
             for inst in arc_module.instruments.iter_mut() {
                 for map_entry in inst.sample_map.iter_mut() {
                     let old = *map_entry as usize;
-                    if old == 0 { continue; }
+                    if old == 0 {
+                        continue;
+                    }
                     let shift = sorted.iter().filter(|&&d| d < old).count();
                     if sorted.contains(&old) {
                         *map_entry = 0;
@@ -304,10 +315,16 @@ fn handle_delete_samples(app: &mut HtrkApp, indices: Vec<usize>) {
             }
 
             if !sorted.contains(&app.core.selected_sample) {
-                let shift = sorted.iter().filter(|&&d| d < app.core.selected_sample).count();
+                let shift = sorted
+                    .iter()
+                    .filter(|&&d| d < app.core.selected_sample)
+                    .count();
                 app.core.selected_sample = app.core.selected_sample.saturating_sub(shift);
             } else {
-                app.core.selected_sample = app.core.selected_sample.min(arc_module.samples.len().saturating_sub(1));
+                app.core.selected_sample = app
+                    .core
+                    .selected_sample
+                    .min(arc_module.samples.len().saturating_sub(1));
             }
 
             app.sample_editor.selected_samples.clear();

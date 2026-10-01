@@ -5,8 +5,8 @@ use crate::audio::voice::EnvelopeState;
 use crate::sequencer::effect::{Effect, FormatEffect, XmEffect};
 use crate::sequencer::instrument::{DuplicateCheckAction, DuplicateCheckType, NewNoteAction};
 use crate::sequencer::note::Note;
-use crate::sequencer::period::{get_note_period, period_to_frequency};
 use crate::sequencer::pattern::Cell;
+use crate::sequencer::period::{get_note_period, period_to_frequency};
 use crate::sequencer::sample::{LoopType, Sample};
 
 pub struct XmProcessor;
@@ -75,11 +75,8 @@ impl XmProcessor {
             }
 
             Effect::FormatSpecific(fe) => {
-                match fe {
-                    FormatEffect::Xm(XmEffect::KeyOff { .. }) => {
-                        ch.active_effects.key_off = true;
-                    }
-                    _ => {}
+                if let FormatEffect::Xm(XmEffect::KeyOff { .. }) = fe {
+                    ch.active_effects.key_off = true;
                 }
             }
 
@@ -173,20 +170,32 @@ impl XmProcessor {
             }
 
             Effect::Vibrato { speed, depth } => {
-                if *speed > 0 { ch.vib_speed = *speed; }
-                if *depth > 0 { ch.vib_depth = *depth; }
+                if *speed > 0 {
+                    ch.vib_speed = *speed;
+                }
+                if *depth > 0 {
+                    ch.vib_depth = *depth;
+                }
                 ch.active_effects.vibrato = true;
             }
 
             Effect::Tremolo { speed, depth } => {
-                if *speed > 0 { ch.trem_speed = *speed; }
-                if *depth > 0 { ch.trem_depth = *depth; }
+                if *speed > 0 {
+                    ch.trem_speed = *speed;
+                }
+                if *depth > 0 {
+                    ch.trem_depth = *depth;
+                }
                 ch.active_effects.tremolo = true;
             }
 
             Effect::VolumeSlide { up, down } => {
-                if *up > 0 { ch.last_volume_slide_up = *up; }
-                if *down > 0 { ch.last_volume_slide_down = *down; }
+                if *up > 0 {
+                    ch.last_volume_slide_up = *up;
+                }
+                if *down > 0 {
+                    ch.last_volume_slide_down = *down;
+                }
                 ch.active_effects.volume_slide = true;
                 if is_row_start {
                     engine.apply_volume_slide(channel);
@@ -197,8 +206,12 @@ impl XmProcessor {
                 let param = *up as u8;
                 let up_val = param >> 4;
                 let down_val = param & 0x0F;
-                if up_val > 0 { ch.last_volume_slide_up = up_val; }
-                if down_val > 0 { ch.last_volume_slide_down = down_val; }
+                if up_val > 0 {
+                    ch.last_volume_slide_up = up_val;
+                }
+                if down_val > 0 {
+                    ch.last_volume_slide_down = down_val;
+                }
                 ch.active_effects.tone_portamento = true;
                 ch.active_effects.volume_slide = true;
             }
@@ -207,8 +220,12 @@ impl XmProcessor {
                 let param = *up as u8;
                 let up_val = param >> 4;
                 let down_val = param & 0x0F;
-                if up_val > 0 { ch.last_volume_slide_up = up_val; }
-                if down_val > 0 { ch.last_volume_slide_down = down_val; }
+                if up_val > 0 {
+                    ch.last_volume_slide_up = up_val;
+                }
+                if down_val > 0 {
+                    ch.last_volume_slide_down = down_val;
+                }
                 ch.active_effects.vibrato = true;
                 ch.active_effects.volume_slide = true;
             }
@@ -243,7 +260,7 @@ impl XmProcessor {
             }
 
             Effect::SetFineTune { tune } => {
-                ch.fine_tune_offset = (((*tune & 0x0F) << 4) as u8).wrapping_sub(128) as i8;
+                ch.fine_tune_offset = ((*tune & 0x0F) << 4).wrapping_sub(128) as i8;
             }
 
             Effect::SetEnvelopePosition { tick } => {
@@ -266,7 +283,8 @@ impl XmProcessor {
                                     ve.current_point = 0;
                                     for (i, pt) in vol_env.points.iter().enumerate() {
                                         if (pt.tick as f32) < tick_val {
-                                            ve.current_point = (i + 1).min(vol_env.points.len() - 1);
+                                            ve.current_point =
+                                                (i + 1).min(vol_env.points.len() - 1);
                                         }
                                     }
                                 }
@@ -337,8 +355,12 @@ impl XmProcessor {
             }
 
             Effect::Panbrello { speed, depth } => {
-                if *speed > 0 { ch.last_panbrello_speed = *speed; }
-                if *depth > 0 { ch.last_panbrello_depth = *depth; }
+                if *speed > 0 {
+                    ch.last_panbrello_speed = *speed;
+                }
+                if *depth > 0 {
+                    ch.last_panbrello_depth = *depth;
+                }
                 ch.active_effects.panbrello = true;
             }
 
@@ -356,8 +378,16 @@ impl XmProcessor {
         }
     }
 
-    pub fn process_tick(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, tick: u8) {
-        let linear = engine.module.as_ref().map(|m| m.flags.linear_slides).unwrap_or(false);
+    pub fn process_tick(
+        &mut self,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        tick: u8,
+    ) {
+        let linear = engine
+            .module
+            .as_ref()
+            .map(|m| m.flags.linear_slides)
+            .unwrap_or(false);
 
         for ch in 0..engine.state.channels.len() {
             let ch_state = &mut engine.state.channels[ch];
@@ -384,7 +414,7 @@ impl XmProcessor {
                     }
                     0xE => {
                         let amt = vol_kol & 0x0F;
-                        let new_pan = (ch_state.channel_panning + amt).min(255);
+                        let new_pan = ch_state.channel_panning.saturating_add(amt);
                         ch_state.channel_panning = new_pan;
                     }
                     _ => {}
@@ -408,8 +438,16 @@ impl XmProcessor {
                         ch.real_period = ch.real_period.saturating_sub(spd_period).max(1);
                         ch.out_period = ch.real_period;
                     }
-                    let freq = crate::sequencer::period::period_to_frequency(engine.state.channels[ch].out_period, linear, 8363);
-                    let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
+                    let freq = crate::sequencer::period::period_to_frequency(
+                        engine.state.channels[ch].out_period,
+                        linear,
+                        8363,
+                    );
+                    let delta = if engine.output_sample_rate > 0.0 {
+                        freq / engine.output_sample_rate
+                    } else {
+                        0.0
+                    };
                     for voice in &mut engine.voice_pool.voices {
                         if voice.active && voice.channel == Some(ch) {
                             voice.current_frequency = freq;
@@ -427,8 +465,16 @@ impl XmProcessor {
                         ch.real_period = ch.real_period.saturating_add(spd_period).min(31999);
                         ch.out_period = ch.real_period;
                     }
-                    let freq = crate::sequencer::period::period_to_frequency(engine.state.channels[ch].out_period, linear, 8363);
-                    let delta = if engine.output_sample_rate > 0.0 { freq / engine.output_sample_rate } else { 0.0 };
+                    let freq = crate::sequencer::period::period_to_frequency(
+                        engine.state.channels[ch].out_period,
+                        linear,
+                        8363,
+                    );
+                    let delta = if engine.output_sample_rate > 0.0 {
+                        freq / engine.output_sample_rate
+                    } else {
+                        0.0
+                    };
                     for voice in &mut engine.voice_pool.voices {
                         if voice.active && voice.channel == Some(ch) {
                             voice.current_frequency = freq;
@@ -459,9 +505,9 @@ impl XmProcessor {
 
             let retrig_speed = engine.state.channels[ch].retrig_speed;
             let retrig_interval = engine.state.channels[ch].last_retrigger_interval;
-            if retrig_speed > 0 && tick > 0 && tick % retrig_speed == 0 {
+            if retrig_speed > 0 && tick > 0 && tick.is_multiple_of(retrig_speed) {
                 engine.do_multi_retrig_period(ch, linear);
-            } else if retrig_interval > 0 && tick > 0 && tick % retrig_interval == 0 {
+            } else if retrig_interval > 0 && tick > 0 && tick.is_multiple_of(retrig_interval) {
                 engine.retrig_channel_note_period(ch, linear);
             }
 
@@ -482,10 +528,18 @@ impl XmProcessor {
                 engine.state.channels[ch].active_effects.key_off = false;
                 for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(ch) {
-                        if let Some(ref mut env) = voice.vol_env { env.released = true; }
-                        if let Some(ref mut env) = voice.pan_env { env.released = true; }
-                        if let Some(ref mut env) = voice.pitch_env { env.released = true; }
-                        if let Some(ref mut env) = voice.filter_env { env.released = true; }
+                        if let Some(ref mut env) = voice.vol_env {
+                            env.released = true;
+                        }
+                        if let Some(ref mut env) = voice.pan_env {
+                            env.released = true;
+                        }
+                        if let Some(ref mut env) = voice.pitch_env {
+                            env.released = true;
+                        }
+                        if let Some(ref mut env) = voice.filter_env {
+                            env.released = true;
+                        }
                     }
                 }
             }
@@ -515,7 +569,7 @@ impl XmProcessor {
             ch_state.rel_ton = sample.relative_note;
 
             let fine_tune = if let Effect::SetFineTune { tune } = &cell.effect {
-                ch_state.fine_tune_offset = (((*tune & 0x0F) << 4) as u8).wrapping_sub(128) as i8;
+                ch_state.fine_tune_offset = ((*tune & 0x0F) << 4).wrapping_sub(128) as i8;
                 ch_state.fine_tune_offset
             } else {
                 ch_state.fine_tune_offset = sample.fine_tune;
@@ -566,9 +620,14 @@ impl XmProcessor {
         }
 
         let sample_offset = engine.calculate_sample_offset(channel, cell, sample);
-        engine.handle_nna(channel, NewNoteAction::NoteCut,
-            DuplicateCheckType::Disabled, DuplicateCheckAction::NoteCut,
-            instrument_idx, sample_idx);
+        engine.handle_nna(
+            channel,
+            NewNoteAction::NoteCut,
+            DuplicateCheckType::Disabled,
+            DuplicateCheckAction::NoteCut,
+            instrument_idx,
+            sample_idx,
+        );
 
         let voice_idx = engine.allocate_voice(channel);
         let vol = engine.compute_channel_volume(channel);
@@ -651,7 +710,12 @@ impl XmProcessor {
             voice.filter_cutoff = inst.filter_cutoff as f32;
             voice.filter_resonance = inst.filter_resonance as f32 / 128.0;
             voice.filter_type = inst.filter_type;
-            voice.svf = StateVariableFilter { low: 0.0, band: 0.0, high: 0.0, filter_type: inst.filter_type };
+            voice.svf = StateVariableFilter {
+                low: 0.0,
+                band: 0.0,
+                high: 0.0,
+                filter_type: inst.filter_type,
+            };
             voice.envelope_filter_cutoff = 1.0;
 
             if inst.vib_depth > 0 {
@@ -659,7 +723,8 @@ impl XmProcessor {
                 voice.auto_vib_period_base = period;
                 if inst.vib_sweep > 0 {
                     voice.auto_vib_amp = 0;
-                    voice.auto_vib_sweep = (inst.vib_depth as i32) * 256 / (inst.vib_sweep as i32).max(1);
+                    voice.auto_vib_sweep =
+                        (inst.vib_depth as i32) * 256 / (inst.vib_sweep as i32).max(1);
                 } else {
                     voice.auto_vib_amp = (inst.vib_depth as i32) * 256;
                     voice.auto_vib_sweep = 0;
@@ -682,10 +747,19 @@ impl XmProcessor {
         }
     }
 
-    pub fn trigger_delayed_note(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _channel: usize) {
+    pub fn trigger_delayed_note(
+        &mut self,
+        _engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        _channel: usize,
+    ) {
     }
 
-    pub fn process_volume_column(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, vol: u8) {
+    pub fn process_volume_column(
+        &mut self,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        channel: usize,
+        vol: u8,
+    ) {
         let ch = &mut engine.state.channels[channel];
         ch.vol_kol = vol;
         if vol <= 64 {
@@ -694,7 +768,15 @@ impl XmProcessor {
         }
     }
 
-    pub fn setup_portamento(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, _note_key: u8, remapped_key: u8, sample: Option<&Sample>, _sample_idx: usize) {
+    pub fn setup_portamento(
+        &mut self,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        channel: usize,
+        _note_key: u8,
+        remapped_key: u8,
+        sample: Option<&Sample>,
+        _sample_idx: usize,
+    ) {
         if let Some(s) = sample {
             let ch = &mut engine.state.channels[channel];
             ch.rel_ton = s.relative_note;
@@ -721,14 +803,24 @@ impl XmProcessor {
         }
     }
 
-    pub fn init_sample_defaults(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, _cell: &Cell, sample: Option<&Sample>) {
+    pub fn init_sample_defaults(
+        &mut self,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        channel: usize,
+        _cell: &Cell,
+        sample: Option<&Sample>,
+    ) {
         if let Some(s) = sample {
             engine.state.channels[channel].channel_volume = s.default_volume.min(64);
             engine.state.channels[channel].channel_panning = s.default_panning;
         }
     }
 
-    pub fn handle_note_off(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize) {
+    pub fn handle_note_off(
+        &mut self,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        channel: usize,
+    ) {
         let module = match engine.module.as_ref() {
             Some(m) => m.clone(),
             None => return,
@@ -748,7 +840,8 @@ impl XmProcessor {
                         if let Some(ref mut pe) = voice.pan_env {
                             if pe.current_point < pan_env.points.len() {
                                 if pe.position >= pan_env.points[pe.current_point].tick as f32 {
-                                    pe.position = pan_env.points[pe.current_point].tick as f32 - 1.0;
+                                    pe.position =
+                                        pan_env.points[pe.current_point].tick as f32 - 1.0;
                                 }
                             }
                         }
@@ -760,7 +853,8 @@ impl XmProcessor {
                         if let Some(ref mut ve) = voice.vol_env {
                             if ve.current_point < vol_env.points.len() {
                                 if ve.position >= vol_env.points[ve.current_point].tick as f32 {
-                                    ve.position = vol_env.points[ve.current_point].tick as f32 - 1.0;
+                                    ve.position =
+                                        vol_env.points[ve.current_point].tick as f32 - 1.0;
                                 }
                             }
                         }
@@ -775,9 +869,15 @@ impl XmProcessor {
 
             voice.note_off = true;
             voice.env_sustain_active = false;
-            if let Some(ref mut env) = voice.vol_env { env.released = true; }
-            if let Some(ref mut env) = voice.pan_env { env.released = true; }
-            if let Some(ref mut env) = voice.filter_env { env.released = true; }
+            if let Some(ref mut env) = voice.vol_env {
+                env.released = true;
+            }
+            if let Some(ref mut env) = voice.pan_env {
+                env.released = true;
+            }
+            if let Some(ref mut env) = voice.filter_env {
+                env.released = true;
+            }
         }
     }
 }

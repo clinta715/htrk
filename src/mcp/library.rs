@@ -122,21 +122,18 @@ impl SampleLibrary {
             }
         }
 
-        subdirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-        samples.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        subdirs.sort_by_key(|e| e.name.to_lowercase());
+        samples.sort_by_key(|e| e.name.to_lowercase());
 
         let total_samples = samples.len();
         let total_pages = if page_size == 0 {
             1
         } else {
-            (total_samples + page_size - 1) / page_size
+            total_samples.div_ceil(page_size)
         };
         let start = page * page_size;
-        let page_samples: Vec<LibraryEntry> = samples
-            .into_iter()
-            .skip(start)
-            .take(page_size)
-            .collect();
+        let page_samples: Vec<LibraryEntry> =
+            samples.into_iter().skip(start).take(page_size).collect();
 
         Ok(DirListing {
             path: canonical.to_string_lossy().to_string(),
@@ -164,7 +161,10 @@ impl SampleLibrary {
                 continue;
             }
             if let Some(roots) = scope_roots {
-                if !roots.iter().any(|r| entry.path.starts_with(r.to_string_lossy().as_ref())) {
+                if !roots
+                    .iter()
+                    .any(|r| entry.path.starts_with(r.to_string_lossy().as_ref()))
+                {
                     continue;
                 }
             }
@@ -180,15 +180,16 @@ impl SampleLibrary {
             }
         }
 
-        results.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        results.sort_by_key(|e| e.name.to_lowercase());
         let total_results = results.len();
         let total_pages = if page_size == 0 {
             1
         } else {
-            (total_results + page_size - 1) / page_size
+            total_results.div_ceil(page_size)
         };
         let start = page * page_size;
-        let page_results: Vec<LibraryEntry> = results.into_iter().skip(start).take(page_size).collect();
+        let page_results: Vec<LibraryEntry> =
+            results.into_iter().skip(start).take(page_size).collect();
 
         SearchResults {
             total_results,
@@ -262,7 +263,11 @@ impl SampleLibrary {
                     entries.push(entry.path());
                 }
                 Err(e) => {
-                    eprintln!("[mcp/library] Error reading entry in '{}': {}", dir.display(), e);
+                    eprintln!(
+                        "[mcp/library] Error reading entry in '{}': {}",
+                        dir.display(),
+                        e
+                    );
                 }
             }
         }
@@ -355,7 +360,11 @@ impl DirFilter {
         }
         if let Some(ref needle) = self.tag {
             let needle_lc = needle.to_lowercase();
-            if !entry.tags.iter().any(|t| t.to_lowercase().contains(&needle_lc)) {
+            if !entry
+                .tags
+                .iter()
+                .any(|t| t.to_lowercase().contains(&needle_lc))
+            {
                 return false;
             }
         }
@@ -451,8 +460,8 @@ struct WavMeta {
 }
 
 fn read_wav_header(path: &Path) -> Result<WavMeta, String> {
-    let mut file = fs::File::open(path)
-        .map_err(|e| format!("Cannot open '{}': {}", path.display(), e))?;
+    let mut file =
+        fs::File::open(path).map_err(|e| format!("Cannot open '{}': {}", path.display(), e))?;
 
     let mut buf = [0u8; 12];
     file.read_exact(&mut buf)
@@ -548,7 +557,7 @@ fn parse_filename(name: &str) -> ParsedMetadata {
     };
 
     let tokens: Vec<&str> = stem
-        .split(|c: char| c == '_' || c == ' ' || c == '.')
+        .split(['_', ' ', '.'])
         .filter(|t| !t.is_empty())
         .collect();
 
@@ -636,16 +645,25 @@ fn try_parse_note_token(token: &str) -> Option<String> {
         return None;
     }
     let first = bytes[0].to_ascii_uppercase();
-    if first < b'A' || first > b'G' {
+    if !(b'A'..=b'G').contains(&first) {
         return None;
     }
     let mut idx = 1;
     let mut modifier = "";
     if idx < bytes.len() {
         match bytes[idx] {
-            b'#' => { modifier = "#"; idx += 1; }
-            b'b' => { modifier = "b"; idx += 1; }
-            b'-' => { modifier = "-"; idx += 1; }
+            b'#' => {
+                modifier = "#";
+                idx += 1;
+            }
+            b'b' => {
+                modifier = "b";
+                idx += 1;
+            }
+            b'-' => {
+                modifier = "-";
+                idx += 1;
+            }
             _ => {}
         }
     }
@@ -744,11 +762,47 @@ fn is_standalone_bpm(token: &str) -> bool {
 }
 
 const KNOWN_TAGS: &[&str] = &[
-    "kick", "snare", "rim", "clap", "hihat", "hat", "openhat", "cymbal", "crash", "ride",
-    "tom", "perc", "percussion", "bass", "sub", "lead", "pad", "pluck", "stab",
-    "vox", "vocal", "fx", "riser", "impact", "sweep", "glitch", "noise", "drone",
-    "loop", "oneshot", "wet", "dry", "lofi", "mono", "stereo",
-    "soft", "hard", "warm", "bright", "dark", "punchy",
+    "kick",
+    "snare",
+    "rim",
+    "clap",
+    "hihat",
+    "hat",
+    "openhat",
+    "cymbal",
+    "crash",
+    "ride",
+    "tom",
+    "perc",
+    "percussion",
+    "bass",
+    "sub",
+    "lead",
+    "pad",
+    "pluck",
+    "stab",
+    "vox",
+    "vocal",
+    "fx",
+    "riser",
+    "impact",
+    "sweep",
+    "glitch",
+    "noise",
+    "drone",
+    "loop",
+    "oneshot",
+    "wet",
+    "dry",
+    "lofi",
+    "mono",
+    "stereo",
+    "soft",
+    "hard",
+    "warm",
+    "bright",
+    "dark",
+    "punchy",
 ];
 
 fn try_parse_tag_token(token: &str) -> Option<String> {
@@ -1064,19 +1118,27 @@ mod tests {
             bpm_range: Some((120, 130)),
             tempo_marking: Some(String::from("Allegro")),
         };
-        lib.cache.insert(PathBuf::from("/samples/Kick_C4.wav"), entry_a);
-        lib.cache.insert(PathBuf::from("/samples/Cmaj_120bpm.wav"), entry_b);
+        lib.cache
+            .insert(PathBuf::from("/samples/Kick_C4.wav"), entry_a);
+        lib.cache
+            .insert(PathBuf::from("/samples/Cmaj_120bpm.wav"), entry_b);
 
         let json = lib.to_json().expect("serialize");
         let lib2 = SampleLibrary::from_json(&json).expect("deserialize");
 
         assert_eq!(lib2.cache.len(), 2);
         assert_eq!(lib2.roots, vec![PathBuf::from("/samples")]);
-        let e_a = lib2.cache.get(&PathBuf::from("/samples/Kick_C4.wav")).expect("entry a");
+        let e_a = lib2
+            .cache
+            .get(&PathBuf::from("/samples/Kick_C4.wav"))
+            .expect("entry a");
         assert_eq!(e_a.key, None);
         assert_eq!(e_a.tags, vec![String::from("kick")]);
         assert_eq!(e_a.root_note.as_deref(), Some("C4"));
-        let e_b = lib2.cache.get(&PathBuf::from("/samples/Cmaj_120bpm.wav")).expect("entry b");
+        let e_b = lib2
+            .cache
+            .get(&PathBuf::from("/samples/Cmaj_120bpm.wav"))
+            .expect("entry b");
         assert_eq!(e_b.key.as_deref(), Some("Cmaj"));
         assert_eq!(e_b.bpm_range, Some((120, 130)));
         assert_eq!(e_b.tempo_marking.as_deref(), Some("Allegro"));

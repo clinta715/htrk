@@ -104,11 +104,11 @@ pub fn mix_voices_per_channel(
     voices: &mut [Voice],
     output_left: &mut [f32],
     output_right: &mut [f32],
-    ch_mix: &mut [f32],        // flat: [ch0_L, ch0_R, ch1_L, ch1_R, ...] for each frame
-    pre_ch_mix: &mut [f32],    // flat: [ch0_L, ch0_R, ch1_L, ch1_R, ...] for each frame
+    ch_mix: &mut [f32], // flat: [ch0_L, ch0_R, ch1_L, ch1_R, ...] for each frame
+    pre_ch_mix: &mut [f32], // flat: [ch0_L, ch0_R, ch1_L, ch1_R, ...] for each frame
     offset: usize,
     len: usize,
-    stride: usize,             // total buffer size per channel pair (frame_count)
+    stride: usize, // total buffer size per channel pair (frame_count)
     master_volume: f32,
     interpolation: InterpolationType,
     muted_channels: &[bool],
@@ -125,12 +125,16 @@ pub fn mix_voices_per_channel(
     debug_assert!(
         num_channels == 0 || num_channels * 2 * stride <= ch_mix.len(),
         "ch_mix buffer too small: need {} samples for {} channels, have {}",
-        num_channels * 2 * stride, num_channels, ch_mix.len()
+        num_channels * 2 * stride,
+        num_channels,
+        ch_mix.len()
     );
     debug_assert!(
         num_channels == 0 || num_channels * 2 * stride <= pre_ch_mix.len(),
         "pre_ch_mix buffer too small: need {} samples for {} channels, have {}",
-        num_channels * 2 * stride, num_channels, pre_ch_mix.len()
+        num_channels * 2 * stride,
+        num_channels,
+        pre_ch_mix.len()
     );
     for voice in voices.iter_mut() {
         if !voice.active {
@@ -140,8 +144,13 @@ pub fn mix_voices_per_channel(
         let vd = VD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         #[cfg(feature = "audio_debug")]
         if vd < 5 {
-            debug_log!("[VOICE] ch={:?} base_vol={:.4} final_vol={:.4} pan={:.4}",
-                voice.channel, voice.base_volume, voice.final_volume, voice.final_panning);
+            debug_log!(
+                "[VOICE] ch={:?} base_vol={:.4} final_vol={:.4} pan={:.4}",
+                voice.channel,
+                voice.base_volume,
+                voice.final_volume,
+                voice.final_panning
+            );
         }
 
         if let Some(ch) = voice.channel {
@@ -234,13 +243,17 @@ pub fn mix_voices_per_channel(
             );
 
             let filtered = if has_filter {
-                voice.svf.process(s, cutoff_hz, voice.filter_resonance, sample_rate)
+                voice
+                    .svf
+                    .process(s, cutoff_hz, voice.filter_resonance, sample_rate)
             } else {
                 s
             };
 
             let led_filtered = if voice.amiga_led_filter {
-                voice.amiga_led_svf.process(filtered, 3100.0, 0.707, sample_rate)
+                voice
+                    .amiga_led_svf
+                    .process(filtered, 3100.0, 0.707, sample_rate)
             } else {
                 filtered
             };
@@ -267,7 +280,8 @@ pub fn mix_voices_per_channel(
                     if loop_end > loop_start && voice.position >= loop_end as f64 {
                         let loop_len = (loop_end - loop_start) as f64;
                         if loop_len > 0.0 {
-                            voice.position = loop_start as f64 + (voice.position - loop_start as f64) % loop_len;
+                            voice.position =
+                                loop_start as f64 + (voice.position - loop_start as f64) % loop_len;
                         } else {
                             voice.active = false;
                             break;
@@ -340,8 +354,13 @@ pub fn mix_voices(
         let vd = VD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         #[cfg(feature = "audio_debug")]
         if vd < 5 {
-            debug_log!("[VOICE] ch={:?} base_vol={:.4} final_vol={:.4} pan={:.4}",
-                voice.channel, voice.base_volume, voice.final_volume, voice.final_panning);
+            debug_log!(
+                "[VOICE] ch={:?} base_vol={:.4} final_vol={:.4} pan={:.4}",
+                voice.channel,
+                voice.base_volume,
+                voice.final_volume,
+                voice.final_panning
+            );
         }
 
         if let Some(ch) = voice.channel {
@@ -424,13 +443,17 @@ pub fn mix_voices(
             );
 
             let filtered = if has_filter {
-                voice.svf.process(s, cutoff_hz, voice.filter_resonance, sample_rate)
+                voice
+                    .svf
+                    .process(s, cutoff_hz, voice.filter_resonance, sample_rate)
             } else {
                 s
             };
 
             let led_filtered = if voice.amiga_led_filter {
-                voice.amiga_led_svf.process(filtered, 3100.0, 0.707, sample_rate)
+                voice
+                    .amiga_led_svf
+                    .process(filtered, 3100.0, 0.707, sample_rate)
             } else {
                 filtered
             };
@@ -446,7 +469,8 @@ pub fn mix_voices(
                     if loop_end > loop_start && voice.position >= loop_end as f64 {
                         let loop_len = (loop_end - loop_start) as f64;
                         if loop_len > 0.0 {
-                            voice.position = loop_start as f64 + (voice.position - loop_start as f64) % loop_len;
+                            voice.position =
+                                loop_start as f64 + (voice.position - loop_start as f64) % loop_len;
                         } else {
                             voice.active = false;
                             break;
@@ -516,8 +540,12 @@ pub fn soft_knee_limit(output_left: &mut [f32], output_right: &mut [f32]) {
         let excess = peak - THRESHOLD;
         let compressed_peak = THRESHOLD + RANGE * (1.0 - (-excess / RANGE).exp());
         let gain = compressed_peak / peak;
-        for l in output_left.iter_mut() { *l *= gain; }
-        for r in output_right.iter_mut() { *r *= gain; }
+        for l in output_left.iter_mut() {
+            *l *= gain;
+        }
+        for r in output_right.iter_mut() {
+            *r *= gain;
+        }
     }
 }
 
@@ -547,8 +575,12 @@ pub fn soft_knee_limit_smoothed(
         *limiter_gain += (target - *limiter_gain) * RELEASE;
     }
 
-    for l in output_left.iter_mut() { *l *= *limiter_gain; }
-    for r in output_right.iter_mut() { *r *= *limiter_gain; }
+    for l in output_left.iter_mut() {
+        *l *= *limiter_gain;
+    }
+    for r in output_right.iter_mut() {
+        *r *= *limiter_gain;
+    }
 }
 
 pub fn brick_wall_limit(output_left: &mut [f32], output_right: &mut [f32]) {
@@ -559,8 +591,12 @@ pub fn buffer_wide_limit(output_left: &mut [f32], output_right: &mut [f32]) {
     let peak = peak_stereo(output_left, output_right);
     if peak > 1.0 {
         let gain = 1.0 / peak;
-        for l in output_left.iter_mut() { *l *= gain; }
-        for r in output_right.iter_mut() { *r *= gain; }
+        for l in output_left.iter_mut() {
+            *l *= gain;
+        }
+        for r in output_right.iter_mut() {
+            *r *= gain;
+        }
     }
 }
 
@@ -692,8 +728,10 @@ mod tests {
         assert!((right[1] - 0.75).abs() < 0.001);
         assert!((right[2] + 0.25).abs() < 0.001);
 
-        assert!((left[0] / right[0] - left[1] / right[1]).abs() < 0.001,
-            "uniform gain preserves left/right ratio");
+        assert!(
+            (left[0] / right[0] - left[1] / right[1]).abs() < 0.001,
+            "uniform gain preserves left/right ratio"
+        );
     }
 
     #[test]
@@ -738,13 +776,31 @@ mod tests {
         let mut left = vec![0.0f32; 10];
         let mut right = vec![0.0f32; 10];
         let mut voices = [voice];
-        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Nearest, &[], 48000.0);
+        mix_voices(
+            &mut voices,
+            &mut left,
+            &mut right,
+            1.0,
+            InterpolationType::Nearest,
+            &[],
+            48000.0,
+        );
         let voice = &voices[0];
 
         assert!(voice.active, "Voice should still be active after loop wrap");
-        assert!(voice.position >= 2.0, "Position should wrap into loop range");
-        assert!(voice.position < 6.0, "Position should wrap into loop range, got {:.3}", voice.position);
-        assert!(left.iter().any(|&s| s.abs() > 0.001), "Loop should produce audio");
+        assert!(
+            voice.position >= 2.0,
+            "Position should wrap into loop range"
+        );
+        assert!(
+            voice.position < 6.0,
+            "Position should wrap into loop range, got {:.3}",
+            voice.position
+        );
+        assert!(
+            left.iter().any(|&s| s.abs() > 0.001),
+            "Loop should produce audio"
+        );
     }
 
     #[test]
@@ -773,16 +829,30 @@ mod tests {
         let mut left = vec![0.0f32; 8];
         let mut right = vec![0.0f32; 8];
         let mut voices = [voice];
-        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Nearest, &[], 48000.0);
+        mix_voices(
+            &mut voices,
+            &mut left,
+            &mut right,
+            1.0,
+            InterpolationType::Nearest,
+            &[],
+            48000.0,
+        );
         let voice = &voices[0];
 
         assert!(voice.active);
-        assert!(voice.position >= 2.0 && voice.position < 6.0,
-            "Position should be wrapped into loop range [2,6), got {:.3}", voice.position);
+        assert!(
+            voice.position >= 2.0 && voice.position < 6.0,
+            "Position should be wrapped into loop range [2,6), got {:.3}",
+            voice.position
+        );
 
         let left_nonzero_count = left.iter().filter(|&&s| s.abs() > 0.001).count();
-        assert!(left_nonzero_count >= 6,
-            "Should produce audio for at least 6 out of 8 output samples (got {})", left_nonzero_count);
+        assert!(
+            left_nonzero_count >= 6,
+            "Should produce audio for at least 6 out of 8 output samples (got {})",
+            left_nonzero_count
+        );
     }
 
     #[test]
@@ -811,10 +881,21 @@ mod tests {
         let mut left = vec![0.0f32; 10];
         let mut right = vec![0.0f32; 10];
         let mut voices = [voice];
-        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Nearest, &[], 48000.0);
+        mix_voices(
+            &mut voices,
+            &mut left,
+            &mut right,
+            1.0,
+            InterpolationType::Nearest,
+            &[],
+            48000.0,
+        );
         let voice = &voices[0];
 
-        assert!(!voice.active, "Non-looping voice should deactivate after reaching end");
+        assert!(
+            !voice.active,
+            "Non-looping voice should deactivate after reaching end"
+        );
     }
 
     #[test]
@@ -843,17 +924,35 @@ mod tests {
         let mut left = vec![0.0f32; 4];
         let mut right = vec![0.0f32; 4];
         let mut voices = [voice];
-        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Linear, &[], 48000.0);
+        mix_voices(
+            &mut voices,
+            &mut left,
+            &mut right,
+            1.0,
+            InterpolationType::Linear,
+            &[],
+            48000.0,
+        );
         let voice = &voices[0];
 
         assert!(voice.active, "Voice should stay active");
-        assert!(voice.position >= 2.0 && voice.position < 6.0,
-            "Position should be wrapped into loop range on first iteration, got {:.3}", voice.position);
+        assert!(
+            voice.position >= 2.0 && voice.position < 6.0,
+            "Position should be wrapped into loop range on first iteration, got {:.3}",
+            voice.position
+        );
 
         let first_sample = left[0] * 2.0_f32.sqrt();
-        assert!(first_sample.abs() > 0.001, "First sample should come from loop region, got {:.6}", first_sample);
-        assert_ne!(first_sample, -2.0_f32 / 2.0_f32.sqrt(),
-            "First sample should NOT come from outside-loop region (index 6 or 7)");
+        assert!(
+            first_sample.abs() > 0.001,
+            "First sample should come from loop region, got {:.6}",
+            first_sample
+        );
+        assert_ne!(
+            first_sample,
+            -2.0_f32 / 2.0_f32.sqrt(),
+            "First sample should NOT come from outside-loop region (index 6 or 7)"
+        );
     }
 
     #[test]
@@ -886,14 +985,28 @@ mod tests {
         let mut left = vec![0.0f32; 6];
         let mut right = vec![0.0f32; 6];
 
-        mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Nearest, &[], 48000.0);
+        mix_voices(
+            &mut voices,
+            &mut left,
+            &mut right,
+            1.0,
+            InterpolationType::Nearest,
+            &[],
+            48000.0,
+        );
         brick_wall_limit(&mut left, &mut right);
 
         for &s in &left {
-            assert!(s.abs() <= 1.0 + 0.001, "Soft limiter should keep samples within ±1.0, got {s}");
+            assert!(
+                s.abs() <= 1.0 + 0.001,
+                "Soft limiter should keep samples within ±1.0, got {s}"
+            );
         }
         for &s in &right {
-            assert!(s.abs() <= 1.0 + 0.001, "Soft limiter should keep samples within ±1.0, got {s}");
+            assert!(
+                s.abs() <= 1.0 + 0.001,
+                "Soft limiter should keep samples within ±1.0, got {s}"
+            );
         }
     }
 
@@ -918,16 +1031,22 @@ mod tests {
         };
 
         // All samples should be multiplied by the same gain
-        assert!((left[0] - 0.5 * expected_gain).abs() < 0.001,
-            "below-threshold samples also get uniform gain");
-        assert!((left[50] - 1.6 * expected_gain).abs() < 0.001,
-            "above-threshold samples get same uniform gain");
+        assert!(
+            (left[0] - 0.5 * expected_gain).abs() < 0.001,
+            "below-threshold samples also get uniform gain"
+        );
+        assert!(
+            (left[50] - 1.6 * expected_gain).abs() < 0.001,
+            "above-threshold samples get same uniform gain"
+        );
 
         // Uniform gain means ratio between channels is preserved
         let ratio = left[50] / right[50];
         let ratio_expected = 1.6 / 1.4;
-        assert!((ratio - ratio_expected).abs() < 0.001,
-            "uniform gain preserves left/right ratio");
+        assert!(
+            (ratio - ratio_expected).abs() < 0.001,
+            "uniform gain preserves left/right ratio"
+        );
     }
 
     /// Helper: a voice reading a constant-1.0 sample (DC), so the only thing
@@ -966,7 +1085,8 @@ mod tests {
         let mut right = vec![0.0_f32; len];
         mix_voices(
             std::slice::from_mut(&mut voice),
-            &mut left, &mut right,
+            &mut left,
+            &mut right,
             1.0, // master_volume
             InterpolationType::Nearest,
             &[],
@@ -974,10 +1094,17 @@ mod tests {
         );
 
         // First sample is near-silence (ramp just started).
-        assert!(left[0].abs() < 0.1, "onset sample[0] should be near 0, got {}", left[0]);
+        assert!(
+            left[0].abs() < 0.1,
+            "onset sample[0] should be near 0, got {}",
+            left[0]
+        );
         // Last sample of the onset ramp reaches the target gain (1.0 * center pan = 0.5).
-        assert!((left[len - 1] - 0.5).abs() < 0.05,
-            "onset ramp end should reach target gain 0.5, got {}", left[len - 1]);
+        assert!(
+            (left[len - 1] - 0.5).abs() < 0.05,
+            "onset ramp end should reach target gain 0.5, got {}",
+            left[len - 1]
+        );
         // Monotonic increase across the ramp.
         assert!(left[len - 1] > left[0], "onset ramp must rise");
     }
@@ -996,7 +1123,8 @@ mod tests {
         let mut right = vec![0.0_f32; len];
         mix_voices(
             std::slice::from_mut(&mut voice),
-            &mut left, &mut right,
+            &mut left,
+            &mut right,
             1.0,
             InterpolationType::Nearest,
             &[],
@@ -1007,11 +1135,17 @@ mod tests {
         // Start cur_vol 0.5, step = (1.0-0.5)/100 = 0.005. At sample 50,
         // cur_vol ≈ 0.5 + 51*0.005 ≈ 0.755 → output ≈ 0.755*0.5 ≈ 0.38.
         let mid_gain = left[50];
-        assert!((mid_gain - 0.375).abs() < 0.02,
-            "mid-ramp gain should be ~0.375 (0.75 vol * 0.5 center-pan), got {}", mid_gain);
+        assert!(
+            (mid_gain - 0.375).abs() < 0.02,
+            "mid-ramp gain should be ~0.375 (0.75 vol * 0.5 center-pan), got {}",
+            mid_gain
+        );
         // End reaches target (center-panned: 1.0 * 0.5 = 0.5).
-        assert!((left[len - 1] - 0.5).abs() < 0.01,
-            "end of inter-tick ramp should reach target 0.5, got {}", left[len - 1]);
+        assert!(
+            (left[len - 1] - 0.5).abs() < 0.01,
+            "end of inter-tick ramp should reach target 0.5, got {}",
+            left[len - 1]
+        );
     }
 
     #[test]
@@ -1028,7 +1162,8 @@ mod tests {
         let mut right = vec![0.0_f32; len];
         mix_voices(
             std::slice::from_mut(&mut voice),
-            &mut left, &mut right,
+            &mut left,
+            &mut right,
             1.0,
             InterpolationType::Nearest,
             &[],
@@ -1037,8 +1172,13 @@ mod tests {
 
         let expected = 0.8 * 0.5; // vol * center-pan
         for i in 0..len {
-            assert!((left[i] - expected).abs() < 0.001,
-                "flat-path sample[{}] should be {}, got {}", i, expected, left[i]);
+            assert!(
+                (left[i] - expected).abs() < 0.001,
+                "flat-path sample[{}] should be {}, got {}",
+                i,
+                expected,
+                left[i]
+            );
         }
     }
 
@@ -1056,7 +1196,8 @@ mod tests {
         let mut right = vec![0.0_f32; len];
         mix_voices(
             std::slice::from_mut(&mut voice),
-            &mut left, &mut right,
+            &mut left,
+            &mut right,
             1.0,
             InterpolationType::Nearest,
             &[],
@@ -1065,11 +1206,18 @@ mod tests {
 
         // Center-panned target gain = 1.0 * 0.5 = 0.5. No sample exceeds it.
         for i in 0..len {
-            assert!(left[i] <= 0.5 + 0.001,
-                "sample[{}] overshoots target: {}", i, left[i]);
+            assert!(
+                left[i] <= 0.5 + 0.001,
+                "sample[{}] overshoots target: {}",
+                i,
+                left[i]
+            );
         }
-        assert!((left[len - 1] - 0.5).abs() < 0.01,
-            "ramp end should be exactly target, got {}", left[len - 1]);
+        assert!(
+            (left[len - 1] - 0.5).abs() < 0.01,
+            "ramp end should be exactly target, got {}",
+            left[len - 1]
+        );
     }
 
     #[test]
@@ -1086,7 +1234,8 @@ mod tests {
         let mut right = vec![0.0_f32; len];
         mix_voices(
             std::slice::from_mut(&mut voice),
-            &mut left, &mut right,
+            &mut left,
+            &mut right,
             1.0,
             InterpolationType::Nearest,
             &[],
@@ -1095,7 +1244,10 @@ mod tests {
 
         // Start ~0.8*0.5=0.4, end ~0.4*0.5=0.2 (descending).
         assert!(left[0] > left[len - 1], "descending ramp must decrease");
-        assert!((left[len - 1] - 0.2).abs() < 0.01,
-            "descending ramp end should reach 0.2, got {}", left[len - 1]);
+        assert!(
+            (left[len - 1] - 0.2).abs() < 0.01,
+            "descending ramp end should reach 0.2, got {}",
+            left[len - 1]
+        );
     }
 }

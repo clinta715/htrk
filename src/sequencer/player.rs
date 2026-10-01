@@ -1,9 +1,9 @@
 use crate::audio::sequencer::clock::SequencerClock;
 use crate::sequencer::effect::Effect;
+use crate::sequencer::effect::FilterType;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
-use crate::sequencer::effect::FilterType;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ActiveEffects {
@@ -201,19 +201,14 @@ impl Default for ChannelState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum PlayMode {
+    #[default]
     Once,
     Loop,
     Pattern,
     Order,
-}
-
-impl Default for PlayMode {
-    fn default() -> Self {
-        PlayMode::Once
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -300,7 +295,10 @@ mod tests {
         assert_eq!(ss.clock.speed, 6);
         assert!(!ss.playing);
         assert!(!ss.paused);
-        assert_eq!(ss.channels.len(), crate::sequencer::module::DEFAULT_CHANNELS);
+        assert_eq!(
+            ss.channels.len(),
+            crate::sequencer::module::DEFAULT_CHANNELS
+        );
         assert_eq!(ss.play_mode, PlayMode::Once);
     }
 
@@ -311,4 +309,3 @@ mod tests {
         assert_ne!(PlayMode::Pattern, PlayMode::Order);
     }
 }
-

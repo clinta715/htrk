@@ -14,12 +14,14 @@ pub(super) fn cmd_module_create(core: &mut HtrkCore, params: &serde_json::Value)
 
     let mut module = Module::default();
     module.name = name.clone();
-    module.channel_panning = vec![PANNING_CENTER; channels.max(1).min(64)];
-    module.channel_volume = vec![VOLUME_MAX; channels.max(1).min(64)];
+    module.channel_panning = vec![PANNING_CENTER; channels.clamp(1, 64)];
+    module.channel_volume = vec![VOLUME_MAX; channels.clamp(1, 64)];
     module.initial_bpm = bpm;
     module.initial_speed = speed;
     module.order_list = vec![0];
-    module.patterns.push(crate::sequencer::pattern::Pattern::new(64));
+    module
+        .patterns
+        .push(crate::sequencer::pattern::Pattern::new(64));
 
     core.load_module(module, name, None);
     Ok(serde_json::json!({"ok": true}))
@@ -28,8 +30,8 @@ pub(super) fn cmd_module_create(core: &mut HtrkCore, params: &serde_json::Value)
 pub(super) fn cmd_module_load(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResult {
     let path = get_str!(params, "path").ok_or("Missing 'path'")?;
     let data = std::fs::read(&path).map_err(|e| format!("Failed to read '{path}': {e}"))?;
-    let module = crate::formats::load_module(&data)
-        .map_err(|e| format!("Failed to load module: {e}"))?;
+    let module =
+        crate::formats::load_module(&data).map_err(|e| format!("Failed to load module: {e}"))?;
     let name = std::path::Path::new(&path)
         .file_stem()
         .and_then(|s| s.to_str())

@@ -7,7 +7,10 @@ pub enum PanelEvent {
     // Pattern view
     AddChannel,
     RemoveChannel,
-    SetAutomationTarget { channel: usize, target: AutomationTarget },
+    SetAutomationTarget {
+        channel: usize,
+        target: AutomationTarget,
+    },
     ContextMenuAction(ContextMenuAction),
     AutomationInteraction(AutomationInteraction),
     ToggleSampleLengthBg,
@@ -17,14 +20,25 @@ pub enum PanelEvent {
         target: AutomationTarget,
         channel: Option<usize>,
     },
-    AutomationTrackRemoved { track_id: u32 },
-    AutomationTrackToggled { track_id: u32 },
+    AutomationTrackRemoved {
+        track_id: u32,
+    },
+    AutomationTrackToggled {
+        track_id: u32,
+    },
     AutomationPointChanged {
         track_id: u32,
         point: AutomationPoint,
     },
-    AutomationPointRemoved { track_id: u32, order: u16, row: u8 },
-    AutomationInterpChanged { track_id: u32, mode: InterpolationMode },
+    AutomationPointRemoved {
+        track_id: u32,
+        order: u16,
+        row: u8,
+    },
+    AutomationInterpChanged {
+        track_id: u32,
+        mode: InterpolationMode,
+    },
 
     // Sample editor
     SampleEdit(SampleEditEvent),

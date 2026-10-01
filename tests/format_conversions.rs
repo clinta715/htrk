@@ -1,6 +1,6 @@
-use htrk::sequencer::{Module, ModuleFormat, Pattern, Instrument, Sample, Note, Effect};
-use htrk::sequencer::{AutomationTrack, AutomationTarget, AutomationPoint, InterpolationMode};
 use htrk::formats;
+use htrk::sequencer::{AutomationPoint, AutomationTarget, AutomationTrack, InterpolationMode};
+use htrk::sequencer::{Effect, Instrument, Module, ModuleFormat, Note, Pattern, Sample};
 use std::sync::Arc;
 
 fn create_test_module() -> Module {
@@ -49,8 +49,14 @@ fn test_htk_roundtrip() {
     assert_eq!(loaded.samples.len(), module.samples.len());
     assert_eq!(loaded.instruments.len(), module.instruments.len());
 
-    assert_eq!(loaded.patterns[0].data[0][0].note, module.patterns[0].data[0][0].note);
-    assert_eq!(loaded.patterns[0].data[1][1].effect, module.patterns[0].data[1][1].effect);
+    assert_eq!(
+        loaded.patterns[0].data[0][0].note,
+        module.patterns[0].data[0][0].note
+    );
+    assert_eq!(
+        loaded.patterns[0].data[1][1].effect,
+        module.patterns[0].data[1][1].effect
+    );
     assert_eq!(loaded.samples[0].name, module.samples[0].name);
     assert_eq!(loaded.samples[0].loop_start, 100);
     assert_eq!(loaded.samples[0].loop_end, 900);

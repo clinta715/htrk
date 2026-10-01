@@ -1,13 +1,19 @@
-use std::sync::Arc;
-use crate::sequencer::module::{Module, MAX_VOICES};
-use crate::sequencer::player::SequencerState;
-use crate::sequencer::instrument::{NewNoteAction, DuplicateCheckType, DuplicateCheckAction};
-use crate::sequencer::period::period_to_frequency;
 use crate::audio::voice::Voice;
+use crate::sequencer::instrument::{DuplicateCheckAction, DuplicateCheckType, NewNoteAction};
+use crate::sequencer::module::{Module, MAX_VOICES};
+use crate::sequencer::period::period_to_frequency;
+use crate::sequencer::player::SequencerState;
+use std::sync::Arc;
 
 pub struct VoicePool {
     pub voices: Vec<Voice>,
     pub next_voice: usize,
+}
+
+impl Default for VoicePool {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VoicePool {
@@ -81,7 +87,13 @@ impl VoicePool {
         chosen
     }
 
-    pub fn advance_envelopes(&mut self, is_xm: bool, state: &SequencerState, output_sample_rate: f64, module: Option<&Arc<Module>>) {
+    pub fn advance_envelopes(
+        &mut self,
+        is_xm: bool,
+        state: &SequencerState,
+        output_sample_rate: f64,
+        module: Option<&Arc<Module>>,
+    ) {
         for voice in &mut self.voices {
             if !voice.active {
                 continue;
@@ -96,7 +108,7 @@ impl VoicePool {
             if let Some(ref mut env) = voice.pan_env {
                 crate::audio::effects::advance_single_envelope(env);
                 let env_val = crate::audio::effects::evaluate_envelope(env);
-                voice.envelope_panning = (env_val as f32 - 32.0) / 32.0;
+                voice.envelope_panning = (env_val - 32.0) / 32.0;
             }
 
             if let Some(ref mut env) = voice.pitch_env {
@@ -116,7 +128,8 @@ impl VoicePool {
             if let Some(ch_idx) = voice.channel {
                 if let Some(ch) = state.channels.get(ch_idx) {
                     voice.auto_cutoff_mult = ch.auto_filter_cutoff;
-                    voice.filter_resonance = (voice.filter_resonance + ch.auto_filter_resonance).clamp(0.0, 1.0);
+                    voice.filter_resonance =
+                        (voice.filter_resonance + ch.auto_filter_resonance).clamp(0.0, 1.0);
                 }
             }
 
@@ -143,9 +156,10 @@ impl VoicePool {
                 let fade_amp = voice.fade_out_amp as u32;
                 let glob_vol = state.global_volume.max(1) as u32;
 
-                let has_vol_env = voice.vol_env.as_ref().map_or(false, |e| {
-                    e.envelope.flags.enabled
-                });
+                let has_vol_env = voice
+                    .vol_env
+                    .as_ref()
+                    .is_some_and(|e| e.envelope.flags.enabled);
 
                 let vol = if has_vol_env {
                     let env_val = (voice.envelope_volume * 64.0).round() as u32;
@@ -175,7 +189,9 @@ impl VoicePool {
 
                 if let Some(ref pan_env_ref) = voice.pan_env {
                     if pan_env_ref.envelope.flags.enabled {
-                        let env_pan_val = (crate::audio::effects::evaluate_envelope(pan_env_ref) as i32 - 32) * 256;
+                        let env_pan_val =
+                            (crate::audio::effects::evaluate_envelope(pan_env_ref) as i32 - 32)
+                                * 256;
                         let pan_tmp = (out_pan as i32 - 128).abs() + 128;
                         let pan_tmp_scaled = pan_tmp * 8;
                         let pan_add = (env_pan_val * pan_tmp_scaled) >> 16;
@@ -185,7 +201,9 @@ impl VoicePool {
                 }
                 if let Some(ch_idx) = voice.channel {
                     if ch_idx < state.channels.len() {
-                        voice.final_panning = (voice.final_panning + state.channels[ch_idx].auto_pan_offset).clamp(0.0, 1.0);
+                        voice.final_panning = (voice.final_panning
+                            + state.channels[ch_idx].auto_pan_offset)
+                            .clamp(0.0, 1.0);
                     }
                 }
             } else {
@@ -199,9 +217,10 @@ impl VoicePool {
                 }
 
                 if voice.note_off {
-                    let env_done = voice.vol_env.as_ref().map_or(true, |e| {
-                        e.finished || !e.envelope.flags.enabled
-                    });
+                    let env_done = voice
+                        .vol_env
+                        .as_ref()
+                        .is_none_or(|e| e.finished || !e.envelope.flags.enabled);
                     if env_done {
                         if voice.fade_out_rate == 0 {
                             voice.deactivate();
@@ -215,9 +234,8 @@ impl VoicePool {
                 if voice.tremor_mute {
                     voice.final_volume = 0.0;
                 } else {
-                    voice.final_volume = voice.base_volume
-                        * voice.envelope_volume
-                        * voice.fade_out_volume;
+                    voice.final_volume =
+                        voice.base_volume * voice.envelope_volume * voice.fade_out_volume;
                 }
 
                 if voice.tremolo_depth > 0 {
@@ -264,17 +282,15 @@ impl VoicePool {
                             let sine_tab = crate::sequencer::period::get_vib_sine();
                             let auto_vib_val: i32 = match inst.vib_type {
                                 1 => {
-                                    if voice.auto_vib_pos > 127 { 64 } else { -64 }
+                                    if voice.auto_vib_pos > 127 {
+                                        64
+                                    } else {
+                                        -64
+                                    }
                                 }
-                                2 => {
-                                    (((voice.auto_vib_pos as i32 >> 1) + 64) & 127) - 64
-                                }
-                                3 => {
-                                    ((-(voice.auto_vib_pos as i32 >> 1) + 64) & 127) - 64
-                                }
-                                _ => {
-                                    sine_tab[voice.auto_vib_pos as usize] as i32
-                                }
+                                2 => (((voice.auto_vib_pos as i32 >> 1) + 64) & 127) - 64,
+                                3 => ((-(voice.auto_vib_pos as i32 >> 1) + 64) & 127) - 64,
+                                _ => sine_tab[voice.auto_vib_pos as usize] as i32,
                             };
 
                             let val = auto_vib_val * 4;
@@ -296,9 +312,7 @@ impl VoicePool {
 
             // XM: handle note_off with fade_out check
             if is_xm && voice.note_off {
-                let has_vol_env = voice.vol_env.as_ref().map_or(false, |e| {
-                    !e.finished
-                });
+                let has_vol_env = voice.vol_env.as_ref().is_some_and(|e| !e.finished);
                 if !has_vol_env && voice.fade_out_rate == 0 {
                     voice.deactivate();
                     continue;
@@ -312,9 +326,14 @@ impl VoicePool {
     }
 
     pub fn handle_nna(
-        &mut self, channel: usize, nna: NewNoteAction,
-        dct: DuplicateCheckType, dca: DuplicateCheckAction,
-        instr_idx: usize, sample_idx: usize, state: &SequencerState,
+        &mut self,
+        channel: usize,
+        nna: NewNoteAction,
+        dct: DuplicateCheckType,
+        dca: DuplicateCheckAction,
+        instr_idx: usize,
+        sample_idx: usize,
+        state: &SequencerState,
     ) {
         let mut indices: Vec<usize> = Vec::new();
 
@@ -324,11 +343,11 @@ impl VoicePool {
                     continue;
                 }
                 let matches = match dct {
-                    DuplicateCheckType::Note => {
-                        voice.note == state.channels[channel].last_note
-                    }
+                    DuplicateCheckType::Note => voice.note == state.channels[channel].last_note,
                     DuplicateCheckType::Sample => voice.sample_index == Some(sample_idx as u8),
-                    DuplicateCheckType::Instrument => voice.instrument_index == Some(instr_idx as u8),
+                    DuplicateCheckType::Instrument => {
+                        voice.instrument_index == Some(instr_idx as u8)
+                    }
                     _ => false,
                 };
                 if matches {
@@ -337,18 +356,32 @@ impl VoicePool {
             }
             for voice_idx in &indices {
                 match dca {
-                    DuplicateCheckAction::NoteCut => { self.voices[*voice_idx].deactivate(); }
+                    DuplicateCheckAction::NoteCut => {
+                        self.voices[*voice_idx].deactivate();
+                    }
                     DuplicateCheckAction::NoteOff => {
                         self.voices[*voice_idx].note_off = true;
-                        if let Some(ref mut env) = self.voices[*voice_idx].vol_env { env.released = true; }
-                        if let Some(ref mut env) = self.voices[*voice_idx].pan_env { env.released = true; }
-                        if let Some(ref mut env) = self.voices[*voice_idx].pitch_env { env.released = true; }
-                        if let Some(ref mut env) = self.voices[*voice_idx].filter_env { env.released = true; }
+                        if let Some(ref mut env) = self.voices[*voice_idx].vol_env {
+                            env.released = true;
+                        }
+                        if let Some(ref mut env) = self.voices[*voice_idx].pan_env {
+                            env.released = true;
+                        }
+                        if let Some(ref mut env) = self.voices[*voice_idx].pitch_env {
+                            env.released = true;
+                        }
+                        if let Some(ref mut env) = self.voices[*voice_idx].filter_env {
+                            env.released = true;
+                        }
                     }
                     DuplicateCheckAction::NoteFade => {
                         self.voices[*voice_idx].fading = true;
-                        if let Some(ref mut env) = self.voices[*voice_idx].vol_env { env.released = true; }
-                        if let Some(ref mut env) = self.voices[*voice_idx].filter_env { env.released = true; }
+                        if let Some(ref mut env) = self.voices[*voice_idx].vol_env {
+                            env.released = true;
+                        }
+                        if let Some(ref mut env) = self.voices[*voice_idx].filter_env {
+                            env.released = true;
+                        }
                     }
                 }
             }
@@ -457,6 +490,8 @@ impl VoicePool {
     }
 
     pub fn find_channel_voice_mut(&mut self, channel: usize) -> Option<&mut Voice> {
-        self.voices.iter_mut().find(|v| v.active && v.channel == Some(channel))
+        self.voices
+            .iter_mut()
+            .find(|v| v.active && v.channel == Some(channel))
     }
 }

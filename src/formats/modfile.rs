@@ -125,9 +125,7 @@ fn convert_effect_stk(effect_code: u8, effect_param: u8) -> Effect {
                     -((effect_param >> 4) as i8)
                 };
                 if sign >= 0 {
-                    Effect::PortamentoUp {
-                        speed: sign as u8,
-                    }
+                    Effect::PortamentoUp { speed: sign as u8 }
                 } else {
                     Effect::PortamentoDown {
                         speed: (-sign) as u8,
@@ -217,11 +215,17 @@ fn convert_effect_pt(effect_code: u8, effect_param: u8) -> Effect {
                 0x1 => Effect::FinePortamentoUp { speed: val },
                 0x2 => Effect::FinePortamentoDown { speed: val },
                 0x3 => Effect::GlissandoControl { on: val != 0 },
-                0x4 => Effect::VibratoWaveform { waveform: val & 0x03 },
+                0x4 => Effect::VibratoWaveform {
+                    waveform: val & 0x03,
+                },
                 0x5 => Effect::SetFineTune { tune: val },
                 0x6 => Effect::PatternLoop { count: val },
-                0x7 => Effect::TremoloWaveform { waveform: val & 0x03 },
-                0x8 => Effect::FormatSpecific(FormatEffect::Mod(ModEffect::KarplusStrong { param: val })),
+                0x7 => Effect::TremoloWaveform {
+                    waveform: val & 0x03,
+                },
+                0x8 => Effect::FormatSpecific(FormatEffect::Mod(ModEffect::KarplusStrong {
+                    param: val,
+                })),
                 0x9 => Effect::Retrigger { interval: val },
                 0xA => Effect::FineVolumeSlideUp { amount: val },
                 0xB => Effect::FineVolumeSlideDown { amount: val },
@@ -238,9 +242,7 @@ fn convert_effect_pt(effect_code: u8, effect_param: u8) -> Effect {
                     speed: effect_param,
                 }
             } else {
-                Effect::SetTempo {
-                    bpm: effect_param,
-                }
+                Effect::SetTempo { bpm: effect_param }
             }
         }
         _ => Effect::None,
@@ -335,16 +337,7 @@ impl FormatHandler for ModHandler {
             _ => 6,
         };
 
-        let initial_bpm = match variant {
-            ModMagic::SoundTracker => {
-                if _restart == 120 || _restart == 0 {
-                    125
-                } else {
-                    125
-                }
-            }
-            _ => 125,
-        };
+        let initial_bpm = 125;
 
         let mut mod_samples = Vec::new();
         let mut sample_offsets = Vec::new();
@@ -355,7 +348,13 @@ impl FormatHandler for ModHandler {
             let base = 20 + i * 30;
             if base + 30 > data.len() {
                 mod_samples.push((
-                    String::new(), 0u8, 0u8, LoopType::None, 0usize, 0usize, 0usize,
+                    String::new(),
+                    0u8,
+                    0u8,
+                    LoopType::None,
+                    0usize,
+                    0usize,
+                    0usize,
                 ));
                 sample_offsets.push(current_offset);
                 continue;
@@ -436,7 +435,7 @@ impl FormatHandler for ModHandler {
                     let b3 = data[cell_offset + 3];
 
                     let period = ((b0 as u16 & 0x0F) << 8) | b1 as u16;
-                    let sample_idx = ((b0 & 0xF0)) | ((b2 & 0xF0) >> 4);
+                    let sample_idx = (b0 & 0xF0) | ((b2 & 0xF0) >> 4);
                     let effect_code = b2 & 0x0F;
                     let effect_param = b3;
 
@@ -462,8 +461,10 @@ impl FormatHandler for ModHandler {
         let mut samples = vec![Sample::default()];
         let mut instruments = vec![Instrument::default()];
 
-        for (i, (sample_name, finetune_raw, volume, loop_type, loop_start, loop_end, length_bytes)) in
-            mod_samples.into_iter().enumerate()
+        for (
+            i,
+            (sample_name, finetune_raw, volume, loop_type, loop_start, loop_end, length_bytes),
+        ) in mod_samples.into_iter().enumerate()
         {
             let sample_offset = sample_offsets[i];
             let sample_data = if length_bytes > 0 && sample_offset + length_bytes <= data.len() {
@@ -522,7 +523,7 @@ impl FormatHandler for ModHandler {
             }
         }
 
-        let mod_count = (num_channels as usize).min(MAX_CHANNELS).max(1);
+        let mod_count = (num_channels as usize).clamp(1, MAX_CHANNELS);
         let mut channel_panning = vec![32u8; mod_count];
         for ch in 0..mod_count {
             if ch % 2 == 0 {
@@ -575,10 +576,10 @@ impl FormatHandler for ModHandler {
 #[allow(dead_code)]
 fn is_mod_magic(magic: &[u8]) -> bool {
     const MOD_SIGNATURES: &[&[u8]] = &[
-        b"M.K.", b"M!K!", b"FLT4", b"FLT8", b"4CHN", b"6CHN", b"8CHN", b"2CHN", b"CD81",
-        b"OKTA", b"16CN", b"32CN", b"N.T.", b"FEST", b"M&K!",
+        b"M.K.", b"M!K!", b"FLT4", b"FLT8", b"4CHN", b"6CHN", b"8CHN", b"2CHN", b"CD81", b"OKTA",
+        b"16CN", b"32CN", b"N.T.", b"FEST", b"M&K!",
     ];
-    MOD_SIGNATURES.iter().any(|sig| magic == *sig)
+    MOD_SIGNATURES.contains(&magic)
 }
 
 pub fn save_module(_module: &Module) -> Vec<u8> {
@@ -669,9 +670,15 @@ mod tests {
     #[test]
     fn convert_effect_filter_toggle() {
         let e = convert_effect(0xE, 0x00, ModMagic::Standard);
-        assert!(matches!(e, Effect::FormatSpecific(FormatEffect::Mod(ModEffect::Filter(true)))));
+        assert!(matches!(
+            e,
+            Effect::FormatSpecific(FormatEffect::Mod(ModEffect::Filter(true)))
+        ));
         let e = convert_effect(0xE, 0x01, ModMagic::Standard);
-        assert!(matches!(e, Effect::FormatSpecific(FormatEffect::Mod(ModEffect::Filter(false)))));
+        assert!(matches!(
+            e,
+            Effect::FormatSpecific(FormatEffect::Mod(ModEffect::Filter(false)))
+        ));
     }
 
     #[test]
@@ -688,35 +695,62 @@ mod tests {
 
     #[test]
     fn convert_effect_portamento_up() {
-        assert_eq!(convert_effect(1, 5, ModMagic::Standard), Effect::PortamentoUp { speed: 5 });
+        assert_eq!(
+            convert_effect(1, 5, ModMagic::Standard),
+            Effect::PortamentoUp { speed: 5 }
+        );
     }
 
     #[test]
     fn convert_effect_set_speed() {
-        assert_eq!(convert_effect(0xF, 6, ModMagic::Standard), Effect::SetSpeed { speed: 6 });
+        assert_eq!(
+            convert_effect(0xF, 6, ModMagic::Standard),
+            Effect::SetSpeed { speed: 6 }
+        );
     }
 
     #[test]
     fn convert_effect_set_tempo() {
-        assert_eq!(convert_effect(0xF, 125, ModMagic::Standard), Effect::SetTempo { bpm: 125 });
+        assert_eq!(
+            convert_effect(0xF, 125, ModMagic::Standard),
+            Effect::SetTempo { bpm: 125 }
+        );
     }
 
     #[test]
     fn convert_effect_pattern_break() {
-        assert_eq!(convert_effect(0xD, 0x13, ModMagic::Standard), Effect::PatternBreak { row: 13 });
-        assert_eq!(convert_effect(0xD, 0x00, ModMagic::Standard), Effect::PatternBreak { row: 0 });
-        assert_eq!(convert_effect(0xD, 0x32, ModMagic::Standard), Effect::PatternBreak { row: 32 });
-        assert_eq!(convert_effect(0xD, 0x63, ModMagic::Standard), Effect::PatternBreak { row: 63 });
+        assert_eq!(
+            convert_effect(0xD, 0x13, ModMagic::Standard),
+            Effect::PatternBreak { row: 13 }
+        );
+        assert_eq!(
+            convert_effect(0xD, 0x00, ModMagic::Standard),
+            Effect::PatternBreak { row: 0 }
+        );
+        assert_eq!(
+            convert_effect(0xD, 0x32, ModMagic::Standard),
+            Effect::PatternBreak { row: 32 }
+        );
+        assert_eq!(
+            convert_effect(0xD, 0x63, ModMagic::Standard),
+            Effect::PatternBreak { row: 63 }
+        );
     }
 
     #[test]
     fn convert_effect_set_volume() {
-        assert_eq!(convert_effect(0xC, 40, ModMagic::Standard), Effect::SetVolume { volume: 40 });
+        assert_eq!(
+            convert_effect(0xC, 40, ModMagic::Standard),
+            Effect::SetVolume { volume: 40 }
+        );
     }
 
     #[test]
     fn convert_effect_set_volume_clamped() {
-        assert_eq!(convert_effect(0xC, 100, ModMagic::Standard), Effect::SetVolume { volume: 64 });
+        assert_eq!(
+            convert_effect(0xC, 100, ModMagic::Standard),
+            Effect::SetVolume { volume: 64 }
+        );
     }
 
     #[test]
@@ -832,8 +866,14 @@ mod tests {
 
     #[test]
     fn convert_effect_extended_glissando() {
-        assert_eq!(convert_effect(0xE, 0x31, ModMagic::Standard), Effect::GlissandoControl { on: true });
-        assert_eq!(convert_effect(0xE, 0x30, ModMagic::Standard), Effect::GlissandoControl { on: false });
+        assert_eq!(
+            convert_effect(0xE, 0x31, ModMagic::Standard),
+            Effect::GlissandoControl { on: true }
+        );
+        assert_eq!(
+            convert_effect(0xE, 0x30, ModMagic::Standard),
+            Effect::GlissandoControl { on: false }
+        );
     }
 
     #[test]
@@ -896,13 +936,19 @@ mod tests {
     #[test]
     fn convert_effect_funkit() {
         let e = convert_effect(0xE, 0xF5, ModMagic::Standard);
-        assert_eq!(e, Effect::FormatSpecific(FormatEffect::Mod(ModEffect::FunkIt { speed: 5 })));
+        assert_eq!(
+            e,
+            Effect::FormatSpecific(FormatEffect::Mod(ModEffect::FunkIt { speed: 5 }))
+        );
     }
 
     #[test]
     fn convert_effect_karplus_strong() {
         let e = convert_effect(0xE, 0x83, ModMagic::Standard);
-        assert_eq!(e, Effect::FormatSpecific(FormatEffect::Mod(ModEffect::KarplusStrong { param: 3 })));
+        assert_eq!(
+            e,
+            Effect::FormatSpecific(FormatEffect::Mod(ModEffect::KarplusStrong { param: 3 }))
+        );
     }
 
     #[test]
@@ -995,4 +1041,3 @@ mod tests {
         assert!(ModHandler.detect(&data));
     }
 }
-

@@ -19,7 +19,10 @@ pub enum PluginSelectResult {
     /// 1. `ClapPluginHandle::load(descriptor.path)` — main thread, blocking
     /// 2. `handle.activate(sample_rate, max_block)` — main thread
     /// 3. `SetSendPlugin { send_index, processor }` — send to audio thread
-    Selected { descriptor: PluginDescriptor, send_index: usize },
+    Selected {
+        descriptor: PluginDescriptor,
+        send_index: usize,
+    },
     Cancelled,
 }
 
@@ -34,7 +37,9 @@ pub struct PluginBrowserAction {
 
 impl PluginBrowserAction {
     pub fn none() -> Self {
-        Self { rescan_requested: false }
+        Self {
+            rescan_requested: false,
+        }
     }
 }
 
@@ -82,6 +87,7 @@ pub fn draw_plugin_browser(
     theme: &TrackerTheme,
     discovered: &[PluginDescriptor],
     status: &PluginBrowserStatus,
+    filter: &mut String,
 ) -> (PluginSelectResult, PluginBrowserAction) {
     let mut result = PluginSelectResult::Cancelled;
     let mut action = PluginBrowserAction::none();
@@ -100,15 +106,20 @@ pub fn draw_plugin_browser(
             // Status / error display
             match status {
                 PluginBrowserStatus::Idle => {
-                    ui.label(egui::RichText::new(format!(
-                        "{} plugin(s) discovered.", discovered.len()
-                    )).size(FONT_BODY).weak());
+                    ui.label(
+                        egui::RichText::new(format!("{} plugin(s) discovered.", discovered.len()))
+                            .size(FONT_BODY)
+                            .weak(),
+                    );
                 }
                 PluginBrowserStatus::Loading(name) => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(egui::RichText::new(format!("Loading {}...", name))
-                            .size(FONT_BODY).strong());
+                        ui.label(
+                            egui::RichText::new(format!("Loading {}...", name))
+                                .size(FONT_BODY)
+                                .strong(),
+                        );
                     });
                 }
                 PluginBrowserStatus::Error(msg) => {
@@ -117,31 +128,28 @@ pub fn draw_plugin_browser(
                 PluginBrowserStatus::Loaded(name) => {
                     ui.colored_label(
                         egui::Color32::from_rgb(100, 255, 100),
-                        format!("Loaded: {}", name)
+                        format!("Loaded: {}", name),
                     );
                 }
             }
 
             ui.separator();
 
-            // Quicksearch filter. Persists per-window via egui temp storage:
-            // each browser instance (send bus A/B/C/D, each instrument) gets
-            // its own filter because `make_persistent_id` is scoped to the
-            // window Id. Matches name, vendor, plugin_id, and type label,
+            // Quicksearch filter (typed per-caller state, P3 — the
+            // instrument and send-FX browsers keep separate filters).
+            // Matches name, vendor, plugin_id, and type label,
             // case-insensitively.
-            let filter_id = ui.make_persistent_id("plugin_browser_filter");
-            let mut filter = ui.data(|d| d.get_temp::<String>(filter_id).unwrap_or_default());
-
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Filter:").size(FONT_BODY).color(theme.fg_dim));
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut filter)
+                ui.label(
+                    egui::RichText::new("Filter:")
+                        .size(FONT_BODY)
+                        .color(theme.fg_dim),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(filter)
                         .hint_text("name, vendor, type...")
                         .desired_width(ui.available_width()),
                 );
-                if resp.changed() {
-                    ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
-                }
             });
             ui.add_space(2.0);
 
@@ -150,9 +158,13 @@ pub fn draw_plugin_browser(
             if discovered.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(40.0);
-                    ui.label(egui::RichText::new(
-                        "No CLAP plugins found.\nAdd scan paths in Settings > Paths."
-                    ).size(FONT_BODY).weak());
+                    ui.label(
+                        egui::RichText::new(
+                            "No CLAP plugins found.\nAdd scan paths in Settings > Paths.",
+                        )
+                        .size(FONT_BODY)
+                        .weak(),
+                    );
                 });
             } else {
                 egui::ScrollArea::vertical()
@@ -161,7 +173,7 @@ pub fn draw_plugin_browser(
                     .show(ui, |ui| {
                         for (i, d) in discovered.iter().enumerate() {
                             let plugin_type = plugin_type_label(d);
-                            if !plugin_matches_filter(d, &filter) {
+                            if !plugin_matches_filter(d, filter) {
                                 continue;
                             }
                             shown += 1;
@@ -172,28 +184,35 @@ pub fn draw_plugin_browser(
                             } else {
                                 format!("{}. {} — {} ({})", i + 1, d.name, d.vendor, d.plugin_id)
                             };
-                            let resp = ui.add_enabled(!is_busy, egui::Button::new(
-                                egui::RichText::new(&label).size(FONT_BODY)
-                            ));
+                            let resp = ui.add_enabled(
+                                !is_busy,
+                                egui::Button::new(egui::RichText::new(&label).size(FONT_BODY)),
+                            );
                             if resp.clicked() {
                                 result = PluginSelectResult::Selected {
                                     descriptor: d.clone(),
                                     send_index,
                                 };
                             }
-                            ui.label(egui::RichText::new(format!(
-                                "    type: {} | {} in / {} out | state: {}",
-                                plugin_type, d.audio_inputs, d.audio_outputs, d.supports_state
-                            )).size(FONT_BODY - 1.0).weak());
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "    type: {} | {} in / {} out | state: {}",
+                                    plugin_type, d.audio_inputs, d.audio_outputs, d.supports_state
+                                ))
+                                .size(FONT_BODY - 1.0)
+                                .weak(),
+                            );
                         }
                     });
 
                 if shown == 0 && !filter.is_empty() {
                     ui.vertical_centered(|ui| {
                         ui.add_space(12.0);
-                        ui.label(egui::RichText::new(format!(
-                            "No plugins match \"{}\".", filter
-                        )).size(FONT_BODY).weak());
+                        ui.label(
+                            egui::RichText::new(format!("No plugins match \"{}\".", filter))
+                                .size(FONT_BODY)
+                                .weak(),
+                        );
                     });
                 }
             }
@@ -201,9 +220,11 @@ pub fn draw_plugin_browser(
             ui.separator();
             ui.horizontal(|ui| {
                 if !discovered.is_empty() {
-                    ui.label(egui::RichText::new(format!(
-                        "{} of {} shown", shown, discovered.len()
-                    )).size(FONT_CAPTION).color(theme.fg_dim));
+                    ui.label(
+                        egui::RichText::new(format!("{} of {} shown", shown, discovered.len()))
+                            .size(FONT_CAPTION)
+                            .color(theme.fg_dim),
+                    );
                 }
                 if ui.button("Rescan").clicked() {
                     // Request a rescan from the caller. The caller will
@@ -268,8 +289,8 @@ pub fn load_and_activate_clap_plugin(
     ),
     String,
 > {
-    let mut handle = ClapPluginHandle::load(&descriptor.path)
-        .map_err(|e| format!("Load failed: {e}"))?;
+    let mut handle =
+        ClapPluginHandle::load(&descriptor.path).map_err(|e| format!("Load failed: {e}"))?;
 
     if let Some(state) = initial_state {
         if !state.is_empty() {
@@ -279,7 +300,8 @@ pub fn load_and_activate_clap_plugin(
         }
     }
 
-    let processor = handle.activate(sample_rate, max_block)
+    let processor = handle
+        .activate(sample_rate, max_block)
         .map_err(|e| format!("Activate failed: {e}"))?;
     let name = processor.name().to_string();
 
@@ -368,7 +390,9 @@ pub fn save_all_plugin_states(
 /// to the right slot (instrument index vs send-bus index).
 pub fn write_plugin_state_to_slot(
     module: &mut crate::sequencer::Module,
-    slot_for: impl FnOnce(&mut crate::sequencer::Module) -> Option<&mut crate::sequencer::plugin::PluginSlot>,
+    slot_for: impl FnOnce(
+        &mut crate::sequencer::Module,
+    ) -> Option<&mut crate::sequencer::plugin::PluginSlot>,
     state: Vec<u8>,
 ) {
     if let Some(slot) = slot_for(module) {
@@ -396,7 +420,10 @@ pub fn sync_plugin_slots_from_module(
         usize,
         &crate::audio::plugins::PluginDescriptor,
         Option<&[u8]>,
-    ) -> Result<(Box<dyn crate::audio::plugins::HostedPluginHandle>, String), String>,
+    ) -> Result<
+        (Box<dyn crate::audio::plugins::HostedPluginHandle>, String),
+        String,
+    >,
     mut store_handle: impl FnMut(usize, Box<dyn crate::audio::plugins::HostedPluginHandle>, String),
 ) {
     if slots.is_empty() {
@@ -419,7 +446,11 @@ pub fn sync_plugin_slots_from_module(
                 continue;
             }
         };
-        let initial_state = if state.is_empty() { None } else { Some(&state[..]) };
+        let initial_state = if state.is_empty() {
+            None
+        } else {
+            Some(&state[..])
+        };
         match load_and_install(idx, &descriptor, initial_state) {
             Ok((handle, name)) => store_handle(idx, handle, name),
             Err(e) => {
@@ -470,7 +501,12 @@ mod tests {
 
     #[test]
     fn filter_matches_name_case_insensitive() {
-        let d = desc("TAL-Reverb-4", "TAL-Toge", "tal-reverb-4", PluginType::Effect);
+        let d = desc(
+            "TAL-Reverb-4",
+            "TAL-Toge",
+            "tal-reverb-4",
+            PluginType::Effect,
+        );
         assert!(plugin_matches_filter(&d, "reverb"));
         assert!(plugin_matches_filter(&d, "TAL"));
         assert!(plugin_matches_filter(&d, "tal-reverb"));

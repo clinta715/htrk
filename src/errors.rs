@@ -6,14 +6,28 @@ use std::str;
 #[allow(dead_code)]
 pub enum FormatError {
     Io(io::Error),
-    InvalidHeader { expected: String, found: [u8; 4] },
-    TruncatedFile { expected_size: usize, actual_size: usize },
+    InvalidHeader {
+        expected: String,
+        found: [u8; 4],
+    },
+    TruncatedFile {
+        expected_size: usize,
+        actual_size: usize,
+    },
     #[allow(dead_code)]
-    UnsupportedVersion { version: u16 },
+    UnsupportedVersion {
+        version: u16,
+    },
     #[allow(dead_code)]
-    InvalidPatternIndex { index: usize, max: usize },
+    InvalidPatternIndex {
+        index: usize,
+        max: usize,
+    },
     #[allow(dead_code)]
-    InvalidSampleIndex { index: usize, max: usize },
+    InvalidSampleIndex {
+        index: usize,
+        max: usize,
+    },
     DecompressionFailed(String),
     Utf8Error(str::Utf8Error),
     Bincode(String),
@@ -28,10 +42,22 @@ impl fmt::Display for FormatError {
         match self {
             FormatError::Io(e) => write!(f, "I/O error: {}", e),
             FormatError::InvalidHeader { expected, found } => {
-                write!(f, "Invalid header: expected {}, found {:?}", expected, String::from_utf8_lossy(found))
+                write!(
+                    f,
+                    "Invalid header: expected {}, found {:?}",
+                    expected,
+                    String::from_utf8_lossy(found)
+                )
             }
-            FormatError::TruncatedFile { expected_size, actual_size } => {
-                write!(f, "Truncated file: expected {} bytes, got {}", expected_size, actual_size)
+            FormatError::TruncatedFile {
+                expected_size,
+                actual_size,
+            } => {
+                write!(
+                    f,
+                    "Truncated file: expected {} bytes, got {}",
+                    expected_size, actual_size
+                )
             }
             FormatError::UnsupportedVersion { version } => {
                 write!(f, "Unsupported version: {}", version)
@@ -83,7 +109,10 @@ impl From<bincode::Error> for FormatError {
 
 impl From<hound::Error> for FormatError {
     fn from(e: hound::Error) -> Self {
-        FormatError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+        FormatError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            e.to_string(),
+        ))
     }
 }
 
@@ -103,8 +132,15 @@ impl fmt::Display for AudioError {
         match self {
             AudioError::NoDeviceAvailable => write!(f, "No audio device available"),
             AudioError::DeviceOpenFailed(msg) => write!(f, "Device open failed: {}", msg),
-            AudioError::UnsupportedSampleRate { requested, available } => {
-                write!(f, "Unsupported sample rate {}: available {:?}", requested, available)
+            AudioError::UnsupportedSampleRate {
+                requested,
+                available,
+            } => {
+                write!(
+                    f,
+                    "Unsupported sample rate {}: available {:?}",
+                    requested, available
+                )
             }
             AudioError::StreamCreationFailed(msg) => {
                 write!(f, "Stream creation failed: {}", msg)
@@ -131,7 +167,9 @@ impl fmt::Display for EditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             EditError::NoSelection => write!(f, "No selection"),
-            EditError::CannotPasteDifferentChannels => write!(f, "Cannot paste: different channel count"),
+            EditError::CannotPasteDifferentChannels => {
+                write!(f, "Cannot paste: different channel count")
+            }
             EditError::PatternFull => write!(f, "Pattern is full"),
             EditError::InvalidNoteValue => write!(f, "Invalid note value"),
         }

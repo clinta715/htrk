@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8};
 use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8};
 use std::sync::Arc;
 
 use crate::sequencer::player::PlayMode;
@@ -56,7 +56,8 @@ impl AtomicPlaybackState {
 
     #[allow(dead_code)]
     pub fn set_master_volume(&self, vol: f32) {
-        self.master_volume_bits.store(vol.to_bits(), Ordering::Relaxed);
+        self.master_volume_bits
+            .store(vol.to_bits(), Ordering::Relaxed);
     }
 
     pub fn play_mode(&self) -> PlayMode {
@@ -110,9 +111,11 @@ impl AtomicPlaybackState {
     pub fn finish_channel_scope_write(&self, frame_count: usize) {
         let len = frame_count.min(CHANNEL_SCOPE_SIZE);
         let pos = self.channel_scope_write_pos.load(Ordering::Relaxed) as usize;
-        self.channel_scope_write_pos.store(((pos + len) % CHANNEL_SCOPE_SIZE) as u32, Ordering::Relaxed);
+        self.channel_scope_write_pos
+            .store(((pos + len) % CHANNEL_SCOPE_SIZE) as u32, Ordering::Relaxed);
         self.channel_scope_available.store(
-            (self.channel_scope_available.load(Ordering::Relaxed) + len as u32).min(CHANNEL_SCOPE_SIZE as u32),
+            (self.channel_scope_available.load(Ordering::Relaxed) + len as u32)
+                .min(CHANNEL_SCOPE_SIZE as u32),
             Ordering::Relaxed,
         );
     }
@@ -219,8 +222,10 @@ impl AtomicPlaybackState {
             self.channel_sample_position[ch].store(Self::SAMPLE_POS_NONE, Ordering::Relaxed);
             self.channel_sample_index[ch].store(Self::SAMPLE_IDX_NONE, Ordering::Relaxed);
         }
-        self.preview_sample_position.store(Self::SAMPLE_POS_NONE, Ordering::Relaxed);
-        self.preview_sample_index.store(Self::SAMPLE_IDX_NONE, Ordering::Relaxed);
+        self.preview_sample_position
+            .store(Self::SAMPLE_POS_NONE, Ordering::Relaxed);
+        self.preview_sample_index
+            .store(Self::SAMPLE_IDX_NONE, Ordering::Relaxed);
     }
 
     pub fn set_channel_env_pos(&self, env_type: usize, ch: usize, pos: Option<f32>) {
@@ -283,10 +288,18 @@ impl AtomicPlaybackState {
 impl Default for AtomicPlaybackState {
     fn default() -> Self {
         let channel_scope_left = std::array::from_fn(|_| {
-            Arc::new((0..CHANNEL_SCOPE_SIZE).map(|_| AtomicU32::new(0)).collect::<Vec<_>>())
+            Arc::new(
+                (0..CHANNEL_SCOPE_SIZE)
+                    .map(|_| AtomicU32::new(0))
+                    .collect::<Vec<_>>(),
+            )
         });
         let channel_scope_right = std::array::from_fn(|_| {
-            Arc::new((0..CHANNEL_SCOPE_SIZE).map(|_| AtomicU32::new(0)).collect::<Vec<_>>())
+            Arc::new(
+                (0..CHANNEL_SCOPE_SIZE)
+                    .map(|_| AtomicU32::new(0))
+                    .collect::<Vec<_>>(),
+            )
         });
         AtomicPlaybackState {
             current_order: AtomicU16::new(0),
@@ -311,7 +324,9 @@ impl Default for AtomicPlaybackState {
             channel_instrument: std::array::from_fn(|_| AtomicU16::new(0)),
             channel_sample_position: std::array::from_fn(|_| AtomicU64::new(u64::MAX)),
             channel_sample_index: std::array::from_fn(|_| AtomicU16::new(0xFFFF)),
-            channel_env_pos: std::array::from_fn(|_| std::array::from_fn(|_| AtomicU32::new(ENV_POS_NONE))),
+            channel_env_pos: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU32::new(ENV_POS_NONE))
+            }),
             channel_env_instrument: std::array::from_fn(|_| AtomicU16::new(0xFFFF)),
             preview_sample_position: AtomicU64::new(u64::MAX),
             preview_sample_index: AtomicU16::new(0xFFFF),
@@ -327,7 +342,11 @@ impl AtomicPlaybackState {
     }
 
     pub fn channel_note(&self, ch: usize) -> u16 {
-        if ch < MAX_CHANNELS { self.channel_note[ch].load(Ordering::Relaxed) } else { 0 }
+        if ch < MAX_CHANNELS {
+            self.channel_note[ch].load(Ordering::Relaxed)
+        } else {
+            0
+        }
     }
 
     pub fn set_channel_instrument(&self, ch: usize, instr: u16) {
@@ -337,7 +356,11 @@ impl AtomicPlaybackState {
     }
 
     pub fn channel_instrument(&self, ch: usize) -> u16 {
-        if ch < MAX_CHANNELS { self.channel_instrument[ch].load(Ordering::Relaxed) } else { 0 }
+        if ch < MAX_CHANNELS {
+            self.channel_instrument[ch].load(Ordering::Relaxed)
+        } else {
+            0
+        }
     }
 
     pub fn channel_note_str(&self, ch: usize) -> String {
@@ -358,6 +381,10 @@ impl AtomicPlaybackState {
 
     pub fn channel_instrument_str(&self, ch: usize) -> String {
         let instr = self.channel_instrument(ch);
-        if instr == 0 { "..".to_string() } else { format!("{:02}", instr) }
+        if instr == 0 {
+            "..".to_string()
+        } else {
+            format!("{:02}", instr)
+        }
     }
 }

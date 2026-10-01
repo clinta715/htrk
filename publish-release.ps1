@@ -2,7 +2,7 @@
 # Usage: .\publish-release.ps1 [-Tag v0.27.0] [-Draft]
 
 param(
-    [string]$Tag = "v0.27.0",
+    [string]$Tag = "v0.28.0",
     [switch]$Draft
 )
 

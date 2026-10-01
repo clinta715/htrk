@@ -10,7 +10,9 @@ pub use crate::sequencer::instrument::EnvelopeType;
 
 fn ensure_pattern_by_index(module: &mut crate::sequencer::Module, pat_idx: usize) {
     if pat_idx >= module.patterns.len() {
-        module.patterns.resize_with(pat_idx + 1, || Pattern::new(64));
+        module
+            .patterns
+            .resize_with(pat_idx + 1, || Pattern::new(64));
     }
 }
 
@@ -736,7 +738,7 @@ edit_cmd! {
         let pat_idx = ensure_pattern(module, self.order)?;
         for &(row, ch, note) in &self.old_notes {
             if let Note::On(key) = note {
-                let new_key = (key as i8 + self.delta).max(0).min(119) as u8;
+                let new_key = (key as i8 + self.delta).clamp(0, 119) as u8;
                 module.patterns[pat_idx].data[row][ch].note = Note::On(new_key);
             }
         }

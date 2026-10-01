@@ -3,11 +3,11 @@ use std::sync::Arc;
 use crate::audio::effects::EffectProcessor;
 use crate::audio::sequencer::clock::SequencerClock;
 use crate::audio::voice_pool::VoicePool;
+use crate::debug_log;
 use crate::sequencer::effect::NUM_SEND_BUSES;
 use crate::sequencer::module::Module;
 use crate::sequencer::module::ModuleFormat;
 use crate::sequencer::player::{ChannelState, SequencerState};
-use crate::debug_log;
 
 #[cfg(test)]
 use crate::sequencer::pattern::Cell;
@@ -15,10 +15,10 @@ use crate::sequencer::pattern::Cell;
 use crate::sequencer::sample::Sample;
 
 // Sub-modules — one per major functional area
-mod helpers;
-mod cell;
-mod period;
 mod advance;
+mod cell;
+mod helpers;
+mod period;
 #[cfg(test)]
 mod tests;
 
@@ -98,7 +98,11 @@ impl SequencerEngine {
         self.stop_playback_state();
 
         let module = self.module.as_ref().unwrap();
-        self.state.clock = SequencerClock::new(module.initial_bpm, module.initial_speed, self.output_sample_rate);
+        self.state.clock = SequencerClock::new(
+            module.initial_bpm,
+            module.initial_speed,
+            self.output_sample_rate,
+        );
         self.state.global_volume = module.initial_global_volume;
         self.state.master_volume = 1.0;
 
@@ -135,7 +139,11 @@ impl SequencerEngine {
         self.stop_playback_state();
 
         let module = self.module.as_ref().unwrap();
-        self.state.clock = SequencerClock::new(module.initial_bpm, module.initial_speed, self.output_sample_rate);
+        self.state.clock = SequencerClock::new(
+            module.initial_bpm,
+            module.initial_speed,
+            self.output_sample_rate,
+        );
         self.state.global_volume = module.initial_global_volume;
         self.state.master_volume = 1.0;
 
@@ -201,7 +209,8 @@ impl SequencerEngine {
             if samples_per_tick <= 0.0 {
                 break;
             }
-            let samples_until_tick = (samples_per_tick - self.state.clock.sample_counter).ceil() as usize;
+            let samples_until_tick =
+                (samples_per_tick - self.state.clock.sample_counter).ceil() as usize;
             if samples_until_tick == 0 {
                 self.process_tick();
                 self.state.clock.sample_counter -= samples_per_tick;
@@ -255,7 +264,7 @@ impl SequencerEngine {
                 continue;
             }
 
-            let value = track.evaluate(order, row as u16, tick, speed);
+            let value = track.evaluate(order, row, tick, speed);
 
             match track.channel {
                 Some(ch) => {
@@ -276,18 +285,14 @@ impl SequencerEngine {
     /// after `process_tick` to route values to the appropriate
     /// `HostedPluginProcessor`'s param ring. The Vec is cleared on
     /// each call.
-    pub fn collect_plugin_param_automation(
-        &mut self,
-    ) -> Vec<(u8, u32, f32)> {
+    pub fn collect_plugin_param_automation(&mut self) -> Vec<(u8, u32, f32)> {
         std::mem::take(&mut self.pending_plugin_param_changes)
     }
 
     /// Collect pending instrument-plugin param automation values.
     /// Drained alongside `collect_plugin_param_automation` by the
     /// audio engine.
-    pub fn collect_instrument_plugin_param_automation(
-        &mut self,
-    ) -> Vec<(u8, u32, f32)> {
+    pub fn collect_instrument_plugin_param_automation(&mut self) -> Vec<(u8, u32, f32)> {
         std::mem::take(&mut self.pending_instrument_plugin_param_changes)
     }
 
@@ -297,7 +302,12 @@ impl SequencerEngine {
         std::mem::take(&mut self.pending_plugin_note_events)
     }
 
-    fn apply_automation_to_channel(&mut self, ch: usize, target: &crate::sequencer::automation::AutomationTarget, value: f32) {
+    fn apply_automation_to_channel(
+        &mut self,
+        ch: usize,
+        target: &crate::sequencer::automation::AutomationTarget,
+        value: f32,
+    ) {
         use crate::sequencer::automation::AutomationTarget;
         match target {
             AutomationTarget::ChannelVolume => {
@@ -317,17 +327,29 @@ impl SequencerEngine {
                     self.state.channels[ch].auto_send_factor[*bus as usize] = value;
                 }
             }
-            AutomationTarget::PluginParam { send_bus, param_id, .. } => {
-                self.pending_plugin_param_changes.push((*send_bus, *param_id, value));
+            AutomationTarget::PluginParam {
+                send_bus, param_id, ..
+            } => {
+                self.pending_plugin_param_changes
+                    .push((*send_bus, *param_id, value));
             }
-            AutomationTarget::InstrumentPluginParam { instrument, param_id, .. } => {
-                self.pending_instrument_plugin_param_changes.push((*instrument, *param_id, value));
+            AutomationTarget::InstrumentPluginParam {
+                instrument,
+                param_id,
+                ..
+            } => {
+                self.pending_instrument_plugin_param_changes
+                    .push((*instrument, *param_id, value));
             }
             _ => {}
         }
     }
 
-    fn apply_automation_global(&mut self, target: &crate::sequencer::automation::AutomationTarget, value: f32) {
+    fn apply_automation_global(
+        &mut self,
+        target: &crate::sequencer::automation::AutomationTarget,
+        value: f32,
+    ) {
         use crate::sequencer::automation::AutomationTarget;
         match target {
             AutomationTarget::GlobalVolume => {
@@ -342,8 +364,15 @@ impl SequencerEngine {
 
     // ─── Effect dispatch ───────────────────────────────────────
 
-    fn apply_effect_unified(&mut self, channel: usize, effect: &crate::sequencer::effect::Effect, is_row_start: bool) {
-        self.with_processor_mut(|processor, engine| processor.apply_effect(engine, channel, effect, is_row_start));
+    fn apply_effect_unified(
+        &mut self,
+        channel: usize,
+        effect: &crate::sequencer::effect::Effect,
+        is_row_start: bool,
+    ) {
+        self.with_processor_mut(|processor, engine| {
+            processor.apply_effect(engine, channel, effect, is_row_start)
+        });
     }
 
     fn with_processor_mut<R>(&mut self, f: impl FnOnce(&mut EffectProcessor, &mut Self) -> R) -> R {

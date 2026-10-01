@@ -1,7 +1,7 @@
-use eframe::egui;
 use crate::edit::EnvelopeType;
 use crate::sequencer::instrument::Envelope;
 use crate::ui::TrackerTheme;
+use eframe::egui;
 
 pub struct EnvelopeResponse {
     pub event: Option<EnvelopeEditEvent>,
@@ -14,7 +14,12 @@ pub enum EnvelopeEditEvent {
     PointRemoved(usize),
 }
 
-fn gradient_fill_polygon(painter: &egui::Painter, pts: &[egui::Pos2], top_color: egui::Color32, bottom_color: egui::Color32) {
+fn gradient_fill_polygon(
+    painter: &egui::Painter,
+    pts: &[egui::Pos2],
+    top_color: egui::Color32,
+    bottom_color: egui::Color32,
+) {
     if pts.len() < 3 {
         return;
     }
@@ -50,10 +55,26 @@ pub fn draw_envelope_editor(
     let mut hovered_point = None;
 
     let (line_color, fill_color, label) = match env_type {
-        EnvelopeType::Volume => (theme.envelope_colors[0].0, theme.envelope_colors[0].1, "Volume"),
-        EnvelopeType::Panning => (theme.envelope_colors[1].0, theme.envelope_colors[1].1, "Panning"),
-        EnvelopeType::Pitch => (theme.envelope_colors[2].0, theme.envelope_colors[2].1, "Pitch"),
-        EnvelopeType::Filter => (theme.envelope_colors[3].0, theme.envelope_colors[3].1, "Filter"),
+        EnvelopeType::Volume => (
+            theme.envelope_colors[0].0,
+            theme.envelope_colors[0].1,
+            "Volume",
+        ),
+        EnvelopeType::Panning => (
+            theme.envelope_colors[1].0,
+            theme.envelope_colors[1].1,
+            "Panning",
+        ),
+        EnvelopeType::Pitch => (
+            theme.envelope_colors[2].0,
+            theme.envelope_colors[2].1,
+            "Pitch",
+        ),
+        EnvelopeType::Filter => (
+            theme.envelope_colors[3].0,
+            theme.envelope_colors[3].1,
+            "Filter",
+        ),
     };
 
     let desired_size = ui.available_size();
@@ -62,7 +83,13 @@ pub fn draw_envelope_editor(
     let painter = ui.painter_at(rect);
     #[allow(deprecated)]
     let rounding = egui::Rounding::same(4);
-    painter.rect(rect, rounding, theme.panel_bg, egui::Stroke::new(1.0, theme.panel_border), egui::epaint::StrokeKind::Inside);
+    painter.rect(
+        rect,
+        rounding,
+        theme.panel_bg,
+        egui::Stroke::new(1.0_f32, theme.panel_border),
+        egui::epaint::StrokeKind::Inside,
+    );
 
     if envelope.points.is_empty() {
         painter.text(
@@ -72,7 +99,10 @@ pub fn draw_envelope_editor(
             egui::FontId::proportional(14.0),
             theme.fg_dim,
         );
-        return EnvelopeResponse { event: None, hovered_point: None };
+        return EnvelopeResponse {
+            event: None,
+            hovered_point: None,
+        };
     }
 
     let max_tick = envelope.points.last().map(|p| p.tick).unwrap_or(1).max(100);
@@ -87,7 +117,8 @@ pub fn draw_envelope_editor(
     };
 
     let from_screen = |pos: egui::Pos2| {
-        let tick = ((pos.x - inner.left()) / inner.width() * max_tick as f32).clamp(0.0, max_tick as f32) as u16;
+        let tick = ((pos.x - inner.left()) / inner.width() * max_tick as f32)
+            .clamp(0.0, max_tick as f32) as u16;
         let val = ((inner.bottom() - pos.y) / inner.height() * max_val).clamp(0.0, max_val) as u8;
         (tick, val)
     };
@@ -100,7 +131,7 @@ pub fn draw_envelope_editor(
         let y = inner.bottom() - val * inner.height();
         painter.line_segment(
             [egui::pos2(inner.left(), y), egui::pos2(inner.right(), y)],
-            egui::Stroke::new(1.0, grid_col),
+            egui::Stroke::new(1.0_f32, grid_col),
         );
         // Hex value label on left
         let hex_val = ((1.0 - val) * 64.0).round() as u8;
@@ -114,19 +145,29 @@ pub fn draw_envelope_editor(
     }
 
     // Vertical tick-aligned grid lines with tick number labels
-    let tick_step = if max_tick <= 64 { 8 }
-        else if max_tick <= 128 { 16 }
-        else if max_tick <= 256 { 32 }
-        else if max_tick <= 512 { 64 }
-        else { 128 };
-    let label_step = if max_tick <= 128 { tick_step } else { tick_step * 2 };
+    let tick_step = if max_tick <= 64 {
+        8
+    } else if max_tick <= 128 {
+        16
+    } else if max_tick <= 256 {
+        32
+    } else if max_tick <= 512 {
+        64
+    } else {
+        128
+    };
+    let label_step = if max_tick <= 128 {
+        tick_step
+    } else {
+        tick_step * 2
+    };
     for tick in (0..=max_tick).step_by(tick_step as usize) {
         let x = inner.left() + (tick as f32 / max_tick as f32) * inner.width();
         let is_major = tick % (tick_step * 4) == 0 || tick == 0 || tick == max_tick;
         let stroke = if is_major {
-            egui::Stroke::new(0.8, grid_col)
+            egui::Stroke::new(0.8_f32, grid_col)
         } else {
-            egui::Stroke::new(0.4, grid_minor_col)
+            egui::Stroke::new(0.4_f32, grid_minor_col)
         };
         painter.line_segment(
             [egui::pos2(x, inner.top()), egui::pos2(x, inner.bottom())],
@@ -153,13 +194,15 @@ pub fn draw_envelope_editor(
 
     // Gradient fill under curve
     if line_pts.len() >= 2 {
-        let mut fill_pts = Vec::new();
-        fill_pts.push(egui::pos2(line_pts[0].x, inner.bottom()));
-        fill_pts.extend_from_slice(&line_pts);
-        fill_pts.push(egui::pos2(line_pts.last().unwrap().x, inner.bottom()));
-        let fill_start = line_color.linear_multiply(0.25);
-        let fill_end = fill_color.gamma_multiply(0.5);
-        gradient_fill_polygon(&painter, &fill_pts, fill_start, fill_end);
+        if let (Some(first), Some(last)) = (line_pts.first(), line_pts.last()) {
+            let mut fill_pts = Vec::new();
+            fill_pts.push(egui::pos2(first.x, inner.bottom()));
+            fill_pts.extend_from_slice(&line_pts);
+            fill_pts.push(egui::pos2(last.x, inner.bottom()));
+            let fill_start = line_color.linear_multiply(0.25);
+            let fill_end = fill_color.gamma_multiply(0.5);
+            gradient_fill_polygon(&painter, &fill_pts, fill_start, fill_end);
+        }
     }
 
     // Subtle bottom shadow for depth
@@ -185,22 +228,30 @@ pub fn draw_envelope_editor(
     for i in 0..envelope.points.len().saturating_sub(1) {
         let p1 = envelope.points[i];
         let p2 = envelope.points[i + 1];
-        let (x1, y1) = (to_screen(p1.tick, p1.value).x, to_screen(p1.tick, p1.value).y);
-        let (x2, y2) = (to_screen(p2.tick, p2.value).x, to_screen(p2.tick, p2.value).y);
+        let (x1, y1) = (
+            to_screen(p1.tick, p1.value).x,
+            to_screen(p1.tick, p1.value).y,
+        );
+        let (x2, y2) = (
+            to_screen(p2.tick, p2.value).x,
+            to_screen(p2.tick, p2.value).y,
+        );
         painter.line_segment(
             [egui::pos2(x1, y1), egui::pos2(x2, y2)],
-            egui::Stroke::new(2.5, line_color),
+            egui::Stroke::new(2.5_f32, line_color),
         );
     }
 
     // Playback position
     for &pos in playback_positions {
         let x = inner.left() + (pos / max_tick as f32) * inner.width();
-        if x < inner.left() || x > inner.right() { continue; }
+        if x < inner.left() || x > inner.right() {
+            continue;
+        }
 
         painter.line_segment(
             [egui::pos2(x, inner.top()), egui::pos2(x, inner.bottom())],
-            egui::Stroke::new(1.5, theme.playback_position_line),
+            egui::Stroke::new(1.5_f32, theme.playback_position_line),
         );
 
         if envelope.points.len() >= 2 {
@@ -214,7 +265,8 @@ pub fn draw_envelope_editor(
                     } else {
                         0.0
                     };
-                    interp_val = (p1.value as f32 + (p2.value as f32 - p1.value as f32) * t).round() as u8;
+                    interp_val =
+                        (p1.value as f32 + (p2.value as f32 - p1.value as f32) * t).round() as u8;
                     break;
                 }
             }
@@ -243,9 +295,13 @@ pub fn draw_envelope_editor(
                 let lx = to_screen(envelope.points[ls].tick, 0).x;
                 painter.line_segment(
                     [egui::pos2(lx, inner.top()), egui::pos2(lx, inner.bottom())],
-                    egui::Stroke::new(1.0, theme.loop_marker),
+                    egui::Stroke::new(1.0_f32, theme.loop_marker),
                 );
-                painter.circle_stroke(egui::pos2(lx, inner.top() + 8.0), 4.0, egui::Stroke::new(1.5, theme.loop_marker));
+                painter.circle_stroke(
+                    egui::pos2(lx, inner.top() + 8.0),
+                    4.0,
+                    egui::Stroke::new(1.5_f32, theme.loop_marker),
+                );
             }
         }
         if let Some(le) = envelope.loop_end {
@@ -253,9 +309,13 @@ pub fn draw_envelope_editor(
                 let lx = to_screen(envelope.points[le].tick, 0).x;
                 painter.line_segment(
                     [egui::pos2(lx, inner.top()), egui::pos2(lx, inner.bottom())],
-                    egui::Stroke::new(1.0, theme.loop_marker),
+                    egui::Stroke::new(1.0_f32, theme.loop_marker),
                 );
-                painter.circle_stroke(egui::pos2(lx, inner.bottom() - 8.0), 4.0, egui::Stroke::new(1.5, theme.loop_marker));
+                painter.circle_stroke(
+                    egui::pos2(lx, inner.bottom() - 8.0),
+                    4.0,
+                    egui::Stroke::new(1.5_f32, theme.loop_marker),
+                );
             }
         }
     }
@@ -309,7 +369,8 @@ pub fn draw_envelope_editor(
 
         // Drag
         if response.dragged_by(egui::PointerButton::Primary) && is_hovered {
-            let (new_tick, new_val) = from_screen(ui.input(|i| i.pointer.hover_pos().unwrap_or(center)));
+            let (new_tick, new_val) =
+                from_screen(ui.input(|i| i.pointer.hover_pos().unwrap_or(center)));
             event = Some(EnvelopeEditEvent::PointMoved(i, new_tick, new_val));
         }
     }
@@ -329,5 +390,8 @@ pub fn draw_envelope_editor(
         }
     }
 
-    EnvelopeResponse { event, hovered_point }
+    EnvelopeResponse {
+        event,
+        hovered_point,
+    }
 }

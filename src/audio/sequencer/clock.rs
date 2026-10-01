@@ -93,7 +93,11 @@ impl SequencerClock {
     }
 
     fn recalculate(&mut self) {
-        let safe_bpm = if self.bpm == 0 { 125.0 } else { self.bpm as f64 };
+        let safe_bpm = if self.bpm == 0 {
+            125.0
+        } else {
+            self.bpm as f64
+        };
         self.samples_per_tick = self.sample_rate * 5.0 / (safe_bpm * 2.0);
     }
 

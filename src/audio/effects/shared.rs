@@ -18,12 +18,12 @@ pub fn dispatch_shared_effect(
         }
 
         Effect::SetPanning { pan } | Effect::SetPanning16 { pan } => {
-            ch.channel_panning = (*pan).min(255);
+            ch.channel_panning = *pan;
             true
         }
 
         Effect::SetPanPosition { pan } => {
-            ch.channel_panning = (*pan).min(255);
+            ch.channel_panning = *pan;
             true
         }
 
@@ -70,10 +70,12 @@ pub fn dispatch_shared_effect(
 
         Effect::FilterCutoffSlide { amount } => {
             engine.state.channels[channel].last_filter_cutoff_slide = *amount;
-            engine.state.channels[channel].active_effects.filter_cutoff_slide = true;
+            engine.state.channels[channel]
+                .active_effects
+                .filter_cutoff_slide = true;
             let slide = *amount as f32;
-            let new_cutoff = (engine.state.channels[channel].filter_cutoff + slide)
-                .clamp(0.0, 0xFFFF as f32);
+            let new_cutoff =
+                (engine.state.channels[channel].filter_cutoff + slide).clamp(0.0, 0xFFFF as f32);
             engine.state.channels[channel].filter_cutoff = new_cutoff;
             for voice in &mut engine.voice_pool.voices {
                 if voice.active && voice.channel == Some(channel) {
@@ -99,7 +101,9 @@ pub fn dispatch_shared_effect(
                 let mem_idx = bus * 4 + param_idx as usize;
                 let value = engine.state.channels[channel].last_send_param_value[mem_idx];
                 let actual_value = (value as f32) / 255.0;
-                engine.pending_send_fx_params.push((bus, param_idx, actual_value));
+                engine
+                    .pending_send_fx_params
+                    .push((bus, param_idx, actual_value));
             }
             true
         }
@@ -142,7 +146,9 @@ pub fn shared_process_tick_tail(
     channel: usize,
     _tick: u8,
 ) {
-    let do_filter = engine.state.channels[channel].active_effects.filter_cutoff_slide;
+    let do_filter = engine.state.channels[channel]
+        .active_effects
+        .filter_cutoff_slide;
     let do_vol = !engine.state.channels[channel].active_effects.tremolo;
 
     if do_filter {

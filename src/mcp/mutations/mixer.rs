@@ -12,7 +12,10 @@ use super::common::{get_bool, get_f64, get_i64, get_str};
 
 // ── Channel handlers ──
 
-pub(super) fn cmd_channel_set_panning(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResult {
+pub(super) fn cmd_channel_set_panning(
+    core: &mut HtrkCore,
+    params: &serde_json::Value,
+) -> CmdResult {
     let channel = get_i64!(params, "channel").ok_or("Missing 'channel'")? as usize;
     let pan = get_i64!(params, "pan").ok_or("Missing 'pan'")? as u8;
     let pan = pan.min(64);
@@ -84,28 +87,42 @@ pub(super) fn cmd_sendfx_set_bus(core: &mut HtrkCore, params: &serde_json::Value
     };
 
     if bus_index >= NUM_SEND_BUSES {
-        return Err(format!("Bus index {bus_index} out of range (max {})", NUM_SEND_BUSES - 1));
+        return Err(format!(
+            "Bus index {bus_index} out of range (max {})",
+            NUM_SEND_BUSES - 1
+        ));
     }
 
     core.ensure_module_ownership();
     if let Some(ref mut module) = core.module {
         if let Some(arc_module) = Arc::get_mut(module) {
             arc_module.send_bus_config[bus_index] = effect_type;
-            core.send_command(AudioCommand::SetSendEffectType { send_index: bus_index, effect_type });
+            core.send_command(AudioCommand::SetSendEffectType {
+                send_index: bus_index,
+                effect_type,
+            });
             core.sync_module_to_audio();
-            return Ok(serde_json::json!({"ok": true, "bus_index": bus_index, "effect": effect_str}));
+            return Ok(
+                serde_json::json!({"ok": true, "bus_index": bus_index, "effect": effect_str}),
+            );
         }
     }
     Err("No module loaded".into())
 }
 
-pub(super) fn cmd_sendfx_set_return_level(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResult {
+pub(super) fn cmd_sendfx_set_return_level(
+    core: &mut HtrkCore,
+    params: &serde_json::Value,
+) -> CmdResult {
     let send_index = get_i64!(params, "send_index").ok_or("Missing 'send_index'")? as usize;
     let level = get_f64!(params, "level").ok_or("Missing 'level'")? as f32;
     let level = level.clamp(0.0, 1.0);
 
     if send_index >= NUM_SEND_BUSES {
-        return Err(format!("Send index {send_index} out of range (max {})", NUM_SEND_BUSES - 1));
+        return Err(format!(
+            "Send index {send_index} out of range (max {})",
+            NUM_SEND_BUSES - 1
+        ));
     }
 
     core.ensure_module_ownership();

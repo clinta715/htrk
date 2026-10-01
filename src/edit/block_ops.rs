@@ -1,5 +1,5 @@
-use crate::sequencer::pattern::Cell;
 use crate::sequencer::note::Note;
+use crate::sequencer::pattern::Cell;
 
 pub fn interpolate_u8(start: u8, end: u8, step: usize, total: usize) -> u8 {
     if total <= 1 {
@@ -36,7 +36,9 @@ pub fn random_u8(min: u8, max: u8) -> u8 {
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
     let mut state = seed;
-    state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
     let rand_val = ((state >> 33) as u32) as u8;
     let range = (max - min) as u16;
     if range == 0 {
@@ -45,10 +47,7 @@ pub fn random_u8(min: u8, max: u8) -> u8 {
     min + (rand_val as u16 % (range + 1)) as u8
 }
 
-pub fn fill_instrument_cells(
-    cells: &mut [Cell],
-    instrument: u8,
-) -> Vec<Cell> {
+pub fn fill_instrument_cells(cells: &mut [Cell], instrument: u8) -> Vec<Cell> {
     let old: Vec<Cell> = cells.to_vec();
     for cell in cells.iter_mut() {
         if cell.note != Note::None {

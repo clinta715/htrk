@@ -1,0 +1,10 @@
+# clippy configuration.
+#
+# Tracker effect/envelope code legitimately takes wide argument lists
+# (channel, tick, effect type, param, ...), so the default threshold of 7
+# produces mostly noise. 10 keeps genuinely unwieldy signatures visible.
+#
+# `avoid-breaking-exported-api` is disabled because this is an application
+# crate, not a published library.
+avoid-breaking-exported-api = false
+too-many-arguments-threshold = 10

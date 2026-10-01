@@ -1,12 +1,12 @@
-use std::sync::Arc;
-use eframe::egui;
+use crate::app_config::SpacingMode;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::audio::CommandSender;
 use crate::sequencer::module::Module;
 use crate::sequencer::pattern::Pattern;
-use crate::app_config::SpacingMode;
-use crate::ui::pattern_grid::{GridMetrics, ColumnVisibility};
+use crate::ui::pattern_grid::{ColumnVisibility, GridMetrics};
 use crate::ui::theme::TrackerTheme;
+use eframe::egui;
+use std::sync::Arc;
 
 pub struct PlaybackView {
     pub scroll_row: usize,
@@ -47,11 +47,7 @@ impl PlaybackView {
         playback_speed: u8,
         spacing_mode: SpacingMode,
     ) {
-        let metrics = GridMetrics::new(
-            self.zoom as f32,
-            spacing_mode,
-            col_vis,
-        );
+        let metrics = GridMetrics::new(self.zoom as f32, spacing_mode, col_vis);
 
         let visible_rows = crate::ui::playback_view::draw_playback_view(
             ui,
@@ -81,9 +77,7 @@ impl PlaybackView {
             if row < self.scroll_row {
                 self.scroll_row = row;
             }
-            if self.last_visible_rows > 0
-                && row >= self.scroll_row + self.last_visible_rows
-            {
+            if self.last_visible_rows > 0 && row >= self.scroll_row + self.last_visible_rows {
                 self.scroll_row = row - self.last_visible_rows + 1;
             }
         }

@@ -62,11 +62,14 @@ impl MixerState {
 
         let num_channels = core.num_channels();
         if num_channels == 0 {
-            ui.label(egui::RichText::new("No module loaded. Press Ctrl+N to start a new song.").color(theme.fg_dim));
+            ui.label(
+                egui::RichText::new("No module loaded. Press Ctrl+N to start a new song.")
+                    .color(theme.fg_dim),
+            );
             return;
         }
 
-            egui::ScrollArea::horizontal()
+        egui::ScrollArea::horizontal()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -81,7 +84,14 @@ impl MixerState {
                     // 2. Send bus strips
                     for bus in 0..4 {
                         let plugin_name = send_bus_plugins[bus].as_ref().map(slot_display_name);
-                        draw_send_bus_strip(ui, core, bus, plugin_name.as_deref(), send_bus_return_levels[bus], theme);
+                        draw_send_bus_strip(
+                            ui,
+                            core,
+                            bus,
+                            plugin_name.as_deref(),
+                            send_bus_return_levels[bus],
+                            theme,
+                        );
                     }
                     // 3. Master strip
                     draw_master_strip(ui, core, theme);
@@ -91,9 +101,17 @@ impl MixerState {
 }
 
 fn channel_in_use(core: &crate::core::HtrkCore, ch: usize) -> bool {
-    let Some(module) = core.module.as_ref() else { return false; };
-    let pat_idx = module.order_list.get(core.selected_order).copied().unwrap_or(0) as usize;
-    let Some(pattern) = module.patterns.get(pat_idx) else { return false; };
+    let Some(module) = core.module.as_ref() else {
+        return false;
+    };
+    let pat_idx = module
+        .order_list
+        .get(core.selected_order)
+        .copied()
+        .unwrap_or(0) as usize;
+    let Some(pattern) = module.patterns.get(pat_idx) else {
+        return false;
+    };
     pattern.data[..pattern.num_rows].iter().any(|row| {
         let cell = &row[ch];
         cell.note != crate::sequencer::Note::None
@@ -103,9 +121,20 @@ fn channel_in_use(core: &crate::core::HtrkCore, ch: usize) -> bool {
     })
 }
 
-fn draw_channel_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, ch: usize, theme: &TrackerTheme) {
+fn draw_channel_strip(
+    ui: &mut egui::Ui,
+    core: &mut crate::core::HtrkCore,
+    ch: usize,
+    theme: &TrackerTheme,
+) {
     let (vol, pan, muted, soloed) = {
-        let module = core.module.as_ref().unwrap();
+        let Some(module) = core.module.as_ref() else {
+            ui.label(
+                egui::RichText::new("No module loaded. Press Ctrl+N to start a new song.")
+                    .color(theme.fg_dim),
+            );
+            return;
+        };
         let vol = module.channel_volume.get(ch).copied().unwrap_or(64);
         let pan = module.channel_panning.get(ch).copied().unwrap_or(128);
         (vol, pan, core.muted_channels[ch], core.solo_channels[ch])
@@ -114,7 +143,7 @@ fn draw_channel_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, ch: u
 
     egui::Frame::NONE
         .fill(theme.status_bg)
-        .stroke(egui::Stroke::new(1.0, theme.channel_header_bg))
+        .stroke(egui::Stroke::new(1.0_f32, theme.channel_header_bg))
         .corner_radius(egui::CornerRadius::same(2))
         .inner_margin(egui::Margin::symmetric(4, 4))
         .show(ui, |ui| {
@@ -122,10 +151,22 @@ fn draw_channel_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, ch: u
             ui.vertical(|ui| {
                 // Channel name + index
                 ui.horizontal(|ui| {
-                    let muted_color = if muted { theme.channel_muted } else { theme.fg_dim };
-                    ui.label(egui::RichText::new(format!("Ch{:02}", ch + 1)).strong().color(theme.fg_text));
-                    if muted { ui.label(egui::RichText::new("(M)").color(muted_color)); }
-                    if soloed { ui.label(egui::RichText::new("(S)").color(theme.channel_solo)); }
+                    let muted_color = if muted {
+                        theme.channel_muted
+                    } else {
+                        theme.fg_dim
+                    };
+                    ui.label(
+                        egui::RichText::new(format!("Ch{:02}", ch + 1))
+                            .strong()
+                            .color(theme.fg_text),
+                    );
+                    if muted {
+                        ui.label(egui::RichText::new("(M)").color(muted_color));
+                    }
+                    if soloed {
+                        ui.label(egui::RichText::new("(S)").color(theme.channel_solo));
+                    }
                 });
 
                 // Mute / Solo
@@ -142,12 +183,19 @@ fn draw_channel_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, ch: u
                 ui.add_space(2.0);
 
                 // Volume
-                ui.label(egui::RichText::new("Vol").size(FONT_CAPTION).color(theme.fg_volume));
+                ui.label(
+                    egui::RichText::new("Vol")
+                        .size(FONT_CAPTION)
+                        .color(theme.fg_volume),
+                );
                 let mut new_vol = vol as f32;
-                if ui.add(egui::Slider::new(&mut new_vol, 0.0..=64.0)
-                    .step_by(1.0)
-                    .show_value(true)
-                    .clamping(egui::SliderClamping::Always))
+                if ui
+                    .add(
+                        egui::Slider::new(&mut new_vol, 0.0..=64.0)
+                            .step_by(1.0)
+                            .show_value(true)
+                            .clamping(egui::SliderClamping::Always),
+                    )
                     .on_hover_text("Channel volume (0-64). 0 = silent, 64 = full.")
                     .changed()
                 {
@@ -161,13 +209,22 @@ fn draw_channel_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, ch: u
                 ui.add_space(2.0);
 
                 // Pan
-                ui.label(egui::RichText::new("Pan").size(FONT_CAPTION).color(theme.fg_instrument));
+                ui.label(
+                    egui::RichText::new("Pan")
+                        .size(FONT_CAPTION)
+                        .color(theme.fg_instrument),
+                );
                 let mut new_pan = pan as f32;
-                if ui.add(egui::Slider::new(&mut new_pan, 0.0..=255.0)
-                    .step_by(1.0)
-                    .show_value(true)
-                    .clamping(egui::SliderClamping::Always))
-                    .on_hover_text("Channel panning (0-255). 0 = full left, 128 = center, 255 = full right.")
+                if ui
+                    .add(
+                        egui::Slider::new(&mut new_pan, 0.0..=255.0)
+                            .step_by(1.0)
+                            .show_value(true)
+                            .clamping(egui::SliderClamping::Always),
+                    )
+                    .on_hover_text(
+                        "Channel panning (0-255). 0 = full left, 128 = center, 255 = full right.",
+                    )
                     .changed()
                 {
                     let new_pan = new_pan.round() as u8;
@@ -180,16 +237,31 @@ fn draw_channel_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, ch: u
                 ui.add_space(2.0);
 
                 ui.separator();
-                ui.label(egui::RichText::new("Sends").size(FONT_CAPTION).color(theme.fg_dim));
+                ui.label(
+                    egui::RichText::new("Sends")
+                        .size(FONT_CAPTION)
+                        .color(theme.fg_dim),
+                );
                 for bus in 0..4 {
                     let mut lvl = send_levels[bus];
+                    let bus_label = ['A', 'B', 'C', 'D'].get(bus).copied().unwrap_or('?');
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(&"ABCD".chars().nth(bus).unwrap().to_string()).size(FONT_CAPTION).color(theme.fg_dim));
-                        if ui.add(egui::Slider::new(&mut lvl, 0.0..=1.0)
-                            .step_by(0.01)
-                            .show_value(false)
-                            .clamping(egui::SliderClamping::Always))
-                            .on_hover_text(format!("Send to bus {} (0.0 = dry, 1.0 = full wet)", "ABCD".chars().nth(bus).unwrap()))
+                        ui.label(
+                            egui::RichText::new(bus_label.to_string())
+                                .size(FONT_CAPTION)
+                                .color(theme.fg_dim),
+                        );
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut lvl, 0.0..=1.0)
+                                    .step_by(0.01)
+                                    .show_value(false)
+                                    .clamping(egui::SliderClamping::Always),
+                            )
+                            .on_hover_text(format!(
+                                "Send to bus {} (0.0 = dry, 1.0 = full wet)",
+                                bus_label
+                            ))
                             .changed()
                         {
                             core.set_send_level(ch, bus, lvl);
@@ -200,38 +272,77 @@ fn draw_channel_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, ch: u
         });
 }
 
-fn draw_send_bus_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, bus: usize, plugin_name: Option<&str>, return_level: f32, theme: &TrackerTheme) {
+fn draw_send_bus_strip(
+    ui: &mut egui::Ui,
+    core: &mut crate::core::HtrkCore,
+    bus: usize,
+    plugin_name: Option<&str>,
+    return_level: f32,
+    theme: &TrackerTheme,
+) {
     egui::Frame::NONE
         .fill(theme.status_bg)
-        .stroke(egui::Stroke::new(1.0, theme.channel_header_bg))
+        .stroke(egui::Stroke::new(1.0_f32, theme.channel_header_bg))
         .corner_radius(egui::CornerRadius::same(2))
         .inner_margin(egui::Margin::symmetric(4, 4))
         .show(ui, |ui| {
             ui.set_width(110.0);
             ui.vertical(|ui| {
-                let label = match bus { 0 => "FX A", 1 => "FX B", 2 => "FX C", _ => "FX D" };
-                ui.label(egui::RichText::new(label).strong().color(theme.fg_instrument));
+                let label = match bus {
+                    0 => "FX A",
+                    1 => "FX B",
+                    2 => "FX C",
+                    _ => "FX D",
+                };
+                ui.label(
+                    egui::RichText::new(label)
+                        .strong()
+                        .color(theme.fg_instrument),
+                );
                 ui.add_space(2.0);
 
-                ui.label(egui::RichText::new("Plugin").size(FONT_CAPTION).color(theme.fg_dim));
+                ui.label(
+                    egui::RichText::new("Plugin")
+                        .size(FONT_CAPTION)
+                        .color(theme.fg_dim),
+                );
                 match plugin_name {
                     Some(name) => {
-                        ui.label(egui::RichText::new(name).size(FONT_BODY).color(theme.fg_note));
+                        ui.label(
+                            egui::RichText::new(name)
+                                .size(FONT_BODY)
+                                .color(theme.fg_note),
+                        );
                     }
                     None => {
-                        ui.label(egui::RichText::new("(none)").size(FONT_BODY).color(theme.fg_dim));
+                        ui.label(
+                            egui::RichText::new("(none)")
+                                .size(FONT_BODY)
+                                .color(theme.fg_dim),
+                        );
                     }
                 }
-                ui.label(egui::RichText::new("Open F12 to load / edit").size(FONT_CAPTION).color(theme.fg_dim));
+                ui.label(
+                    egui::RichText::new("Open F12 to load / edit")
+                        .size(FONT_CAPTION)
+                        .color(theme.fg_dim),
+                );
                 ui.add_space(2.0);
 
                 ui.separator();
-                ui.label(egui::RichText::new("Return").size(FONT_CAPTION).color(theme.fg_dim));
+                ui.label(
+                    egui::RichText::new("Return")
+                        .size(FONT_CAPTION)
+                        .color(theme.fg_dim),
+                );
                 let mut lvl = return_level;
-                if ui.add(egui::Slider::new(&mut lvl, 0.0..=1.0)
-                    .step_by(0.01)
-                    .show_value(true)
-                    .clamping(egui::SliderClamping::Always))
+                if ui
+                    .add(
+                        egui::Slider::new(&mut lvl, 0.0..=1.0)
+                            .step_by(0.01)
+                            .show_value(true)
+                            .clamping(egui::SliderClamping::Always),
+                    )
                     .on_hover_text("Bus return level (0.0 = silent, 1.0 = full).")
                     .changed()
                 {
@@ -251,20 +362,31 @@ fn draw_master_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, theme:
         .unwrap_or(64);
     egui::Frame::NONE
         .fill(theme.status_bg)
-        .stroke(egui::Stroke::new(2.0, theme.fg_instrument))
+        .stroke(egui::Stroke::new(2.0_f32, theme.fg_instrument))
         .corner_radius(egui::CornerRadius::same(2))
         .inner_margin(egui::Margin::symmetric(4, 4))
         .show(ui, |ui| {
             ui.set_width(90.0);
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new("MASTER").strong().color(theme.fg_instrument));
+                ui.label(
+                    egui::RichText::new("MASTER")
+                        .strong()
+                        .color(theme.fg_instrument),
+                );
                 ui.add_space(2.0);
-                ui.label(egui::RichText::new("Volume").size(FONT_CAPTION).color(theme.fg_dim));
+                ui.label(
+                    egui::RichText::new("Volume")
+                        .size(FONT_CAPTION)
+                        .color(theme.fg_dim),
+                );
                 let mut new_vol = master_vol as f32;
-                if ui.add(egui::Slider::new(&mut new_vol, 0.0..=64.0)
-                    .step_by(1.0)
-                    .show_value(true)
-                    .clamping(egui::SliderClamping::Always))
+                if ui
+                    .add(
+                        egui::Slider::new(&mut new_vol, 0.0..=64.0)
+                            .step_by(1.0)
+                            .show_value(true)
+                            .clamping(egui::SliderClamping::Always),
+                    )
                     .on_hover_text("Master volume (0-64).")
                     .changed()
                 {
@@ -275,8 +397,16 @@ fn draw_master_strip(ui: &mut egui::Ui, core: &mut crate::core::HtrkCore, theme:
                 }
                 ui.add_space(2.0);
                 ui.separator();
-                ui.label(egui::RichText::new("Channels: ").size(FONT_CAPTION).color(theme.fg_dim));
-                ui.label(egui::RichText::new(format!("{}", core.num_channels())).size(FONT_BODY).color(theme.fg_text));
+                ui.label(
+                    egui::RichText::new("Channels: ")
+                        .size(FONT_CAPTION)
+                        .color(theme.fg_dim),
+                );
+                ui.label(
+                    egui::RichText::new(format!("{}", core.num_channels()))
+                        .size(FONT_BODY)
+                        .color(theme.fg_text),
+                );
             });
         });
 }

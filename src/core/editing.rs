@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::edit::{SetCellCommand, BulkSetCellsCommand, TransposeCommand};
+use crate::edit::{BulkSetCellsCommand, SetCellCommand, TransposeCommand};
 use crate::sequencer::effect::Effect;
 use crate::sequencer::module::MAX_CHANNELS;
 use crate::sequencer::note::Note;
@@ -10,10 +10,16 @@ use crate::ui::pattern_grid::{CursorPosition, Selection, SubColumn};
 use super::HtrkCore;
 
 impl HtrkCore {
-    pub fn set_cell_at_cursor(&mut self, new_cell: Cell, multichannel_channels: &[bool], multichannel_enabled: bool) {
+    pub fn set_cell_at_cursor(
+        &mut self,
+        new_cell: Cell,
+        multichannel_channels: &[bool],
+        multichannel_enabled: bool,
+    ) {
         let cursor = self.cursor;
         let channels: Vec<usize> = if multichannel_enabled {
-            multichannel_channels.iter()
+            multichannel_channels
+                .iter()
                 .enumerate()
                 .filter(|(_, &active)| active)
                 .map(|(ch, _)| ch)
@@ -22,13 +28,16 @@ impl HtrkCore {
             vec![cursor.channel]
         };
 
-        let old_cells: Vec<Cell> = channels.iter().map(|&ch| {
-            let saved = self.cursor;
-            self.cursor.channel = ch;
-            let cell = self.get_cell_at_cursor();
-            self.cursor = saved;
-            cell
-        }).collect();
+        let old_cells: Vec<Cell> = channels
+            .iter()
+            .map(|&ch| {
+                let saved = self.cursor;
+                self.cursor.channel = ch;
+                let cell = self.get_cell_at_cursor();
+                self.cursor = saved;
+                cell
+            })
+            .collect();
 
         self.ensure_pattern_exists();
         self.ensure_module_ownership();
@@ -44,7 +53,7 @@ impl HtrkCore {
                         row: cursor.row,
                         channel: ch,
                         old_cell,
-                        new_cell: new_cell.clone(),
+                        new_cell,
                     });
                     let _ = self.undo_manager.execute(cmd, arc_module);
                 }
@@ -89,7 +98,7 @@ impl HtrkCore {
 
     pub fn delete_selection(&mut self) {
         let sel = match &self.selection {
-            Some(s) => s.clone(),
+            Some(s) => *s,
             None => return,
         };
         let (min, max) = sel.normalized();
@@ -195,7 +204,10 @@ impl HtrkCore {
 
     pub fn select_column(&mut self) {
         let pattern = self.current_pattern_or_default();
-        let channel = self.cursor.channel.min(self.num_channels().saturating_sub(1));
+        let channel = self
+            .cursor
+            .channel
+            .min(self.num_channels().saturating_sub(1));
         let sel = Selection {
             start: CursorPosition {
                 row: 0,
@@ -214,10 +226,13 @@ impl HtrkCore {
 
     pub fn transpose_selection(&mut self, delta: i8) {
         let sel = match &self.selection {
-            Some(s) => s.clone(),
+            Some(s) => *s,
             None => {
                 let cursor = self.cursor;
-                Selection { start: cursor, end: cursor }
+                Selection {
+                    start: cursor,
+                    end: cursor,
+                }
             }
         };
         let (min, max) = sel.normalized();
@@ -248,7 +263,10 @@ impl HtrkCore {
         self.sync_module_to_audio();
     }
 
-    pub fn handle_context_menu_action(&mut self, action: crate::ui::pattern_grid::ContextMenuAction) {
+    pub fn handle_context_menu_action(
+        &mut self,
+        action: crate::ui::pattern_grid::ContextMenuAction,
+    ) {
         let selected_order = self.selected_order;
 
         self.ensure_pattern_exists();
@@ -261,7 +279,7 @@ impl HtrkCore {
                 // if no selection is active, use the cursor as a
                 // single-cell "selection" (row:cursor.row, ch:cursor.channel).
                 let sel = match &self.selection {
-                    Some(s) => s.clone(),
+                    Some(s) => *s,
                     None => Selection {
                         start: self.cursor,
                         end: self.cursor,
@@ -299,7 +317,8 @@ impl HtrkCore {
                                     let old_cell = arc_module.patterns[pat_idx].data[row][ch];
                                     old_cells.push((row, ch, old_cell));
                                     let mut new_cell = old_cell;
-                                    new_cell.volume = Some(crate::edit::interpolate_u8(fv, lv, step, total));
+                                    new_cell.volume =
+                                        Some(crate::edit::interpolate_u8(fv, lv, step, total));
                                     new_cells.push((row, ch, new_cell));
                                 }
                             }
@@ -317,15 +336,21 @@ impl HtrkCore {
                         let mut old_cells = Vec::new();
                         let mut new_cells = Vec::new();
                         for ch in min.channel..=max.channel {
-                            let first_param = crate::sequencer::effect::effect_param_value(&arc_module.patterns[pat_idx].data[min.row][ch].effect);
-                            let last_param = crate::sequencer::effect::effect_param_value(&arc_module.patterns[pat_idx].data[max.row][ch].effect);
+                            let first_param = crate::sequencer::effect::effect_param_value(
+                                &arc_module.patterns[pat_idx].data[min.row][ch].effect,
+                            );
+                            let last_param = crate::sequencer::effect::effect_param_value(
+                                &arc_module.patterns[pat_idx].data[max.row][ch].effect,
+                            );
                             if let (Some(fp), Some(lp)) = (first_param, last_param) {
                                 let total = max.row - min.row;
                                 for (step, row) in (min.row..=max.row).enumerate() {
                                     let old_cell = arc_module.patterns[pat_idx].data[row][ch];
                                     old_cells.push((row, ch, old_cell));
                                     let new_val = crate::edit::interpolate_u8(fp, lp, step, total);
-                                    let new_cell = crate::sequencer::effect::set_effect_param_value(old_cell, new_val);
+                                    let new_cell = crate::sequencer::effect::set_effect_param_value(
+                                        old_cell, new_val,
+                                    );
                                     new_cells.push((row, ch, new_cell));
                                 }
                             }
@@ -363,7 +388,10 @@ impl HtrkCore {
                                 old_cells.push((row, ch, old_cell));
                                 let mut new_cell = old_cell;
                                 if let Note::On(key) = old_cell.note {
-                                    let new_key = crate::edit::random_u8(key.saturating_sub(12).max(0), (key as u16 + 12).min(119) as u8);
+                                    let new_key = crate::edit::random_u8(
+                                        key.saturating_sub(12),
+                                        (key as u16 + 12).min(119) as u8,
+                                    );
                                     new_cell.note = Note::On(new_key);
                                 }
                                 if let Some(v) = old_cell.volume {
@@ -396,7 +424,7 @@ impl HtrkCore {
                                 let c = arc_module.patterns[pat_idx].data[row][ch];
                                 old_cells.push((row, ch, c));
                                 let mut c2 = c;
-                                c2.effect = effect.clone();
+                                c2.effect = effect;
                                 new_cells.push((row, ch, c2));
                             }
                         }
@@ -425,7 +453,7 @@ impl HtrkCore {
                                 let c = arc_module.patterns[pat_idx].data[row][ch];
                                 old_cells.push((row, ch, c));
                                 let mut c2 = c;
-                                c2.effect = effect.clone();
+                                c2.effect = effect;
                                 new_cells.push((row, ch, c2));
                             }
                         }
@@ -477,7 +505,11 @@ impl HtrkCore {
         };
         self.cursor.row = 0;
         self.selection = None;
-        if self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
+        if self
+            .playback_state
+            .playing
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
             self.send_command(crate::audio::commands::AudioCommand::PlayFrom {
                 order: self.selected_order as u16,
                 row: 0,
@@ -497,7 +529,11 @@ impl HtrkCore {
         };
         self.cursor.row = 0;
         self.selection = None;
-        if self.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed) {
+        if self
+            .playback_state
+            .playing
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
             self.send_command(crate::audio::commands::AudioCommand::PlayFrom {
                 order: self.selected_order as u16,
                 row: 0,
@@ -564,16 +600,24 @@ impl HtrkCore {
             let raw = *pattern.cell(row, channel);
             let cell = match sub_column {
                 SubColumn::Note => {
-                    let mut c = Cell::default(); c.note = raw.note; c
+                    let mut c = Cell::default();
+                    c.note = raw.note;
+                    c
                 }
                 SubColumn::InstrumentTens | SubColumn::InstrumentOnes => {
-                    let mut c = Cell::default(); c.instrument = raw.instrument; c
+                    let mut c = Cell::default();
+                    c.instrument = raw.instrument;
+                    c
                 }
                 SubColumn::VolumeTens | SubColumn::VolumeOnes => {
-                    let mut c = Cell::default(); c.volume = raw.volume; c
+                    let mut c = Cell::default();
+                    c.volume = raw.volume;
+                    c
                 }
                 SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => {
-                    let mut c = Cell::default(); c.effect = raw.effect; c
+                    let mut c = Cell::default();
+                    c.effect = raw.effect;
+                    c
                 }
             };
             data.push(vec![cell]);

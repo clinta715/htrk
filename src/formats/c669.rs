@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::errors::{FormatError, FormatResult};
 use crate::formats::FormatHandler;
 use crate::sequencer::{
-    effect::{FormatEffect, C669Effect},
+    effect::{C669Effect, FormatEffect},
     Effect, Instrument, LoopType, Module, ModuleFormat, Note, Pattern, Sample,
 };
 
@@ -28,7 +28,7 @@ impl FormatHandler for C669Handler {
             return false;
         }
         let magic = [data[0], data[1]];
-        magic == [b'i', b'f'] || magic == [b'J', b'N']
+        magic == *b"if" || magic == *b"JN"
     }
 
     fn load(&self, data: &[u8]) -> FormatResult<Module> {
@@ -54,7 +54,11 @@ impl FormatHandler for C669Handler {
         }
 
         let order_list = data[113..241].to_vec();
-        let mut order_list: Vec<u8> = order_list.iter().take_while(|&&o| o != 0xFF).copied().collect();
+        let mut order_list: Vec<u8> = order_list
+            .iter()
+            .take_while(|&&o| o != 0xFF)
+            .copied()
+            .collect();
 
         if order_list.is_empty() {
             for i in 0..num_patterns.min(128) {
@@ -81,9 +85,9 @@ impl FormatHandler for C669Handler {
             }
 
             let inst_name = read_string(&data[offset..], 0, 13)?;
-            let inst_length = u32_at(&data, offset + 13) as usize;
-            let loop_start = u32_at(&data, offset + 17) as usize;
-            let loop_end = u32_at(&data, offset + 21) as usize;
+            let inst_length = u32_at(data, offset + 13) as usize;
+            let loop_start = u32_at(data, offset + 17) as usize;
+            let loop_end = u32_at(data, offset + 21) as usize;
 
             offset += C669_INSTRUMENT_SIZE;
 
@@ -152,7 +156,11 @@ impl FormatHandler for C669Handler {
                     let byte3 = data[event_offset + 2];
 
                     let note_val = byte1 & 0x7F;
-                    let inst_val = if byte1 & 0x80 != 0 { Some(byte2 & 0x3F) } else { None };
+                    let inst_val = if byte1 & 0x80 != 0 {
+                        Some(byte2 & 0x3F)
+                    } else {
+                        None
+                    };
 
                     let vol_val = if byte1 & 0x80 != 0 {
                         Some(byte2 >> 2)
@@ -168,7 +176,7 @@ impl FormatHandler for C669Handler {
                     }
 
                     if let Some(inst) = inst_val {
-                        pattern.data[row][ch].instrument = Some(inst.min(63) as u8);
+                        pattern.data[row][ch].instrument = Some(inst.min(63));
                     }
 
                     if let Some(vol) = vol_val {
@@ -177,14 +185,19 @@ impl FormatHandler for C669Handler {
                         }
                     }
 
-                    pattern.data[row][ch].effect = convert_c669_effect(effect_code, effect_param, is_unis);
+                    pattern.data[row][ch].effect =
+                        convert_c669_effect(effect_code, effect_param, is_unis);
                 }
             }
 
             patterns.push(pattern);
         }
 
-        let initial_tempo = if !pattern_tempos.is_empty() { pattern_tempos[0].max(32) } else { 78 };
+        let initial_tempo = if !pattern_tempos.is_empty() {
+            pattern_tempos[0].max(32)
+        } else {
+            78
+        };
         let initial_speed = 6;
 
         let mut channel_panning = Vec::with_capacity(C669_NUM_CHANNELS);
@@ -197,7 +210,11 @@ impl FormatHandler for C669Handler {
             message: None,
             format: ModuleFormat::C669,
             _version: if is_unis { 2 } else { 1 },
-            tracker_name: if is_unis { String::from("UNIS 669") } else { String::from("Composer 669") },
+            tracker_name: if is_unis {
+                String::from("UNIS 669")
+            } else {
+                String::from("Composer 669")
+            },
             order_list,
             patterns,
             instruments,
@@ -239,7 +256,10 @@ fn convert_c669_effect(code: u8, param: u8, is_unis: bool) -> Effect {
             depth: param & 0x0F,
         },
         5 => Effect::SetSpeed { speed: param },
-        _ => Effect::FormatSpecific(FormatEffect::C669(C669Effect::Raw { effect: code, param })),
+        _ => Effect::FormatSpecific(FormatEffect::C669(C669Effect::Raw {
+            effect: code,
+            param,
+        })),
     }
 }
 
@@ -262,7 +282,12 @@ fn u32_at(data: &[u8], offset: usize) -> u32 {
     if offset + 4 > data.len() {
         return 0;
     }
-    u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+    u32::from_le_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ])
 }
 
 #[cfg(test)]

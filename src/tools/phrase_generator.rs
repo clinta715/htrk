@@ -1,6 +1,6 @@
+use super::scale::{self, Scale};
 use crate::sequencer::pattern::Cell;
 use crate::sequencer::Note;
-use super::scale::{self, Scale};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GenMode {
@@ -21,7 +21,12 @@ impl GenMode {
     }
 
     pub fn all() -> &'static [GenMode] {
-        &[GenMode::Melodic, GenMode::Euclidean, GenMode::Drum, GenMode::Chord]
+        &[
+            GenMode::Melodic,
+            GenMode::Euclidean,
+            GenMode::Drum,
+            GenMode::Chord,
+        ]
     }
 }
 
@@ -44,7 +49,12 @@ impl ChordType {
     }
 
     pub fn all() -> &'static [ChordType] {
-        &[ChordType::Triad, ChordType::Seventh, ChordType::Sus2, ChordType::Sus4]
+        &[
+            ChordType::Triad,
+            ChordType::Seventh,
+            ChordType::Sus2,
+            ChordType::Sus4,
+        ]
     }
 
     pub fn intervals(&self) -> &'static [i8] {
@@ -168,7 +178,10 @@ impl Lcg {
     }
 
     pub(crate) fn next(&mut self) -> u32 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (self.0 >> 32) as u32
     }
 
@@ -201,7 +214,11 @@ fn note_cell(note_key: u8, instrument: Option<u8>) -> Cell {
     }
 }
 
-fn generate_melodic(params: &PhraseParams, start_row: usize, end_row: usize) -> Vec<(usize, usize, Cell)> {
+fn generate_melodic(
+    params: &PhraseParams,
+    start_row: usize,
+    end_row: usize,
+) -> Vec<(usize, usize, Cell)> {
     let mut rng = Lcg::new(params.seed);
     let num_rows = end_row.saturating_sub(start_row) + 1;
     let mut result = Vec::new();
@@ -220,19 +237,23 @@ fn generate_melodic(params: &PhraseParams, start_row: usize, end_row: usize) -> 
             if rng.f32() < 0.05 {
                 current_degree = rng.next() as i32 % num_intervals;
             } else {
-                let step = (rng.next() as i32 % (params.step_size as i32 * 2 + 1)) - params.step_size as i32;
+                let step = (rng.next() as i32 % (params.step_size as i32 * 2 + 1))
+                    - params.step_size as i32;
                 current_degree += step;
             }
             current_degree = current_degree.clamp(-num_intervals * 4, num_intervals * 4);
 
             let raw_oct = if current_degree < 0 {
-                mid_octave.saturating_sub(((-current_degree) as u32 / num_intervals as u32).min(3) as u8)
+                mid_octave
+                    .saturating_sub(((-current_degree) as u32 / num_intervals as u32).min(3) as u8)
             } else {
                 mid_octave + ((current_degree as u32) / num_intervals as u32).min(3) as u8
             };
             let octave = raw_oct.clamp(params.octave_min, params.octave_max);
             let degree_idx = current_degree.rem_euclid(num_intervals) as usize;
-            let note_key = (params.root as i32 + (octave as i32) * 12 + intervals[degree_idx] as i32).clamp(0, 119) as u8;
+            let note_key =
+                (params.root as i32 + (octave as i32) * 12 + intervals[degree_idx] as i32)
+                    .clamp(0, 119) as u8;
 
             result.push((row, 0, note_cell(note_key, params.instrument)));
         }
@@ -241,7 +262,11 @@ fn generate_melodic(params: &PhraseParams, start_row: usize, end_row: usize) -> 
     result
 }
 
-fn generate_euclidean(params: &PhraseParams, start_row: usize, end_row: usize) -> Vec<(usize, usize, Cell)> {
+fn generate_euclidean(
+    params: &PhraseParams,
+    start_row: usize,
+    end_row: usize,
+) -> Vec<(usize, usize, Cell)> {
     let num_rows = end_row.saturating_sub(start_row) + 1;
     let mut rng = Lcg::new(params.seed);
     let mut result = Vec::new();
@@ -254,8 +279,12 @@ fn generate_euclidean(params: &PhraseParams, start_row: usize, end_row: usize) -
     for (i, &active) in pattern.iter().enumerate() {
         if active {
             let row = start_row + i;
-            let octave = params.octave_min + (rng.next() % (params.octave_max - params.octave_min + 1) as u32) as u8;
-            let note_key = (params.root as i32 + (octave as i32) * 12 + intervals[degree % num_intervals] as i32).clamp(0, 119) as u8;
+            let octave = params.octave_min
+                + (rng.next() % (params.octave_max - params.octave_min + 1) as u32) as u8;
+            let note_key = (params.root as i32
+                + (octave as i32) * 12
+                + intervals[degree % num_intervals] as i32)
+                .clamp(0, 119) as u8;
             result.push((row, 0, note_cell(note_key, params.instrument)));
             degree += 1 + (rng.next() % 3) as usize;
         }
@@ -265,7 +294,9 @@ fn generate_euclidean(params: &PhraseParams, start_row: usize, end_row: usize) -
 }
 
 fn density_to_pulses(num_rows: usize, density: f32) -> usize {
-    if num_rows == 0 { return 0; }
+    if num_rows == 0 {
+        return 0;
+    }
     ((num_rows as f32) * density.clamp(0.0, 1.0)).round() as usize
 }
 
@@ -281,23 +312,42 @@ fn generate_drum(
     // Resolve per-drum pulse counts: explicit density wins, else fall
     // back to the original hardcoded defaults so existing calls still
     // produce a four-on-the-floor + backbeat + 8ths feel.
-    let kick_pulses = params.kick_density
+    let kick_pulses = params
+        .kick_density
         .map(|d| density_to_pulses(num_rows, d))
         .unwrap_or_else(|| (num_rows / 4).max(1));
-    let snare_pulses = params.snare_density
+    let snare_pulses = params
+        .snare_density
         .map(|d| density_to_pulses(num_rows, d))
         .unwrap_or_else(|| (num_rows / 4).max(1));
-    let hat_pulses = params.hat_density
+    let hat_pulses = params
+        .hat_density
         .map(|d| density_to_pulses(num_rows, d))
         .unwrap_or_else(|| (num_rows / 2).max(1));
 
     let kick_pat = scale::euclidean(num_rows, kick_pulses.min(num_rows).max(1), 0);
-    let snare_pat = scale::euclidean(num_rows, snare_pulses.min(num_rows).max(1), (num_rows / 8).max(1));
+    let snare_pat = scale::euclidean(
+        num_rows,
+        snare_pulses.min(num_rows).max(1),
+        (num_rows / 8).max(1),
+    );
     let hat_pat = scale::euclidean(num_rows, hat_pulses.min(num_rows).max(1), 0);
 
-    let kick_ch = if params.kick_ch < num_channels { Some(params.kick_ch) } else { None };
-    let snare_ch = if params.snare_ch < num_channels { Some(params.snare_ch) } else { None };
-    let hat_ch = if params.hat_ch < num_channels { Some(params.hat_ch) } else { None };
+    let kick_ch = if params.kick_ch < num_channels {
+        Some(params.kick_ch)
+    } else {
+        None
+    };
+    let snare_ch = if params.snare_ch < num_channels {
+        Some(params.snare_ch)
+    } else {
+        None
+    };
+    let hat_ch = if params.hat_ch < num_channels {
+        Some(params.hat_ch)
+    } else {
+        None
+    };
 
     // Per-drum instruments: explicit param wins, then fall back to
     // the shared `instrument` so single-instrument drum calls work.
@@ -330,7 +380,11 @@ fn generate_drum(
         let Some(ch) = hat_ch else { continue };
         let row_offset: i32 = if swing > 0.0 && i % 2 == 1 {
             // Even row → +1, odd row → -1, scaled by swing.
-            if (i / 2) % 2 == 0 { 1 } else { -1 }
+            if (i / 2) % 2 == 0 {
+                1
+            } else {
+                -1
+            }
         } else {
             0
         };
@@ -348,14 +402,20 @@ fn chord_progression_degrees(progression: Progression, scale: Scale) -> Vec<i32>
     match progression {
         Progression::OneFourFiveOne => vec![0, 3, 4, 0],
         Progression::OneFiveSixFour => {
-            if is_major { vec![0, 4, 5, 3] } else { vec![0, 4, 3, 5] }
+            if is_major {
+                vec![0, 4, 5, 3]
+            } else {
+                vec![0, 4, 3, 5]
+            }
         }
         Progression::OneSixFourFive => {
-            if is_major { vec![0, 5, 3, 4] } else { vec![0, 3, 5, 4] }
+            if is_major {
+                vec![0, 5, 3, 4]
+            } else {
+                vec![0, 3, 5, 4]
+            }
         }
-        Progression::OneThreeFourFive => {
-            if is_major { vec![0, 2, 3, 4] } else { vec![0, 2, 3, 4] }
-        }
+        Progression::OneThreeFourFive => vec![0, 2, 3, 4],
         Progression::Circle => vec![0, 1, 2, 3, 4, 5, 6],
     }
 }
@@ -381,14 +441,16 @@ fn generate_chord(
         }
         let row_end = (row_start + rows_per_chord).saturating_sub(1).min(end_row);
         let degree_offset = degree.rem_euclid(num_degrees) as usize;
-        let root_note = (params.root as i32
-            + params.octave_min as i32 * 12
-            + intervals[degree_offset] as i32)
-            .clamp(0, 119) as u8;
+        let root_note =
+            (params.root as i32 + params.octave_min as i32 * 12 + intervals[degree_offset] as i32)
+                .clamp(0, 119) as u8;
 
         for &interval in chord_intervals {
             let note = (root_note as i32 + interval as i32).clamp(0, 119) as u8;
-            let ch_idx = chord_intervals.iter().position(|&v| v == interval).unwrap_or(0);
+            let ch_idx = chord_intervals
+                .iter()
+                .position(|&v| v == interval)
+                .unwrap_or(0);
             let ch = params.chord_channels[ch_idx % params.chord_channels.len()];
             if ch >= num_channels {
                 continue;

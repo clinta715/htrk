@@ -77,7 +77,10 @@ impl UndoManager {
 
     /// Undo the most recent command. Returns the (id, label) of the
     /// undone command so the caller can confirm what was undone.
-    pub fn undo(&mut self, module: &mut Module) -> Result<(u64, Option<String>), super::commands::EditError> {
+    pub fn undo(
+        &mut self,
+        module: &mut Module,
+    ) -> Result<(u64, Option<String>), super::commands::EditError> {
         if let Some(entry) = self.undo_stack.pop() {
             let id = entry.id;
             let label = entry.label.clone();
@@ -90,7 +93,10 @@ impl UndoManager {
     }
 
     /// Redo the most recently undone command. Returns the (id, label).
-    pub fn redo(&mut self, module: &mut Module) -> Result<(u64, Option<String>), super::commands::EditError> {
+    pub fn redo(
+        &mut self,
+        module: &mut Module,
+    ) -> Result<(u64, Option<String>), super::commands::EditError> {
         if let Some(entry) = self.redo_stack.pop() {
             let id = entry.id;
             let label = entry.label.clone();

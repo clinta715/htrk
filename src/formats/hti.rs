@@ -42,9 +42,8 @@ pub fn load_instrument(data: &[u8]) -> FormatResult<(Instrument, Vec<Sample>)> {
 
     let mut pos = 12usize;
 
-    let metadata_len = u32::from_le_bytes([
-        data[pos], data[pos + 1], data[pos + 2], data[pos + 3],
-    ]) as usize;
+    let metadata_len =
+        u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
     pos += 4;
 
     if pos + metadata_len > data.len() {
@@ -58,22 +57,19 @@ pub fn load_instrument(data: &[u8]) -> FormatResult<(Instrument, Vec<Sample>)> {
         .map_err(|e| FormatError::ParseError(e.to_string()))?;
     pos += metadata_len;
 
-    let num_samples = u32::from_le_bytes([
-        data[pos], data[pos + 1], data[pos + 2], data[pos + 3],
-    ]) as usize;
+    let num_samples =
+        u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
     pos += 4;
 
     let mut samples = Vec::with_capacity(num_samples);
 
     for _ in 0..num_samples {
-        let pcm_data_size = u32::from_le_bytes([
-            data[pos], data[pos + 1], data[pos + 2], data[pos + 3],
-        ]) as usize;
+        let pcm_data_size =
+            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         pos += 4;
 
-        let metadata_size = u32::from_le_bytes([
-            data[pos], data[pos + 1], data[pos + 2], data[pos + 3],
-        ]) as usize;
+        let metadata_size =
+            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         pos += 4;
 
         let sample_metadata: SampleMetadata = bincode::deserialize(&data[pos..pos + metadata_size])
@@ -104,8 +100,8 @@ pub fn save_instrument(instrument: &Instrument, samples: &[Sample]) -> FormatRes
     data.extend_from_slice(&HTI_VERSION.to_le_bytes());
     data.extend_from_slice(&0u32.to_le_bytes());
 
-    let metadata = bincode::serialize(instrument)
-        .map_err(|e| FormatError::SerializeError(e.to_string()))?;
+    let metadata =
+        bincode::serialize(instrument).map_err(|e| FormatError::SerializeError(e.to_string()))?;
     data.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
     data.extend_from_slice(&metadata);
 
@@ -275,8 +271,14 @@ mod tests {
         inst.volume_envelope = Some(Envelope {
             points: vec![
                 EnvelopePoint { tick: 0, value: 0 },
-                EnvelopePoint { tick: 10, value: 64 },
-                EnvelopePoint { tick: 50, value: 32 },
+                EnvelopePoint {
+                    tick: 10,
+                    value: 64,
+                },
+                EnvelopePoint {
+                    tick: 50,
+                    value: 32,
+                },
             ],
             sustain_point: Some(1),
             loop_start: None,
@@ -291,7 +293,10 @@ mod tests {
         inst.filter_envelope = Some(Envelope {
             points: vec![
                 EnvelopePoint { tick: 0, value: 64 },
-                EnvelopePoint { tick: 30, value: 32 },
+                EnvelopePoint {
+                    tick: 30,
+                    value: 32,
+                },
             ],
             sustain_point: None,
             loop_start: None,

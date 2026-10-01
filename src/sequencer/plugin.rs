@@ -29,7 +29,11 @@ pub struct PluginSlot {
 
 impl PluginSlot {
     /// Construct a new slot with the minimum required fields. State is empty.
-    pub fn new(format: impl Into<String>, path: impl Into<String>, plugin_id: impl Into<String>) -> Self {
+    pub fn new(
+        format: impl Into<String>,
+        path: impl Into<String>,
+        plugin_id: impl Into<String>,
+    ) -> Self {
         PluginSlot {
             format: format.into(),
             path: path.into(),

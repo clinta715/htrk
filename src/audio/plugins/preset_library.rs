@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::SystemTime;
-use serde::{Deserialize, Serialize};
 
 /// A single cached preset entry.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -35,7 +35,10 @@ impl PresetEntry {
     /// Stable key used for deduplication in the library cache.
     pub fn cache_key(&self) -> String {
         let loc = self.location_path.as_deref().unwrap_or("plugin");
-        format!("{}:{}:{}:{}:{}", self.plugin_path, self.provider_id, loc, self.plugin_id, self.load_key)
+        format!(
+            "{}:{}:{}:{}:{}",
+            self.plugin_path, self.provider_id, loc, self.plugin_id, self.load_key
+        )
     }
 
     fn plugin_key(&self) -> String {
@@ -115,11 +118,7 @@ impl PresetLibrary {
         let pkey = format!("clap:{plugin_path}:{plugin_id}");
         self.plugin_presets
             .get(&pkey)
-            .map(|keys| {
-                keys.iter()
-                    .filter_map(|k| self.presets.get(k))
-                    .collect()
-            })
+            .map(|keys| keys.iter().filter_map(|k| self.presets.get(k)).collect())
             .unwrap_or_default()
     }
 
@@ -149,15 +148,17 @@ impl PresetLibrary {
                 e.name.to_lowercase().contains(&q)
                     || e.plugin_name.to_lowercase().contains(&q)
                     || e.features.iter().any(|f| f.to_lowercase().contains(&q))
-                    || e.description.as_ref().map_or(false, |d| d.to_lowercase().contains(&q))
+                    || e.description
+                        .as_ref()
+                        .is_some_and(|d| d.to_lowercase().contains(&q))
                     || e.creators.iter().any(|c| c.to_lowercase().contains(&q))
                     || e.extra_info.values().any(|v| v.to_lowercase().contains(&q))
             })
             .collect();
 
-        results.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        results.sort_by_key(|e| e.name.to_lowercase());
         let total_results = results.len();
-        let total_pages = (total_results + page_size - 1) / page_size;
+        let total_pages = total_results.div_ceil(page_size);
         let start = page * page_size;
         let page_results = results
             .into_iter()
@@ -221,17 +222,15 @@ impl PresetLibrary {
     pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
         let json = self.to_json()?;
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, &json)
-            .map_err(|e| format!("Cannot write preset cache: {e}"))?;
-        std::fs::rename(&tmp, path)
-            .map_err(|e| format!("Cannot rename preset cache: {e}"))?;
+        std::fs::write(&tmp, &json).map_err(|e| format!("Cannot write preset cache: {e}"))?;
+        std::fs::rename(&tmp, path).map_err(|e| format!("Cannot rename preset cache: {e}"))?;
         Ok(())
     }
 
     /// Load the library from a JSON file at `path`.
     pub fn load_from_file(path: &Path) -> Result<Self, String> {
-        let json = std::fs::read_to_string(path)
-            .map_err(|e| format!("Cannot read preset cache: {e}"))?;
+        let json =
+            std::fs::read_to_string(path).map_err(|e| format!("Cannot read preset cache: {e}"))?;
         Self::from_json(&json)
     }
 }

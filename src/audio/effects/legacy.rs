@@ -16,7 +16,13 @@ impl LegacyProcessor {
         LegacyProcessor
     }
 
-    pub fn apply_effect(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, effect: &Effect, is_row_start: bool) {
+    pub fn apply_effect(
+        &mut self,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        channel: usize,
+        effect: &Effect,
+        is_row_start: bool,
+    ) {
         if super::shared::dispatch_shared_effect(engine, channel, effect) {
             return;
         }
@@ -37,49 +43,46 @@ impl LegacyProcessor {
                 for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(channel) {
                         voice.base_volume = vol;
-
                     }
                 }
             }
 
-            Effect::FormatSpecific(fe) => {
-                match fe {
-                    FormatEffect::Xm(XmEffect::SetSampleOffset(offset))
-                    | FormatEffect::S3m(S3mEffect::SetSampleOffset(offset))
-                    | FormatEffect::It(ItEffect::SetSampleOffset(offset)) => {
-                        if *offset > 0 {
-                            ch.last_sample_offset = *offset;
-                        }
+            Effect::FormatSpecific(fe) => match fe {
+                FormatEffect::Xm(XmEffect::SetSampleOffset(offset))
+                | FormatEffect::S3m(S3mEffect::SetSampleOffset(offset))
+                | FormatEffect::It(ItEffect::SetSampleOffset(offset)) => {
+                    if *offset > 0 {
+                        ch.last_sample_offset = *offset;
                     }
-                    FormatEffect::Xm(XmEffect::KeyOff { .. }) => {
-                        ch.active_effects.key_off = true;
+                }
+                FormatEffect::Xm(XmEffect::KeyOff { .. }) => {
+                    ch.active_effects.key_off = true;
+                }
+                FormatEffect::S3m(S3mEffect::Raw { effect, param }) => {
+                    if *effect == 0x19A {
+                        ch.high_sample_offset = *param;
                     }
-                    FormatEffect::S3m(S3mEffect::Raw { effect, param }) => {
-                        if *effect == 0x19A {
-                            ch.high_sample_offset = *param;
-                        }
-                    }
-                    FormatEffect::Mod(ModEffect::Filter(enabled)) => {
-                        ch.filter_enabled = *enabled;
-                        if engine.amiga_led_filter {
-                            for voice in &mut engine.voice_pool.voices {
-                                if voice.active && voice.channel == Some(channel) {
-                                    voice.filter_enabled = *enabled;
-                                    voice.amiga_led_filter = *enabled;
-                                }
+                }
+                FormatEffect::Mod(ModEffect::Filter(enabled)) => {
+                    ch.filter_enabled = *enabled;
+                    if engine.amiga_led_filter {
+                        for voice in &mut engine.voice_pool.voices {
+                            if voice.active && voice.channel == Some(channel) {
+                                voice.filter_enabled = *enabled;
+                                voice.amiga_led_filter = *enabled;
                             }
                         }
                     }
-                    FormatEffect::Mod(ModEffect::FunkIt { speed }) => {
-                        ch.funk_speed = *speed;
-                        ch.funk_pos = 0;
-                    }
-                    FormatEffect::Mod(ModEffect::KarplusStrong { param }) => {
-                        ch.karplus_param = *param;
-                    }
-                    _ => {}
                 }
-            }
+                FormatEffect::Mod(ModEffect::FunkIt { speed }) => {
+                    ch.funk_speed = *speed;
+                    ch.funk_pos = 0;
+                }
+                FormatEffect::Mod(ModEffect::KarplusStrong { param }) => {
+                    ch.karplus_param = *param;
+                }
+                _ => {}
+            },
 
             Effect::TonePortamento { speed } => {
                 if *speed > 0 {
@@ -129,20 +132,32 @@ impl LegacyProcessor {
             }
 
             Effect::Vibrato { speed, depth } => {
-                if *speed > 0 { ch.last_vibrato_speed = *speed; }
-                if *depth > 0 { ch.last_vibrato_depth = *depth; }
+                if *speed > 0 {
+                    ch.last_vibrato_speed = *speed;
+                }
+                if *depth > 0 {
+                    ch.last_vibrato_depth = *depth;
+                }
                 ch.active_effects.vibrato = true;
             }
 
             Effect::Tremolo { speed, depth } => {
-                if *speed > 0 { ch.last_tremolo_speed = *speed; }
-                if *depth > 0 { ch.last_tremolo_depth = *depth; }
+                if *speed > 0 {
+                    ch.last_tremolo_speed = *speed;
+                }
+                if *depth > 0 {
+                    ch.last_tremolo_depth = *depth;
+                }
                 ch.active_effects.tremolo = true;
             }
 
             Effect::VolumeSlide { up, down } => {
-                if *up > 0 { ch.last_volume_slide_up = *up; }
-                if *down > 0 { ch.last_volume_slide_down = *down; }
+                if *up > 0 {
+                    ch.last_volume_slide_up = *up;
+                }
+                if *down > 0 {
+                    ch.last_volume_slide_down = *down;
+                }
                 ch.last_volume_slide_param = (*up << 4) | *down;
                 ch.active_effects.volume_slide = true;
             }
@@ -151,8 +166,12 @@ impl LegacyProcessor {
                 let param = *up as u8;
                 let up_val = param >> 4;
                 let down_val = param & 0x0F;
-                if up_val > 0 { ch.last_volume_slide_up = up_val; }
-                if down_val > 0 { ch.last_volume_slide_down = down_val; }
+                if up_val > 0 {
+                    ch.last_volume_slide_up = up_val;
+                }
+                if down_val > 0 {
+                    ch.last_volume_slide_down = down_val;
+                }
                 ch.last_volume_slide_param = param;
                 ch.active_effects.tone_portamento = true;
                 ch.active_effects.volume_slide = true;
@@ -162,8 +181,12 @@ impl LegacyProcessor {
                 let param = *up as u8;
                 let up_val = param >> 4;
                 let down_val = param & 0x0F;
-                if up_val > 0 { ch.last_volume_slide_up = up_val; }
-                if down_val > 0 { ch.last_volume_slide_down = down_val; }
+                if up_val > 0 {
+                    ch.last_volume_slide_up = up_val;
+                }
+                if down_val > 0 {
+                    ch.last_volume_slide_down = down_val;
+                }
                 ch.last_volume_slide_param = param;
                 ch.active_effects.vibrato = true;
                 ch.active_effects.volume_slide = true;
@@ -185,7 +208,6 @@ impl LegacyProcessor {
 
             Effect::SetGlobalVolume { volume } => {
                 engine.state.global_volume = (*volume).min(128);
-
             }
 
             Effect::VibratoWaveform { waveform } => {
@@ -223,7 +245,8 @@ impl LegacyProcessor {
                 for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(channel) {
                         let detune = (*tune as f64 - 8.0) / 128.0;
-                        voice.current_frequency = voice.base_frequency * 2.0_f64.powf(detune / 12.0);
+                        voice.current_frequency =
+                            voice.base_frequency * 2.0_f64.powf(detune / 12.0);
                         voice.sample_delta = voice.current_frequency / engine.output_sample_rate;
                     }
                 }
@@ -265,7 +288,6 @@ impl LegacyProcessor {
                 for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(channel) {
                         voice.base_volume = v;
-
                     }
                 }
             }
@@ -276,7 +298,6 @@ impl LegacyProcessor {
                 for voice in &mut engine.voice_pool.voices {
                     if voice.active && voice.channel == Some(channel) {
                         voice.base_volume = v;
-
                     }
                 }
             }
@@ -304,7 +325,7 @@ impl LegacyProcessor {
                         }
                     }
                     0x8 => {
-                        engine.state.channels[channel].channel_panning = (val << 4).min(255);
+                        engine.state.channels[channel].channel_panning = val << 4;
                     }
                     0x9 => {
                         if val > 0 {
@@ -313,11 +334,14 @@ impl LegacyProcessor {
                     }
                     0xA => {
                         engine.state.channels[channel].channel_volume =
-                            (engine.state.channels[channel].channel_volume as u16 + val as u16).min(64) as u8;
+                            (engine.state.channels[channel].channel_volume as u16 + val as u16)
+                                .min(64) as u8;
                     }
                     0xB => {
-                        engine.state.channels[channel].channel_volume =
-                            engine.state.channels[channel].channel_volume.saturating_sub(val);
+                        engine.state.channels[channel].channel_volume = engine.state.channels
+                            [channel]
+                            .channel_volume
+                            .saturating_sub(val);
                     }
                     0xC => {
                         engine.set_channel_cutoff_tick(channel, val);
@@ -329,14 +353,17 @@ impl LegacyProcessor {
             Effect::PatternLoop { count } => {
                 if *count == 0 {
                     if engine.state.pattern_loop_count == 0 {
-                        engine.state.pattern_loop_start = Some((engine.state.current_order, engine.state.current_row));
+                        engine.state.pattern_loop_start =
+                            Some((engine.state.current_order, engine.state.current_row));
                     }
                 } else if !engine.state.pattern_loop_final_pass {
                     if engine.state.pattern_loop_count == 0 {
                         engine.state.pattern_loop_count = *count;
                     }
 
-                    let loop_row = engine.state.pattern_loop_start
+                    let loop_row = engine
+                        .state
+                        .pattern_loop_start
                         .map(|(_, row)| row)
                         .unwrap_or(0);
                     engine.state.pattern_loop_jump_target = Some(loop_row);
@@ -344,8 +371,12 @@ impl LegacyProcessor {
             }
 
             Effect::Panbrello { speed, depth } => {
-                if *speed > 0 { ch.last_panbrello_speed = *speed; }
-                if *depth > 0 { ch.last_panbrello_depth = *depth; }
+                if *speed > 0 {
+                    ch.last_panbrello_speed = *speed;
+                }
+                if *depth > 0 {
+                    ch.last_panbrello_depth = *depth;
+                }
                 ch.active_effects.panbrello = true;
             }
 
@@ -354,40 +385,56 @@ impl LegacyProcessor {
                     engine.state.last_global_volume_up = *up as u8;
                 }
                 if *down > 0 {
-                    engine.state.last_global_volume_down = (*down).unsigned_abs() as u8;
+                    engine.state.last_global_volume_down = (*down).unsigned_abs();
                 }
-                let up_val: i16 = if *up > 0 { *up as i16 } else { engine.state.last_global_volume_up as i16 };
-                let down_val: i16 = if *down > 0 { (*down).unsigned_abs() as i16 } else { engine.state.last_global_volume_down as i16 };
+                let up_val: i16 = if *up > 0 {
+                    *up as i16
+                } else {
+                    engine.state.last_global_volume_up as i16
+                };
+                let down_val: i16 = if *down > 0 {
+                    (*down).unsigned_abs() as i16
+                } else {
+                    engine.state.last_global_volume_down as i16
+                };
                 if up_val > 0 || down_val > 0 {
                     let new_vol = engine.state.global_volume as i16 + up_val - down_val;
                     engine.state.global_volume = new_vol.clamp(0, 128) as u8;
-    
                 }
                 ch.active_effects.global_volume_slide = true;
             }
 
             Effect::VolFineSlideUp { amount } => {
                 engine.state.channels[channel].channel_volume =
-                    (engine.state.channels[channel].channel_volume as u16 + *amount as u16).min(64) as u8;
+                    (engine.state.channels[channel].channel_volume as u16 + *amount as u16).min(64)
+                        as u8;
             }
             Effect::VolFineSlideDown { amount } => {
-                engine.state.channels[channel].channel_volume =
-                    engine.state.channels[channel].channel_volume.saturating_sub(*amount);
+                engine.state.channels[channel].channel_volume = engine.state.channels[channel]
+                    .channel_volume
+                    .saturating_sub(*amount);
             }
             Effect::VolSlideUp { amount } => {
                 engine.state.channels[channel].channel_volume =
-                    (engine.state.channels[channel].channel_volume as u16 + *amount as u16).min(64) as u8;
+                    (engine.state.channels[channel].channel_volume as u16 + *amount as u16).min(64)
+                        as u8;
             }
             Effect::VolSlideDown { amount } => {
-                engine.state.channels[channel].channel_volume =
-                    engine.state.channels[channel].channel_volume.saturating_sub(*amount);
+                engine.state.channels[channel].channel_volume = engine.state.channels[channel]
+                    .channel_volume
+                    .saturating_sub(*amount);
             }
             Effect::VolPortamento { speed } => {
                 if *speed > 0 {
                     engine.state.channels[channel].last_tone_portamento_speed = *speed;
                 }
-                engine.state.channels[channel].active_effects.tone_portamento = true;
-                if engine.state.channels[channel].portamento_target_period.is_none() {
+                engine.state.channels[channel]
+                    .active_effects
+                    .tone_portamento = true;
+                if engine.state.channels[channel]
+                    .portamento_target_period
+                    .is_none()
+                {
                     if let Note::On(key) = engine.state.channels[channel].last_note {
                         let module = match engine.module.as_ref() {
                             Some(m) => m.clone(),
@@ -395,15 +442,22 @@ impl LegacyProcessor {
                         };
                         let inst_idx = engine.state.channels[channel].last_instrument as usize;
                         let has_inst = !module.instruments.is_empty();
-                        if has_inst && inst_idx > 0 && inst_idx < module.instruments.len() && (key as usize) < 120 {
-                            let sample_idx = module.instruments[inst_idx].sample_map[key as usize] as usize;
+                        if has_inst
+                            && inst_idx > 0
+                            && inst_idx < module.instruments.len()
+                            && (key as usize) < 120
+                        {
+                            let sample_idx =
+                                module.instruments[inst_idx].sample_map[key as usize] as usize;
                             let rk = module.instruments[inst_idx].note_map[key as usize];
                             let sample = if sample_idx > 0 && sample_idx < module.samples.len() {
                                 Some(&module.samples[sample_idx])
                             } else {
                                 None
                             };
-                            let (tp, tf) = engine.compute_portamento_target(channel, key, rk, sample, sample_idx, &module);
+                            let (tp, tf) = engine.compute_portamento_target(
+                                channel, key, rk, sample, sample_idx, &module,
+                            );
                             let ch = &mut engine.state.channels[channel];
                             ch.portamento_target_period = Some(tp);
                             ch.portamento_target_frequency = Some(tf);
@@ -422,7 +476,11 @@ impl LegacyProcessor {
         }
     }
 
-    pub fn process_tick(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, tick: u8) {
+    pub fn process_tick(
+        &mut self,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        tick: u8,
+    ) {
         let module = match engine.module.as_ref() {
             Some(m) => m,
             None => return,
@@ -442,21 +500,36 @@ impl LegacyProcessor {
             if ae.portamento_up {
                 let spd = engine.state.channels[ch].last_portamento_up_speed;
                 if spd > 0 {
-                    let actual_spd = if module_format == crate::sequencer::module::ModuleFormat::S3M { spd as u16 * 4 } else { spd as u16 };
+                    let actual_spd = if module_format == crate::sequencer::module::ModuleFormat::S3M
+                    {
+                        spd as u16 * 4
+                    } else {
+                        spd as u16
+                    };
                     engine.apply_portamento_up(ch, actual_spd);
                 }
             }
             if ae.portamento_down {
                 let spd = engine.state.channels[ch].last_portamento_down_speed;
                 if spd > 0 {
-                    let actual_spd = if module_format == crate::sequencer::module::ModuleFormat::S3M { spd as u16 * 4 } else { spd as u16 };
+                    let actual_spd = if module_format == crate::sequencer::module::ModuleFormat::S3M
+                    {
+                        spd as u16 * 4
+                    } else {
+                        spd as u16
+                    };
                     engine.apply_portamento_down(ch, actual_spd);
                 }
             }
             if ae.tone_portamento {
                 let tp_speed = engine.state.channels[ch].last_tone_portamento_speed;
                 if tp_speed > 0 && engine.state.channels[ch].portamento_target_period.is_some() {
-                    let actual_spd = if module_format == crate::sequencer::module::ModuleFormat::S3M { tp_speed as u16 * 4 } else { tp_speed as u16 };
+                    let actual_spd = if module_format == crate::sequencer::module::ModuleFormat::S3M
+                    {
+                        tp_speed as u16 * 4
+                    } else {
+                        tp_speed as u16
+                    };
                     engine.apply_tone_portamento(ch, actual_spd);
                 }
             }
@@ -494,7 +567,6 @@ impl LegacyProcessor {
                 if up_val > 0 || down_val > 0 {
                     let new_vol = engine.state.global_volume as i16 + up_val - down_val;
                     engine.state.global_volume = new_vol.clamp(0, 128) as u8;
-    
                 }
             }
 
@@ -515,14 +587,14 @@ impl LegacyProcessor {
                     for voice in &mut engine.voice_pool.voices {
                         if voice.active && voice.channel == Some(ch) && !voice.karplus_strong {
                             let offset = (crate::audio::effects::fastrand() * 4.0) as u32;
-                            voice.position = voice.position + offset as f64;
+                            voice.position += offset as f64;
                         }
                     }
                 }
             }
 
             let retrigger_interval = engine.state.channels[ch].last_retrigger_interval;
-            if retrigger_interval > 0 && tick > 0 && tick % retrigger_interval == 0 {
+            if retrigger_interval > 0 && tick > 0 && tick.is_multiple_of(retrigger_interval) {
                 engine.retrigger_channel_note(ch);
             }
 
@@ -671,7 +743,8 @@ impl LegacyProcessor {
         if sample.loop_type == LoopType::Backward {
             engine.voice_pool.voices[voice_idx].direction = -1.0;
             if sample_offset == 0 {
-                engine.voice_pool.voices[voice_idx].position = (sample.data.len().max(1) - 1) as f64;
+                engine.voice_pool.voices[voice_idx].position =
+                    (sample.data.len().max(1) - 1) as f64;
             }
         }
 
@@ -693,17 +766,24 @@ impl LegacyProcessor {
                 None => return,
             };
             let inst = &module.instruments[instrument_idx];
-            let carry_vol = inst.volume_envelope.as_ref().map_or(false, |e| e.flags.carry);
-            let carry_pan = inst.panning_envelope.as_ref().map_or(false, |e| e.flags.carry);
-            let carry_pitch = inst.pitch_envelope.as_ref().map_or(false, |e| e.flags.carry);
+            let carry_vol = inst.volume_envelope.as_ref().is_some_and(|e| e.flags.carry);
+            let carry_pan = inst
+                .panning_envelope
+                .as_ref()
+                .is_some_and(|e| e.flags.carry);
+            let carry_pitch = inst.pitch_envelope.as_ref().is_some_and(|e| e.flags.carry);
 
             let mut prev_vol_pos = None;
             let mut prev_pan_pos = None;
             if carry_vol || carry_pan || carry_pitch {
                 for v in &engine.voice_pool.voices {
                     if v.active && v.channel == Some(channel) {
-                        if carry_vol { prev_vol_pos = v.vol_env.as_ref().map(|e| e.position); }
-                        if carry_pan { prev_pan_pos = v.pan_env.as_ref().map(|e| e.position); }
+                        if carry_vol {
+                            prev_vol_pos = v.vol_env.as_ref().map(|e| e.position);
+                        }
+                        if carry_pan {
+                            prev_pan_pos = v.pan_env.as_ref().map(|e| e.position);
+                        }
                         break;
                     }
                 }
@@ -711,7 +791,11 @@ impl LegacyProcessor {
 
             if let Some(ref vol_env) = inst.volume_envelope {
                 if vol_env.flags.enabled {
-                    let pos = if carry_vol { prev_vol_pos.unwrap_or(0.0) } else { 0.0 };
+                    let pos = if carry_vol {
+                        prev_vol_pos.unwrap_or(0.0)
+                    } else {
+                        0.0
+                    };
                     engine.voice_pool.voices[voice_idx].vol_env = Some(EnvelopeState {
                         envelope: Arc::new(vol_env.clone()),
                         current_point: 0,
@@ -723,7 +807,11 @@ impl LegacyProcessor {
             }
             if let Some(ref pan_env) = inst.panning_envelope {
                 if pan_env.flags.enabled {
-                    let pos = if carry_pan { prev_pan_pos.unwrap_or(0.0) } else { 0.0 };
+                    let pos = if carry_pan {
+                        prev_pan_pos.unwrap_or(0.0)
+                    } else {
+                        0.0
+                    };
                     engine.voice_pool.voices[voice_idx].pan_env = Some(EnvelopeState {
                         envelope: Arc::new(pan_env.clone()),
                         current_point: 0,
@@ -757,9 +845,15 @@ impl LegacyProcessor {
             }
 
             engine.voice_pool.voices[voice_idx].filter_cutoff = inst.filter_cutoff as f32;
-            engine.voice_pool.voices[voice_idx].filter_resonance = inst.filter_resonance as f32 / 128.0;
+            engine.voice_pool.voices[voice_idx].filter_resonance =
+                inst.filter_resonance as f32 / 128.0;
             engine.voice_pool.voices[voice_idx].filter_type = inst.filter_type;
-            engine.voice_pool.voices[voice_idx].svf = StateVariableFilter { low: 0.0, band: 0.0, high: 0.0, filter_type: inst.filter_type };
+            engine.voice_pool.voices[voice_idx].svf = StateVariableFilter {
+                low: 0.0,
+                band: 0.0,
+                high: 0.0,
+                filter_type: inst.filter_type,
+            };
             engine.voice_pool.voices[voice_idx].envelope_filter_cutoff = 0.0;
 
             engine.voice_pool.voices[voice_idx].fade_out_rate = inst.fade_out;
@@ -776,15 +870,25 @@ impl LegacyProcessor {
                 engine.voice_pool.voices[voice_idx].ks_delay_line = ks_delay;
                 engine.voice_pool.voices[voice_idx].ks_pos = 0;
                 engine.voice_pool.voices[voice_idx].karplus_strong = true;
-                engine.voice_pool.voices[voice_idx].ks_feedback = if kp > 0 { (kp as f32) / 16.0 } else { 0.5 };
+                engine.voice_pool.voices[voice_idx].ks_feedback =
+                    if kp > 0 { (kp as f32) / 16.0 } else { 0.5 };
             }
         }
     }
 
-    pub fn trigger_delayed_note(&mut self, _engine: &mut crate::audio::sequencer_engine::SequencerEngine, _channel: usize) {
+    pub fn trigger_delayed_note(
+        &mut self,
+        _engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        _channel: usize,
+    ) {
     }
 
-    pub fn process_volume_column(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, vol: u8) {
+    pub fn process_volume_column(
+        &mut self,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        channel: usize,
+        vol: u8,
+    ) {
         let ch_state = &mut engine.state.channels[channel];
 
         if vol <= 64 {
@@ -796,7 +900,8 @@ impl LegacyProcessor {
         match vol {
             65..=74 => {
                 let amount = vol - 65;
-                ch_state.channel_volume = (ch_state.channel_volume as u16 + amount as u16).min(64) as u8;
+                ch_state.channel_volume =
+                    (ch_state.channel_volume as u16 + amount as u16).min(64) as u8;
                 ch_state.row_volume = ch_state.channel_volume;
             }
             75..=84 => {
@@ -835,20 +940,39 @@ impl LegacyProcessor {
         }
     }
 
-    pub fn setup_portamento(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, note_key: u8, remapped_key: u8, sample: Option<&Sample>, sample_idx: usize) {
+    pub fn setup_portamento(
+        &mut self,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        channel: usize,
+        note_key: u8,
+        remapped_key: u8,
+        sample: Option<&Sample>,
+        sample_idx: usize,
+    ) {
         let module = match engine.module.as_ref() {
             Some(m) => m,
             None => return,
         };
         let (target_period, target_freq) = engine.compute_portamento_target(
-            channel, note_key, remapped_key, sample, sample_idx, module,
+            channel,
+            note_key,
+            remapped_key,
+            sample,
+            sample_idx,
+            module,
         );
         let ch = &mut engine.state.channels[channel];
         ch.portamento_target_period = Some(target_period);
         ch.portamento_target_frequency = Some(target_freq);
     }
 
-    pub fn init_sample_defaults(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize, cell: &Cell, sample: Option<&Sample>) {
+    pub fn init_sample_defaults(
+        &mut self,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        channel: usize,
+        cell: &Cell,
+        sample: Option<&Sample>,
+    ) {
         // IT: volume reset on instrument change only
         if cell.instrument.is_some() {
             if let Some(s) = sample {
@@ -858,14 +982,26 @@ impl LegacyProcessor {
         }
     }
 
-    pub fn handle_note_off(&mut self, engine: &mut crate::audio::sequencer_engine::SequencerEngine, channel: usize) {
+    pub fn handle_note_off(
+        &mut self,
+        engine: &mut crate::audio::sequencer_engine::SequencerEngine,
+        channel: usize,
+    ) {
         for voice in &mut engine.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 voice.note_off = true;
-                if let Some(ref mut env) = voice.vol_env { env.released = true; }
-                if let Some(ref mut env) = voice.pan_env { env.released = true; }
-                if let Some(ref mut env) = voice.pitch_env { env.released = true; }
-                if let Some(ref mut env) = voice.filter_env { env.released = true; }
+                if let Some(ref mut env) = voice.vol_env {
+                    env.released = true;
+                }
+                if let Some(ref mut env) = voice.pan_env {
+                    env.released = true;
+                }
+                if let Some(ref mut env) = voice.pitch_env {
+                    env.released = true;
+                }
+                if let Some(ref mut env) = voice.filter_env {
+                    env.released = true;
+                }
             }
         }
     }

@@ -1,6 +1,6 @@
 use eframe::egui;
-use std::path::PathBuf;
 use eguidev::DevUiExt;
+use std::path::PathBuf;
 
 pub struct SampleExportDialog {
     pub sample_index: usize,
@@ -12,7 +12,13 @@ pub struct SampleExportDialog {
 }
 
 impl SampleExportDialog {
-    pub fn new(sample_index: usize, sample_name: String, sample_rate: u32, default_dir: Option<&str>, default_bit_depth: u8) -> Self {
+    pub fn new(
+        sample_index: usize,
+        sample_name: String,
+        sample_rate: u32,
+        default_dir: Option<&str>,
+        default_bit_depth: u8,
+    ) -> Self {
         let default_filename = crate::formats::wav::sanitize_filename(&sample_name, "sample");
         let mut default_path = PathBuf::new();
         if let Some(dir) = default_dir {
@@ -51,16 +57,24 @@ impl SampleExportDialog {
                     ui.add_space(5.0);
                 }
 
-                ui.label(format!("Sample: {} ({} Hz)", self.sample_name, self.sample_rate));
+                ui.label(format!(
+                    "Sample: {} ({} Hz)",
+                    self.sample_name, self.sample_rate
+                ));
                 ui.add_space(10.0);
 
                 ui.label("File:");
                 ui.horizontal(|ui| {
-                    let path_str = self.file_path.as_ref()
+                    let path_str = self
+                        .file_path
+                        .as_ref()
                         .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|| String::new());
+                        .unwrap_or_default();
                     let mut path_display = path_str.clone();
-                    if ui.dev_text_edit("sample.export.path", &mut path_display).changed() {
+                    if ui
+                        .dev_text_edit("sample.export.path", &mut path_display)
+                        .changed()
+                    {
                         if !path_display.is_empty() {
                             self.file_path = Some(PathBuf::from(path_display));
                         }
@@ -68,7 +82,12 @@ impl SampleExportDialog {
                     if ui.dev_button("sample.export.browse", "Browse...").clicked() {
                         let mut dialog = rfd::FileDialog::new()
                             .set_title("Save Sample")
-                            .set_file_name(path_str.split(['/', '\\']).last().unwrap_or("sample.wav"));
+                            .set_file_name(
+                                path_str
+                                    .split(['/', '\\'])
+                                    .next_back()
+                                    .unwrap_or("sample.wav"),
+                            );
                         if let Some(ref p) = self.file_path {
                             if let Some(parent) = p.parent() {
                                 if parent.is_dir() {
@@ -78,7 +97,8 @@ impl SampleExportDialog {
                         }
                         dialog = dialog.add_filter("WAV Files", &["wav"]);
                         if let Some(path) = dialog.save_file() {
-                            let final_path = if path.extension().map(|e| e != "wav").unwrap_or(true) {
+                            let final_path = if path.extension().map(|e| e != "wav").unwrap_or(true)
+                            {
                                 path.with_extension("wav")
                             } else {
                                 path

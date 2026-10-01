@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ringbuf::{traits::*, HeapRb, HeapCons, HeapProd};
+use ringbuf::{traits::*, HeapCons, HeapProd, HeapRb};
 
 use crate::audio::commands::{AudioCommand, InterpolationType, LimiterMode};
 use crate::audio::mixer;
@@ -11,10 +11,10 @@ use crate::audio::sequencer_engine::SequencerEngine;
 use crate::debug_log;
 use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::effect::NUM_SEND_BUSES;
+use crate::sequencer::instrument::NewNoteAction;
 use crate::sequencer::module::Module;
 use crate::sequencer::module::COMMAND_BUFFER_SIZE;
 use crate::sequencer::module::DEFAULT_CHANNELS;
-use crate::sequencer::instrument::NewNoteAction;
 use crate::sequencer::note::Note;
 
 const OUTPUT_SAMPLE_RATE: u32 = 48000;
@@ -51,7 +51,8 @@ pub struct AudioEngine {
     /// Array of hosted plugin processors for instrument-plugin instruments,
     /// indexed by 1-based instrument index (matching `last_instrument`).
     /// Size 255 covers all valid u8 instrument indices.
-    instrument_plugin_processors: [Option<Box<dyn crate::audio::plugins::HostedPluginProcessor>>; 255],
+    instrument_plugin_processors:
+        [Option<Box<dyn crate::audio::plugins::HostedPluginProcessor>>; 255],
     /// Scratch buffers for instrument plugin output (mixed into main output).
     inst_plugin_out_left: Vec<f32>,
     inst_plugin_out_right: Vec<f32>,
@@ -108,11 +109,19 @@ pub fn create_engine_and_sender(
         send_fx_right: vec![0.0; BUFFER_SIZE],
         plugin_out_left: vec![0.0; BUFFER_SIZE],
         plugin_out_right: vec![0.0; BUFFER_SIZE],
-        instrument_plugin_processors: { const NONE: Option<Box<dyn crate::audio::plugins::HostedPluginProcessor>> = None; [NONE; 255] },
+        instrument_plugin_processors: {
+            const NONE: Option<Box<dyn crate::audio::plugins::HostedPluginProcessor>> = None;
+            [NONE; 255]
+        },
         inst_plugin_out_left: vec![0.0; BUFFER_SIZE],
         inst_plugin_out_right: vec![0.0; BUFFER_SIZE],
         send_buses: {
-            let configs = [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None];
+            let configs = [
+                SendEffectType::Delay,
+                SendEffectType::Reverb,
+                SendEffectType::None,
+                SendEffectType::None,
+            ];
             let returns = [0.5, 0.0, 0.0, 0.0];
             let mut buses = Vec::with_capacity(NUM_SEND_BUSES);
             for (i, &effect_type) in configs.iter().enumerate() {
@@ -146,7 +155,11 @@ impl AudioEngine {
             let _count = CB_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             #[cfg(feature = "audio_debug")]
             if _count < 3 {
-                debug_log!("[CALLBACK] #{} playing={}", _count, self.sequencer.state.playing);
+                debug_log!(
+                    "[CALLBACK] #{} playing={}",
+                    _count,
+                    self.sequencer.state.playing
+                );
             }
         }
 
@@ -201,7 +214,12 @@ impl AudioEngine {
             self.solo_cache[i] = ch.solo;
         }
         let has_solo = self.solo_cache.iter().any(|&s| s);
-        for (i, (&muted, &solo)) in self.muted_cache.iter().zip(self.solo_cache.iter()).enumerate() {
+        for (i, (&muted, &solo)) in self
+            .muted_cache
+            .iter()
+            .zip(self.solo_cache.iter())
+            .enumerate()
+        {
             self.effective_mute_cache[i] = muted || (has_solo && !solo);
         }
 
@@ -218,16 +236,23 @@ impl AudioEngine {
                     // Route any plugin-param automation values that the
                     // sequencer queued during process_tick() to the
                     // appropriate HostedPluginProcessor's param ring.
-                    for (send_bus, param_id, value) in self.sequencer.collect_plugin_param_automation() {
+                    for (send_bus, param_id, value) in
+                        self.sequencer.collect_plugin_param_automation()
+                    {
                         if (send_bus as usize) < self.send_buses.len() {
-                            if let Some(ref mut plugin) = self.send_buses[send_bus as usize].plugin {
+                            if let Some(ref mut plugin) = self.send_buses[send_bus as usize].plugin
+                            {
                                 plugin.set_parameter(param_id, value);
                             }
                         }
                     }
-                    for (instrument, param_id, value) in self.sequencer.collect_instrument_plugin_param_automation() {
+                    for (instrument, param_id, value) in
+                        self.sequencer.collect_instrument_plugin_param_automation()
+                    {
                         if (instrument as usize) < self.instrument_plugin_processors.len() {
-                            if let Some(ref mut plugin) = self.instrument_plugin_processors[instrument as usize] {
+                            if let Some(ref mut plugin) =
+                                self.instrument_plugin_processors[instrument as usize]
+                            {
                                 plugin.set_parameter(param_id, value);
                             }
                         }
@@ -238,7 +263,8 @@ impl AudioEngine {
                     }
                 }
 
-                let samples_remaining_in_tick = samples_per_tick - self.sequencer.state.clock.sample_counter;
+                let samples_remaining_in_tick =
+                    samples_per_tick - self.sequencer.state.clock.sample_counter;
                 let samples_remaining_in_buffer = (frame_count - samples_done) as f64;
 
                 let chunk_f = samples_remaining_in_tick.min(samples_remaining_in_buffer);
@@ -292,8 +318,14 @@ impl AudioEngine {
             static PEAK_LOG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let n = PEAK_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if n < 20 {
-                let peak_l = self.mix_left[..frame_count].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                let peak_r = self.mix_right[..frame_count].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+                let peak_l = self.mix_left[..frame_count]
+                    .iter()
+                    .map(|s| s.abs())
+                    .fold(0.0f32, f32::max);
+                let peak_r = self.mix_right[..frame_count]
+                    .iter()
+                    .map(|s| s.abs())
+                    .fold(0.0f32, f32::max);
                 debug_log!("[PEAK] #{}: L={:.6} R={:.6}", n, peak_l, peak_r);
             }
         }
@@ -312,7 +344,9 @@ impl AudioEngine {
             for ch in 0..channels.len() {
                 for (si, bus) in self.send_buses.iter_mut().enumerate() {
                     let level = channels[ch].send_levels[si] * channels[ch].auto_send_factor[si];
-                    if level <= 0.0 { continue; }
+                    if level <= 0.0 {
+                        continue;
+                    }
                     let src = if bus.pre_fader {
                         &self.pre_ch_mix
                     } else {
@@ -472,9 +506,29 @@ impl AudioEngine {
                     self.sequencer.play();
                     #[cfg(feature = "audio_debug")]
                     {
-                        let num_active = self.sequencer.voice_pool.voices.iter().filter(|v| v.active).count();
-                        let ch_vols: Vec<u8> = self.sequencer.state.channels.iter().take(4).map(|c| c.channel_volume).collect();
-                        let ch_pans: Vec<u8> = self.sequencer.state.channels.iter().take(4).map(|c| c.channel_panning).collect();
+                        let num_active = self
+                            .sequencer
+                            .voice_pool
+                            .voices
+                            .iter()
+                            .filter(|v| v.active)
+                            .count();
+                        let ch_vols: Vec<u8> = self
+                            .sequencer
+                            .state
+                            .channels
+                            .iter()
+                            .take(4)
+                            .map(|c| c.channel_volume)
+                            .collect();
+                        let ch_pans: Vec<u8> = self
+                            .sequencer
+                            .state
+                            .channels
+                            .iter()
+                            .take(4)
+                            .map(|c| c.channel_panning)
+                            .collect();
                         debug_log!("[AUDIO] Play command: playing={}, module={}, active_voices={}, ch_vol={:?}, ch_pan={:?}",
                             self.sequencer.state.playing, self.module.is_some(), num_active, ch_vols, ch_pans);
                     }
@@ -490,12 +544,22 @@ impl AudioEngine {
                 AudioCommand::LoadModule(module) => {
                     #[cfg(feature = "audio_debug")]
                     let _debug_info = {
-                        let samples_with_data = module.samples.iter().filter(|s| !s.data.is_empty()).count();
+                        let samples_with_data =
+                            module.samples.iter().filter(|s| !s.data.is_empty()).count();
                         let fmt = format!("{:?}", module.format);
                         let order_len = module.order_list.len();
                         let first_order = module.order_list.first().copied().unwrap_or(0);
-                        let has_non_empty_pattern = module.patterns.iter().any(|p| p.data.iter().any(|row| row.iter().any(|c| !c.is_empty())));
-                        (fmt, samples_with_data, order_len, first_order, has_non_empty_pattern)
+                        let has_non_empty_pattern = module
+                            .patterns
+                            .iter()
+                            .any(|p| p.data.iter().any(|row| row.iter().any(|c| !c.is_empty())));
+                        (
+                            fmt,
+                            samples_with_data,
+                            order_len,
+                            first_order,
+                            has_non_empty_pattern,
+                        )
                     };
                     self.module = Some(module.clone());
                     self.sequencer.load_module(module.clone());
@@ -515,20 +579,25 @@ impl AudioEngine {
                     let return_levels = &module.send_return_levels;
                     let pre_faders = &module.send_pre_fader;
                     let mut old_buses = std::mem::take(&mut self.send_buses);
-                    self.send_buses = module.send_bus_config.iter().enumerate().map(|(i, &effect_type)| {
-                        // Carry over the running plugin processor from the
-                        // previous bus at the same index, if any. Buses beyond
-                        // the new config length (and their processors) are
-                        // dropped when `old_buses` falls out of scope below.
-                        let plugin = old_buses.get_mut(i).and_then(|b| b.plugin.take());
-                        SendBus {
-                            buffer: vec![0.0; buf_size * 2],
-                            return_level: return_levels.get(i).copied().unwrap_or(0.0),
-                            pre_fader: pre_faders.get(i).copied().unwrap_or(false),
-                            effect: sendfx::create_send_effect(effect_type, sr_f32),
-                            plugin,
-                        }
-                    }).collect();
+                    self.send_buses = module
+                        .send_bus_config
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &effect_type)| {
+                            // Carry over the running plugin processor from the
+                            // previous bus at the same index, if any. Buses beyond
+                            // the new config length (and their processors) are
+                            // dropped when `old_buses` falls out of scope below.
+                            let plugin = old_buses.get_mut(i).and_then(|b| b.plugin.take());
+                            SendBus {
+                                buffer: vec![0.0; buf_size * 2],
+                                return_level: return_levels.get(i).copied().unwrap_or(0.0),
+                                pre_fader: pre_faders.get(i).copied().unwrap_or(false),
+                                effect: sendfx::create_send_effect(effect_type, sr_f32),
+                                plugin,
+                            }
+                        })
+                        .collect();
                     // `old_buses` is dropped here; any remaining processors
                     // (buses removed from the config) are dropped on the audio
                     // thread, matching the existing SetSendPlugin semantics.
@@ -581,14 +650,31 @@ impl AudioEngine {
                 AudioCommand::SetAntiClickRamping(enabled) => {
                     self.sequencer.ramp_enabled = enabled;
                 }
-                AudioCommand::TriggerPreviewNote { sample_index, note_key, volume, panning } => {
+                AudioCommand::TriggerPreviewNote {
+                    sample_index,
+                    note_key,
+                    volume,
+                    panning,
+                } => {
                     self.trigger_preview_note(sample_index, note_key, volume, panning);
                 }
-                AudioCommand::PreviewBuffer { data, sample_rate, note_key, volume, panning } => {
+                AudioCommand::PreviewBuffer {
+                    data,
+                    sample_rate,
+                    note_key,
+                    volume,
+                    panning,
+                } => {
                     self.trigger_preview_buffer(data, sample_rate, note_key, volume, panning);
                 }
-                AudioCommand::SetSendLevel { channel, send_index, level } => {
-                    if channel < self.sequencer.state.channels.len() && send_index < self.send_buses.len() {
+                AudioCommand::SetSendLevel {
+                    channel,
+                    send_index,
+                    level,
+                } => {
+                    if channel < self.sequencer.state.channels.len()
+                        && send_index < self.send_buses.len()
+                    {
                         self.sequencer.state.channels[channel].send_levels[send_index] = level;
                     }
                 }
@@ -597,24 +683,38 @@ impl AudioEngine {
                         self.send_buses[send_index].return_level = level;
                     }
                 }
-                AudioCommand::SetSendEffectType { send_index, effect_type } => {
+                AudioCommand::SetSendEffectType {
+                    send_index,
+                    effect_type,
+                } => {
                     if send_index < self.send_buses.len() {
-                        self.send_buses[send_index].effect = sendfx::create_send_effect(effect_type, self.output_sample_rate as f32);
+                        self.send_buses[send_index].effect =
+                            sendfx::create_send_effect(effect_type, self.output_sample_rate as f32);
                     }
                 }
-                AudioCommand::SetSendFxParam { send_index, param, value } => {
+                AudioCommand::SetSendFxParam {
+                    send_index,
+                    param,
+                    value,
+                } => {
                     if send_index < self.send_buses.len() {
                         if let Some(ref mut fx) = self.send_buses[send_index].effect {
                             fx.set_param(param, value);
                         }
                     }
                 }
-                AudioCommand::SetSendPreFader { send_index, pre_fader } => {
+                AudioCommand::SetSendPreFader {
+                    send_index,
+                    pre_fader,
+                } => {
                     if send_index < self.send_buses.len() {
                         self.send_buses[send_index].pre_fader = pre_fader;
                     }
                 }
-                AudioCommand::SetSendPlugin { send_index, processor } => {
+                AudioCommand::SetSendPlugin {
+                    send_index,
+                    processor,
+                } => {
                     if send_index < self.send_buses.len() {
                         // Installing a plugin replaces the built-in SendEffect.
                         // The old SendEffect is dropped here (audio thread side).
@@ -628,35 +728,61 @@ impl AudioEngine {
                         self.send_buses[send_index].plugin = processor;
                     }
                 }
-                AudioCommand::SetSendPluginParam { send_index, param_id, value } => {
+                AudioCommand::SetSendPluginParam {
+                    send_index,
+                    param_id,
+                    value,
+                } => {
                     if send_index < self.send_buses.len() {
                         if let Some(ref mut plugin) = self.send_buses[send_index].plugin {
                             plugin.set_parameter(param_id, value);
                         }
                     }
                 }
-                AudioCommand::SetInstrumentPluginParam { instrument_idx, param_id, value } => {
+                AudioCommand::SetInstrumentPluginParam {
+                    instrument_idx,
+                    param_id,
+                    value,
+                } => {
                     if instrument_idx < self.instrument_plugin_processors.len() {
-                        if let Some(ref mut plugin) = self.instrument_plugin_processors[instrument_idx] {
+                        if let Some(ref mut plugin) =
+                            self.instrument_plugin_processors[instrument_idx]
+                        {
                             plugin.set_parameter(param_id, value);
                         }
                     }
                 }
-                AudioCommand::InstallInstrumentPlugin { instrument_idx, processor } => {
+                AudioCommand::InstallInstrumentPlugin {
+                    instrument_idx,
+                    processor,
+                } => {
                     if instrument_idx > 0 && instrument_idx < 255 {
                         self.instrument_plugin_processors[instrument_idx] = processor;
                     }
                 }
-                AudioCommand::PreviewInstrumentPlugin { instrument_idx, midi_channel, note_key, velocity } => {
+                AudioCommand::PreviewInstrumentPlugin {
+                    instrument_idx,
+                    midi_channel,
+                    note_key,
+                    velocity,
+                } => {
                     if instrument_idx > 0 && instrument_idx < 255 {
-                        if let Some(ref mut proc) = self.instrument_plugin_processors[instrument_idx] {
+                        if let Some(ref mut proc) =
+                            self.instrument_plugin_processors[instrument_idx]
+                        {
                             proc.send_note_on(midi_channel, note_key, velocity);
                         }
                     }
                 }
-                AudioCommand::PreviewInstrumentPluginNoteOff { instrument_idx, midi_channel, note_key } => {
+                AudioCommand::PreviewInstrumentPluginNoteOff {
+                    instrument_idx,
+                    midi_channel,
+                    note_key,
+                } => {
                     if instrument_idx > 0 && instrument_idx < 255 {
-                        if let Some(ref mut proc) = self.instrument_plugin_processors[instrument_idx] {
+                        if let Some(ref mut proc) =
+                            self.instrument_plugin_processors[instrument_idx]
+                        {
                             proc.send_note_off(midi_channel, note_key);
                         }
                     }
@@ -681,20 +807,26 @@ impl AudioEngine {
             .store(state.clock.speed, std::sync::atomic::Ordering::Relaxed);
         self.playback_state
             .current_order
-            .store(state.current_order as u16, std::sync::atomic::Ordering::Relaxed);
+            .store(state.current_order, std::sync::atomic::Ordering::Relaxed);
         self.playback_state
             .current_row
-            .store(state.current_row as u16, std::sync::atomic::Ordering::Relaxed);
+            .store(state.current_row, std::sync::atomic::Ordering::Relaxed);
         self.playback_state
             .current_pattern
-            .store(state.current_pattern as u16, std::sync::atomic::Ordering::Relaxed);
-        self.playback_state
-            .current_tick
-            .store(state.clock.current_tick, std::sync::atomic::Ordering::Relaxed);
-        self.playback_state
-            .set_play_mode(state.play_mode);
+            .store(state.current_pattern, std::sync::atomic::Ordering::Relaxed);
+        self.playback_state.current_tick.store(
+            state.clock.current_tick,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.playback_state.set_play_mode(state.play_mode);
 
-        let active = self.sequencer.voice_pool.voices.iter().filter(|v| v.active).count();
+        let active = self
+            .sequencer
+            .voice_pool
+            .voices
+            .iter()
+            .filter(|v| v.active)
+            .count();
         self.playback_state
             .active_voices
             .store(active as u8, std::sync::atomic::Ordering::Relaxed);
@@ -710,7 +842,8 @@ impl AudioEngine {
                 Note::None => 0,
             };
             self.playback_state.set_channel_note(ch, note_val);
-            self.playback_state.set_channel_instrument(ch, ch_state.last_instrument as u16);
+            self.playback_state
+                .set_channel_instrument(ch, ch_state.last_instrument as u16);
         }
 
         self.playback_state.clear_all_sample_positions();
@@ -718,7 +851,8 @@ impl AudioEngine {
         let preview_voice = &self.sequencer.voice_pool.voices[PREVIEW_VOICE_INDEX];
         if preview_voice.active {
             if let Some(si) = preview_voice.sample_index {
-                self.playback_state.set_preview_sample_position(Some(preview_voice.position));
+                self.playback_state
+                    .set_preview_sample_position(Some(preview_voice.position));
                 self.playback_state.set_preview_sample_index(Some(si));
             }
         }
@@ -726,14 +860,16 @@ impl AudioEngine {
             if voice.active {
                 if let (Some(ch), Some(si)) = (voice.channel, voice.sample_index) {
                     if ch < MAX_CHANNELS {
-                        self.playback_state.set_channel_sample_position(ch, Some(voice.position));
+                        self.playback_state
+                            .set_channel_sample_position(ch, Some(voice.position));
                         self.playback_state.set_channel_sample_index(ch, Some(si));
                     }
                 }
                 if let Some(ch) = voice.channel {
                     if ch < MAX_CHANNELS {
                         if let Some(instr) = voice.instrument_index {
-                            self.playback_state.set_channel_env_instrument(ch, Some(instr));
+                            self.playback_state
+                                .set_channel_env_instrument(ch, Some(instr));
                         }
                         let env_sets: [(usize, Option<&crate::audio::voice::EnvelopeState>); 4] = [
                             (0, voice.vol_env.as_ref()),
@@ -744,7 +880,11 @@ impl AudioEngine {
                         for (env_type, env_opt) in &env_sets {
                             if let Some(env) = env_opt {
                                 if !env.finished {
-                                    self.playback_state.set_channel_env_pos(*env_type, ch, Some(env.position));
+                                    self.playback_state.set_channel_env_pos(
+                                        *env_type,
+                                        ch,
+                                        Some(env.position),
+                                    );
                                 }
                             }
                         }
@@ -760,11 +900,19 @@ impl AudioEngine {
         for i in 0..frame_count {
             let al = self.mix_left[i].abs();
             let ar = self.mix_right[i].abs();
-            if al > peak_l { peak_l = al; }
-            if ar > peak_r { peak_r = ar; }
+            if al > peak_l {
+                peak_l = al;
+            }
+            if ar > peak_r {
+                peak_r = ar;
+            }
         }
-        self.playback_state.master_peak_left.store(peak_l.to_bits(), std::sync::atomic::Ordering::Relaxed);
-        self.playback_state.master_peak_right.store(peak_r.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        self.playback_state
+            .master_peak_left
+            .store(peak_l.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        self.playback_state
+            .master_peak_right
+            .store(peak_r.to_bits(), std::sync::atomic::Ordering::Relaxed);
 
         let num_ch = self.sequencer.state.channels.len();
         self.ch_peak_cache.resize(num_ch, 0.0);
@@ -783,7 +931,8 @@ impl AudioEngine {
         }
         for (ch, peak) in self.ch_peak_cache.iter().enumerate() {
             if ch < crate::audio::playback_state::MAX_CHANNELS {
-                self.playback_state.channel_peaks[ch].store(peak.to_bits(), std::sync::atomic::Ordering::Relaxed);
+                self.playback_state.channel_peaks[ch]
+                    .store(peak.to_bits(), std::sync::atomic::Ordering::Relaxed);
             }
         }
 
@@ -791,11 +940,7 @@ impl AudioEngine {
             let base = ch * 2 * frame_count;
             let left = &self.ch_mix[base..base + frame_count];
             let right = &self.ch_mix[base + frame_count..base + 2 * frame_count];
-            self.playback_state.write_channel_scope(
-                ch,
-                left,
-                right,
-            );
+            self.playback_state.write_channel_scope(ch, left, right);
         }
         self.playback_state.finish_channel_scope_write(frame_count);
     }
@@ -869,7 +1014,13 @@ impl AudioEngine {
         voice.ramp_enabled = self.sequencer.ramp_enabled;
     }
 
-    pub fn trigger_preview_note(&mut self, sample_index: usize, note_key: u8, volume: f32, panning: f32) {
+    pub fn trigger_preview_note(
+        &mut self,
+        sample_index: usize,
+        note_key: u8,
+        volume: f32,
+        panning: f32,
+    ) {
         let module = match &self.module {
             Some(m) => m,
             None => return,
@@ -910,7 +1061,14 @@ impl AudioEngine {
         voice.ramp_enabled = self.sequencer.ramp_enabled;
     }
 
-    pub fn trigger_preview_buffer(&mut self, data: Arc<Vec<f32>>, sample_rate: u32, note_key: u8, volume: f32, panning: f32) {
+    pub fn trigger_preview_buffer(
+        &mut self,
+        data: Arc<Vec<f32>>,
+        sample_rate: u32,
+        note_key: u8,
+        volume: f32,
+        panning: f32,
+    ) {
         if data.is_empty() {
             return;
         }
@@ -961,9 +1119,7 @@ pub fn compute_playback_frequency(
 ) -> f64 {
     let base_rate = crate::sequencer::module::BASE_NOTE_RATE;
     let sample_rate = sample_c5speed as f64;
-    let pitch_multiplier = 2.0_f64.powf(
-        (relative_note as f64 + fine_tune as f64 / 128.0) / 12.0,
-    );
+    let pitch_multiplier = 2.0_f64.powf((relative_note as f64 + fine_tune as f64 / 128.0) / 12.0);
     (note_freq / base_rate) * sample_rate * pitch_multiplier
 }
 
@@ -1086,21 +1242,30 @@ mod tests {
             // Drain a bit so the retry can succeed
             engine.process_callback(&mut [0.0f32; 512]);
         }
-        assert!(delivered, "LoadModule should eventually deliver after draining");
+        assert!(
+            delivered,
+            "LoadModule should eventually deliver after draining"
+        );
 
         // Process remaining commands to ensure LoadModule is consumed
         for _ in 0..(fill_count / 256 + 2) {
             engine.process_callback(&mut [0.0f32; 512]);
         }
-        assert!(engine.module.is_some(), "LoadModule must be consumed by engine");
+        assert!(
+            engine.module.is_some(),
+            "LoadModule must be consumed by engine"
+        );
     }
 
     #[test]
     fn compute_playback_frequency_c5_at_c5speed() {
         let c5_freq = 440.0 * 2.0_f64.powf((60.0 - 69.0) / 12.0);
         let freq = compute_playback_frequency(c5_freq, 8363, 0, 0);
-        assert!((freq - 8363.0).abs() < 1.0,
-            "C-5 at c5speed=8363 should produce ~8363 Hz, got {}", freq);
+        assert!(
+            (freq - 8363.0).abs() < 1.0,
+            "C-5 at c5speed=8363 should produce ~8363 Hz, got {}",
+            freq
+        );
     }
 
     #[test]
@@ -1108,8 +1273,12 @@ mod tests {
         let a4_freq = 440.0;
         let freq = compute_playback_frequency(a4_freq, 8363, 0, 0);
         let expected = 8363.0 * 2.0_f64.powf(9.0 / 12.0);
-        assert!((freq - expected).abs() < 1.0,
-            "A-4 at c5speed=8363 should produce ~{:.1} Hz, got {:.1}", expected, freq);
+        assert!(
+            (freq - expected).abs() < 1.0,
+            "A-4 at c5speed=8363 should produce ~{:.1} Hz, got {:.1}",
+            expected,
+            freq
+        );
     }
 
     #[test]
@@ -1117,8 +1286,12 @@ mod tests {
         let c5_freq = 440.0 * 2.0_f64.powf((60.0 - 69.0) / 12.0);
         let freq_up = compute_playback_frequency(c5_freq, 8363, 12, 0);
         let freq_octave_up = 8363.0 * 2.0;
-        assert!((freq_up - freq_octave_up).abs() < 2.0,
-            "C-5 + 1 octave should double frequency, got {} vs expected {}", freq_up, freq_octave_up);
+        assert!(
+            (freq_up - freq_octave_up).abs() < 2.0,
+            "C-5 + 1 octave should double frequency, got {} vs expected {}",
+            freq_up,
+            freq_octave_up
+        );
     }
 
     #[test]
@@ -1169,8 +1342,10 @@ mod tests {
         // Stopped with no active voices -> silence.
         let mut output = vec![0.0f32; 512];
         engine.process_callback(&mut output);
-        assert!(output.iter().all(|&s| s == 0.0),
-            "should be silent when stopped with no active voices");
+        assert!(
+            output.iter().all(|&s| s == 0.0),
+            "should be silent when stopped with no active voices"
+        );
 
         // Trigger a preview note while still stopped.
         engine.trigger_preview_note(preview_idx, 60, 0.75, 0.5);
@@ -1178,8 +1353,10 @@ mod tests {
         // The preview voice must render even though the sequencer is stopped.
         let mut output = vec![0.0f32; 512];
         engine.process_callback(&mut output);
-        assert!(output.iter().any(|&s| s != 0.0),
-            "preview note must be audible while the sequencer is stopped");
+        assert!(
+            output.iter().any(|&s| s != 0.0),
+            "preview note must be audible while the sequencer is stopped"
+        );
     }
 
     /// Integration test: install a CLAP plugin on a send bus via AudioCommand.
@@ -1189,7 +1366,8 @@ mod tests {
     /// Skipped if no CLAP plugin is available at the standard install path.
     #[test]
     fn send_bus_plugin_install_wiring() {
-        let clap_path = std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
+        let clap_path =
+            std::path::Path::new(r"C:\Program Files\Common Files\CLAP\TAL-Reverb-4.clap");
         if !clap_path.exists() {
             eprintln!("[skip] TAL-Reverb-4.clap not found");
             return;
@@ -1216,8 +1394,10 @@ mod tests {
 
         // Initially, no plugin on bus 0
         assert!(engine.send_buses[0].plugin.is_none());
-        assert!(engine.send_buses[0].effect.is_some(),
-            "Built-in SendEffect (Delay or Reverb) should be active by default");
+        assert!(
+            engine.send_buses[0].effect.is_some(),
+            "Built-in SendEffect (Delay or Reverb) should be active by default"
+        );
 
         // Install the CLAP plugin on send bus 0
         sender.send(AudioCommand::SetSendPlugin {
@@ -1227,8 +1407,10 @@ mod tests {
         engine.process_callback(&mut [0.0f32; 512]); // drain
 
         // Now the plugin is installed
-        assert!(engine.send_buses[0].plugin.is_some(),
-            "Plugin should be installed on send bus 0 after SetSendPlugin command");
+        assert!(
+            engine.send_buses[0].plugin.is_some(),
+            "Plugin should be installed on send bus 0 after SetSendPlugin command"
+        );
         eprintln!("[ok] Plugin installed on send bus 0");
 
         // Set a parameter via the AudioCommand
@@ -1243,8 +1425,10 @@ mod tests {
         for _ in 0..4 {
             engine.process_callback(&mut [0.0f32; 512]);
         }
-        assert!(engine.send_buses[0].plugin.is_some(),
-            "Plugin should still be installed after callbacks");
+        assert!(
+            engine.send_buses[0].plugin.is_some(),
+            "Plugin should still be installed after callbacks"
+        );
 
         // Remove the plugin (SetSendPlugin with None)
         sender.send(AudioCommand::SetSendPlugin {
@@ -1252,8 +1436,10 @@ mod tests {
             processor: None,
         });
         engine.process_callback(&mut [0.0f32; 512]); // drain
-        assert!(engine.send_buses[0].plugin.is_none(),
-            "Plugin should be removed after SetSendPlugin with None");
+        assert!(
+            engine.send_buses[0].plugin.is_none(),
+            "Plugin should be removed after SetSendPlugin with None"
+        );
         eprintln!("[ok] Plugin removed from send bus 0");
     }
 
@@ -1268,8 +1454,8 @@ mod tests {
 
         #[derive(Debug, Default)]
         struct MockState {
-            note_ons: Vec<(u8, u8, u8)>,  // (midi_ch, key, velocity)
-            note_offs: Vec<(u8, u8)>,     // (midi_ch, key)
+            note_ons: Vec<(u8, u8, u8)>, // (midi_ch, key, velocity)
+            note_offs: Vec<(u8, u8)>,    // (midi_ch, key)
         }
 
         #[derive(Debug, Default)]
@@ -1280,18 +1466,36 @@ mod tests {
         impl HostedPluginProcessor for MockProcessor {
             fn process(
                 &mut self,
-                _in_l: &[f32], _in_r: &[f32],
-                _out_l: &mut [f32], _out_r: &mut [f32],
-                _n: usize, _t: &crate::audio::plugins::TransportInfo,
-            ) {}
-            fn stop(self: Box<Self>) -> Box<dyn std::any::Any> { Box::new(()) }
+                _in_l: &[f32],
+                _in_r: &[f32],
+                _out_l: &mut [f32],
+                _out_r: &mut [f32],
+                _n: usize,
+                _t: &crate::audio::plugins::TransportInfo,
+            ) {
+            }
+            fn stop(self: Box<Self>) -> Box<dyn std::any::Any> {
+                Box::new(())
+            }
             fn set_parameter(&mut self, _: u32, _: f32) {}
-            fn get_parameter(&self, _: u32) -> f32 { 0.0 }
-            fn parameter_count(&self) -> u32 { 0 }
-            fn latency(&self) -> u32 { 0 }
-            fn name(&self) -> &str { "Mock" }
+            fn get_parameter(&self, _: u32) -> f32 {
+                0.0
+            }
+            fn parameter_count(&self) -> u32 {
+                0
+            }
+            fn latency(&self) -> u32 {
+                0
+            }
+            fn name(&self) -> &str {
+                "Mock"
+            }
             fn send_note_on(&mut self, midi_ch: u8, key: u8, velocity: u8) {
-                self.state.lock().unwrap().note_ons.push((midi_ch, key, velocity));
+                self.state
+                    .lock()
+                    .unwrap()
+                    .note_ons
+                    .push((midi_ch, key, velocity));
             }
             fn send_note_off(&mut self, midi_ch: u8, key: u8) {
                 self.state.lock().unwrap().note_offs.push((midi_ch, key));
@@ -1299,12 +1503,14 @@ mod tests {
         }
 
         let state = Arc::new(Mutex::new(MockState::default()));
-        let proc: Box<dyn HostedPluginProcessor> =
-            Box::new(MockProcessor { state: state.clone() });
+        let proc: Box<dyn HostedPluginProcessor> = Box::new(MockProcessor {
+            state: state.clone(),
+        });
 
         let (mut engine, mut sender) = create_engine_and_sender(
             Arc::new(crate::audio::playback_state::AtomicPlaybackState::default()),
-            48000, 2,
+            48000,
+            2,
         );
 
         // Install the mock at instrument index 1.
@@ -1317,26 +1523,44 @@ mod tests {
 
         // Note-on
         sender.send(AudioCommand::PreviewInstrumentPlugin {
-            instrument_idx: 1, midi_channel: 0, note_key: 60, velocity: 100,
+            instrument_idx: 1,
+            midi_channel: 0,
+            note_key: 60,
+            velocity: 100,
         });
         engine.process_callback(&mut [0.0f32; 64]);
 
         // Note-off
         sender.send(AudioCommand::PreviewInstrumentPluginNoteOff {
-            instrument_idx: 1, midi_channel: 0, note_key: 60,
+            instrument_idx: 1,
+            midi_channel: 0,
+            note_key: 60,
         });
         engine.process_callback(&mut [0.0f32; 64]);
 
         // Note-on on a different instrument — must be ignored
         sender.send(AudioCommand::PreviewInstrumentPlugin {
-            instrument_idx: 2, midi_channel: 0, note_key: 64, velocity: 90,
+            instrument_idx: 2,
+            midi_channel: 0,
+            note_key: 64,
+            velocity: 90,
         });
         engine.process_callback(&mut [0.0f32; 64]);
 
         let s = state.lock().unwrap();
-        assert_eq!(s.note_ons.len(), 1, "expected one note-on, got {}", s.note_ons.len());
+        assert_eq!(
+            s.note_ons.len(),
+            1,
+            "expected one note-on, got {}",
+            s.note_ons.len()
+        );
         assert_eq!(s.note_ons[0], (0, 60, 100));
-        assert_eq!(s.note_offs.len(), 1, "expected one note-off, got {}", s.note_offs.len());
+        assert_eq!(
+            s.note_offs.len(),
+            1,
+            "expected one note-off, got {}",
+            s.note_offs.len()
+        );
         assert_eq!(s.note_offs[0], (0, 60));
     }
 
@@ -1362,29 +1586,46 @@ mod tests {
 
         impl HostedPluginProcessor for MockProcessor {
             fn process(
-                &mut self, _in_l: &[f32], _in_r: &[f32],
-                _out_l: &mut [f32], _out_r: &mut [f32],
-                _n: usize, _t: &crate::audio::plugins::TransportInfo,
-            ) {}
-            fn stop(self: Box<Self>) -> Box<dyn std::any::Any> { Box::new(()) }
+                &mut self,
+                _in_l: &[f32],
+                _in_r: &[f32],
+                _out_l: &mut [f32],
+                _out_r: &mut [f32],
+                _n: usize,
+                _t: &crate::audio::plugins::TransportInfo,
+            ) {
+            }
+            fn stop(self: Box<Self>) -> Box<dyn std::any::Any> {
+                Box::new(())
+            }
             fn set_parameter(&mut self, id: u32, v: f32) {
                 self.state.lock().unwrap().params.push((id, v));
             }
-            fn get_parameter(&self, _: u32) -> f32 { 0.0 }
-            fn parameter_count(&self) -> u32 { 0 }
-            fn latency(&self) -> u32 { 0 }
-            fn name(&self) -> &str { "MockSend" }
+            fn get_parameter(&self, _: u32) -> f32 {
+                0.0
+            }
+            fn parameter_count(&self) -> u32 {
+                0
+            }
+            fn latency(&self) -> u32 {
+                0
+            }
+            fn name(&self) -> &str {
+                "MockSend"
+            }
             fn send_note_on(&mut self, _: u8, _: u8, _: u8) {}
             fn send_note_off(&mut self, _: u8, _: u8) {}
         }
 
         let state = Arc::new(Mutex::new(MockState::default()));
-        let proc: Box<dyn HostedPluginProcessor> =
-            Box::new(MockProcessor { state: state.clone() });
+        let proc: Box<dyn HostedPluginProcessor> = Box::new(MockProcessor {
+            state: state.clone(),
+        });
 
         let (mut engine, mut sender) = create_engine_and_sender(
             Arc::new(crate::audio::playback_state::AtomicPlaybackState::default()),
-            48000, 2,
+            48000,
+            2,
         );
 
         // 1. Initial module load sets up the default 4 send buses.
@@ -1392,7 +1633,10 @@ mod tests {
             crate::sequencer::Module::default(),
         )));
         engine.process_callback(&mut [0.0f32; 64]);
-        assert!(!engine.send_buses.is_empty(), "default module should create send buses");
+        assert!(
+            !engine.send_buses.is_empty(),
+            "default module should create send buses"
+        );
 
         // 2. Install the mock processor on send bus 0.
         sender.send(AudioCommand::SetSendPlugin {
@@ -1400,16 +1644,25 @@ mod tests {
             processor: Some(proc),
         });
         engine.process_callback(&mut [0.0f32; 64]);
-        assert!(engine.send_buses[0].plugin.is_some(), "plugin should be installed");
+        assert!(
+            engine.send_buses[0].plugin.is_some(),
+            "plugin should be installed"
+        );
 
         // 3. Send a param change to prove the installed processor is live.
         sender.send(AudioCommand::SetSendPluginParam {
-            send_index: 0, param_id: 5, value: 0.5,
+            send_index: 0,
+            param_id: 5,
+            value: 0.5,
         });
         engine.process_callback(&mut [0.0f32; 64]);
         {
             let s = state.lock().unwrap();
-            assert_eq!(s.params, [(5, 0.5)], "first param change should reach the processor");
+            assert_eq!(
+                s.params,
+                [(5, 0.5)],
+                "first param change should reach the processor"
+            );
         }
 
         // 4. Simulate `sync_module_to_audio()` firing after any edit — this is
@@ -1428,13 +1681,16 @@ mod tests {
         // 6. And it must be the SAME instance: a second param change appends
         //    to the recorded history rather than starting fresh.
         sender.send(AudioCommand::SetSendPluginParam {
-            send_index: 0, param_id: 7, value: 0.25,
+            send_index: 0,
+            param_id: 7,
+            value: 0.25,
         });
         engine.process_callback(&mut [0.0f32; 64]);
         {
             let s = state.lock().unwrap();
             assert_eq!(
-                s.params, [(5, 0.5), (7, 0.25)],
+                s.params,
+                [(5, 0.5), (7, 0.25)],
                 "the same processor instance must survive LoadModule"
             );
         }

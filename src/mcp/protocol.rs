@@ -1,10 +1,10 @@
-use std::sync::{mpsc, Arc, RwLock};
-use std::sync::atomic::AtomicBool;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::AtomicBool;
+use std::sync::{mpsc, Arc, RwLock};
 
-use crate::mcp::library::SampleLibrary;
 use crate::audio::plugins::PluginLibrary;
 use crate::audio::plugins::PresetLibrary;
+use crate::mcp::library::SampleLibrary;
 
 // ── MCP JSON-RPC types (subset of the MCP spec) ──
 
@@ -49,10 +49,24 @@ pub struct JsonRpcError {
 
 impl JsonRpcResponse {
     pub fn success(id: Option<serde_json::Value>, result: serde_json::Value) -> Self {
-        JsonRpcResponse { jsonrpc: "2.0", id, result: Some(result), error: None }
+        JsonRpcResponse {
+            jsonrpc: "2.0",
+            id,
+            result: Some(result),
+            error: None,
+        }
     }
     pub fn error(id: Option<serde_json::Value>, code: i32, message: String) -> Self {
-        JsonRpcResponse { jsonrpc: "2.0", id, result: None, error: Some(JsonRpcError { code, message, data: None }) }
+        JsonRpcResponse {
+            jsonrpc: "2.0",
+            id,
+            result: None,
+            error: Some(JsonRpcError {
+                code,
+                message,
+                data: None,
+            }),
+        }
     }
 }
 

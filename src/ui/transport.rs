@@ -37,12 +37,24 @@ pub fn draw_transport(
         volume_changed: None,
     };
 
-    let playing = playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
-    let bpm = playback_state.bpm.load(std::sync::atomic::Ordering::Relaxed);
-    let speed = playback_state.speed.load(std::sync::atomic::Ordering::Relaxed);
-    let order = playback_state.current_order.load(std::sync::atomic::Ordering::Relaxed);
-    let row = playback_state.current_row.load(std::sync::atomic::Ordering::Relaxed);
-    let pattern = playback_state.current_pattern.load(std::sync::atomic::Ordering::Relaxed);
+    let playing = playback_state
+        .playing
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let bpm = playback_state
+        .bpm
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let speed = playback_state
+        .speed
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let order = playback_state
+        .current_order
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let row = playback_state
+        .current_row
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let pattern = playback_state
+        .current_pattern
+        .load(std::sync::atomic::Ordering::Relaxed);
     let play_mode = playback_state.play_mode();
 
     ui.horizontal(|ui| {
@@ -50,7 +62,11 @@ pub fn draw_transport(
         ui.visuals_mut().widgets.inactive.fg_stroke.color = theme.transport_fg;
 
         let play_label = if playing { "|| Pause" } else { "> Play" };
-        let play_color = if playing { theme.transport_active } else { theme.transport_fg };
+        let play_color = if playing {
+            theme.transport_active
+        } else {
+            theme.transport_fg
+        };
         let play_text = egui::RichText::new(play_label).color(play_color);
         let play_resp = ui.dev_button("transport.play", play_text);
         if play_resp.clicked() {
@@ -80,7 +96,10 @@ pub fn draw_transport(
             resp.next_pattern_clicked = true;
         }
 
-        if ui.dev_button("transport.play_from", ">| Play From").clicked() {
+        if ui
+            .dev_button("transport.play_from", ">| Play From")
+            .clicked()
+        {
             if let Some(ref mut sender) = command_sender {
                 sender.send(AudioCommand::PlayFrom { order, row });
             }
@@ -137,9 +156,12 @@ pub fn draw_transport(
 
         ui.dev_separator("transport.sep2");
 
-        ui.dev_label("transport.bpm_label", egui::RichText::new("BPM:")
-            .font(egui::FontId::monospace(12.0))
-            .color(theme.transport_fg));
+        ui.dev_label(
+            "transport.bpm_label",
+            egui::RichText::new("BPM:")
+                .font(egui::FontId::monospace(12.0))
+                .color(theme.transport_fg),
+        );
         let mut bpm_val = bpm as i32;
         let bpm_resp = ui.dev_drag_value_i32_range("transport.bpm", &mut bpm_val, 32..=255);
         if bpm_resp.changed() {
@@ -149,9 +171,12 @@ pub fn draw_transport(
             }
         }
 
-        ui.dev_label("transport.speed_label", egui::RichText::new("Spd:")
-            .font(egui::FontId::monospace(12.0))
-            .color(theme.transport_fg));
+        ui.dev_label(
+            "transport.speed_label",
+            egui::RichText::new("Spd:")
+                .font(egui::FontId::monospace(12.0))
+                .color(theme.transport_fg),
+        );
         let mut speed_val = speed as i32;
         let speed_resp = ui.dev_drag_value_i32_range("transport.speed", &mut speed_val, 1..=255);
         if speed_resp.changed() {
@@ -163,9 +188,12 @@ pub fn draw_transport(
 
         ui.dev_separator("transport.sep3");
 
-        ui.dev_label("transport.vol_label", egui::RichText::new("Vol:")
-            .font(egui::FontId::monospace(12.0))
-            .color(theme.transport_fg));
+        ui.dev_label(
+            "transport.vol_label",
+            egui::RichText::new("Vol:")
+                .font(egui::FontId::monospace(12.0))
+                .color(theme.transport_fg),
+        );
         let mut vol_val = playback_state.master_volume();
         let vol_resp = ui.dev_slider("transport.volume", &mut vol_val, 0.0..=1.0);
         if vol_resp.changed() {
@@ -177,7 +205,9 @@ pub fn draw_transport(
 
         ui.separator();
 
-        let voices = playback_state.active_voices.load(std::sync::atomic::Ordering::Relaxed);
+        let voices = playback_state
+            .active_voices
+            .load(std::sync::atomic::Ordering::Relaxed);
         ui.label(
             egui::RichText::new(format!("Voices:{}", voices))
                 .font(egui::FontId::monospace(12.0))
@@ -193,9 +223,17 @@ pub fn draw_transport(
         ui.vertical(|ui| {
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("L").font(egui::FontId::monospace(9.0)).color(theme.transport_fg));
+                ui.label(
+                    egui::RichText::new("L")
+                        .font(egui::FontId::monospace(9.0))
+                        .color(theme.transport_fg),
+                );
                 draw_vu_bar(ui, peak_l, meter_width, meter_height, theme);
-                ui.label(egui::RichText::new("R").font(egui::FontId::monospace(9.0)).color(theme.transport_fg));
+                ui.label(
+                    egui::RichText::new("R")
+                        .font(egui::FontId::monospace(9.0))
+                        .color(theme.transport_fg),
+                );
                 draw_vu_bar(ui, peak_r, meter_width, meter_height, theme);
             });
         });
@@ -208,7 +246,12 @@ fn draw_vu_bar(ui: &mut egui::Ui, level: f32, width: f32, height: f32, theme: &T
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 1.0, theme.meter_bg);
-    painter.rect_stroke(rect, 1.0, egui::Stroke::new(1.0, theme.splitter_border), egui::StrokeKind::Outside);
+    painter.rect_stroke(
+        rect,
+        1.0,
+        egui::Stroke::new(1.0_f32, theme.splitter_border),
+        egui::StrokeKind::Outside,
+    );
 
     let fill_width = (level.clamp(0.0, 1.0) * width).min(width);
     if fill_width > 0.0 {

@@ -95,7 +95,8 @@ pub fn install_panic_hook(config_dir: std::path::PathBuf) {
             } else {
                 "<non-string panic payload>".to_string()
             };
-            let location = info.location()
+            let location = info
+                .location()
                 .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
                 .unwrap_or_else(|| "<unknown>".to_string());
 
@@ -105,7 +106,9 @@ pub fn install_panic_hook(config_dir: std::path::PathBuf) {
                 .unwrap_or(0.0);
 
             if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true).append(true).open(&log_path)
+                .create(true)
+                .append(true)
+                .open(&log_path)
             {
                 let _ = writeln!(f, "[{:.3}] PANIC at {}: {}", timestamp, location, payload);
                 let _ = writeln!(f, "  backtrace: {}", std::backtrace::Backtrace::capture());
@@ -140,29 +143,19 @@ pub fn init_tracing(log_file_path: Option<&str>) {
         let env_filter = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("htrk=info,clap=info"));
 
-        let stderr_layer = fmt::layer()
-            .with_writer(std::io::stderr)
-            .with_ansi(true);
+        let stderr_layer = fmt::layer().with_writer(std::io::stderr).with_ansi(true);
 
         let registry = tracing_subscriber::registry()
             .with(env_filter)
             .with(stderr_layer);
 
         if let Some(path) = log_file_path {
-            if let Ok(file) = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
-                let file_layer = fmt::layer()
-                    .with_writer(file)
-                    .with_ansi(false);
+            if let Ok(file) = OpenOptions::new().create(true).append(true).open(path) {
+                let file_layer = fmt::layer().with_writer(file).with_ansi(false);
                 let _ = registry.with(file_layer).try_init();
                 return;
             } else {
-                eprintln!(
-                    "[htrk] Failed to open log file '{path}', falling back to stderr only"
-                );
+                eprintln!("[htrk] Failed to open log file '{path}', falling back to stderr only");
             }
         }
         let _ = registry.try_init();

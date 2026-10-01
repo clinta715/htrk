@@ -56,12 +56,27 @@ pub fn draw_status_bar(
         let fg = theme.status_fg;
         let font = egui::FontId::monospace(11.0);
 
-        ui.dev_label("status.version", egui::RichText::new(concat!("htrk v", env!("CARGO_PKG_VERSION"))).font(font.clone()).color(fg));
+        ui.dev_label(
+            "status.version",
+            egui::RichText::new(concat!("htrk v", env!("CARGO_PKG_VERSION")))
+                .font(font.clone())
+                .color(fg),
+        );
         ui.dev_separator("status.sep1");
 
-        let mode_color = if edit_mode { theme.fg_note } else { theme.fg_effect };
+        let mode_color = if edit_mode {
+            theme.fg_note
+        } else {
+            theme.fg_effect
+        };
         let mode_text = if edit_mode { "EDT" } else { "VIEW" };
-        ui.dev_label("status.mode", egui::RichText::new(mode_text).font(font.clone()).color(mode_color).strong());
+        ui.dev_label(
+            "status.mode",
+            egui::RichText::new(mode_text)
+                .font(font.clone())
+                .color(mode_color)
+                .strong(),
+        );
         ui.dev_separator("status.sep2");
 
         let format_str = match module {
@@ -78,25 +93,45 @@ pub fn draw_status_bar(
             },
             None => "---",
         };
-        ui.dev_label("status.format", egui::RichText::new(format!("Fmt:{}", format_str)).font(font.clone()).color(fg));
-
-        ui.dev_separator("status.sep3");
-
-        ui.label(
-            egui::RichText::new(format!("Pat:{:03} Row:{}/{}", current_pattern, cursor_row, total_rows))
+        ui.dev_label(
+            "status.format",
+            egui::RichText::new(format!("Fmt:{}", format_str))
                 .font(font.clone())
                 .color(fg),
         );
 
+        ui.dev_separator("status.sep3");
+
+        ui.label(
+            egui::RichText::new(format!(
+                "Pat:{:03} Row:{}/{}",
+                current_pattern, cursor_row, total_rows
+            ))
+            .font(font.clone())
+            .color(fg),
+        );
+
         ui.separator();
 
-        ui.label(egui::RichText::new(format!("Oct:{}", current_octave)).font(font.clone()).color(theme.fg_note));
-        ui.label(egui::RichText::new(format!(" Skp:{}", cursor_skip)).font(font.clone()).color(theme.fg_effect));
+        ui.label(
+            egui::RichText::new(format!("Oct:{}", current_octave))
+                .font(font.clone())
+                .color(theme.fg_note),
+        );
+        ui.label(
+            egui::RichText::new(format!(" Skp:{}", cursor_skip))
+                .font(font.clone())
+                .color(theme.fg_effect),
+        );
         let mapped_smp = module.and_then(|m| {
             m.instruments.get(selected_instrument).and_then(|inst| {
                 (0..120).find_map(|i| {
                     let s = inst.sample_map[i];
-                    if s > 0 { Some(s as usize) } else { None }
+                    if s > 0 {
+                        Some(s as usize)
+                    } else {
+                        None
+                    }
                 })
             })
         });
@@ -104,18 +139,34 @@ pub fn draw_status_bar(
             Some(s) => format!(" Ins:{:02}[{:02}]", selected_instrument, s),
             None => format!(" Ins:{:02}", selected_instrument),
         };
-        ui.label(egui::RichText::new(inst_str).font(font.clone()).color(theme.fg_instrument));
-        ui.label(egui::RichText::new(format!(" Smp:{:02}", selected_sample)).font(font.clone()).color(theme.fg_volume));
+        ui.label(
+            egui::RichText::new(inst_str)
+                .font(font.clone())
+                .color(theme.fg_instrument),
+        );
+        ui.label(
+            egui::RichText::new(format!(" Smp:{:02}", selected_sample))
+                .font(font.clone())
+                .color(theme.fg_volume),
+        );
 
         if ui.available_width() > 300.0 {
             if ui.small_button("<").clicked() {
                 sample_delta = Some(-1);
             }
-            let (thumb_rect, _) = ui.allocate_exact_size(egui::vec2(70.0, 18.0), egui::Sense::hover());
+            let (thumb_rect, _) =
+                ui.allocate_exact_size(egui::vec2(70.0, 18.0), egui::Sense::hover());
             if let Some(sample) = module.and_then(|m| m.samples.get(selected_sample)) {
                 if !sample.data.is_empty() {
                     let positions = playback_state.sample_positions_for(selected_sample);
-                    draw_waveform_thumbnail(ui.painter(), thumb_rect, &sample.data, true, &positions, theme);
+                    draw_waveform_thumbnail(
+                        ui.painter(),
+                        thumb_rect,
+                        &sample.data,
+                        true,
+                        &positions,
+                        theme,
+                    );
                 }
             }
             if ui.small_button(">").clicked() {
@@ -125,11 +176,19 @@ pub fn draw_status_bar(
 
         ui.separator();
 
-        ui.label(egui::RichText::new(format!("{}ch", num_channels)).font(font.clone()).color(fg));
+        ui.label(
+            egui::RichText::new(format!("{}ch", num_channels))
+                .font(font.clone())
+                .color(fg),
+        );
 
         ui.separator();
 
-        ui.label(egui::RichText::new(format!("CPU:{}%", cpu_pct)).font(font.clone()).color(fg));
+        ui.label(
+            egui::RichText::new(format!("CPU:{}%", cpu_pct))
+                .font(font.clone())
+                .color(fg),
+        );
 
         ui.separator();
 
@@ -141,7 +200,9 @@ pub fn draw_status_bar(
             SubColumn::Note => theme.fg_note,
             SubColumn::InstrumentTens | SubColumn::InstrumentOnes => theme.fg_instrument,
             SubColumn::VolumeTens | SubColumn::VolumeOnes => theme.fg_volume,
-            SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => theme.fg_effect,
+            SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => {
+                theme.fg_effect
+            }
         };
         ui.label(
             egui::RichText::new(format!("Col:{}", sub_column_name(sub_column)))
@@ -155,7 +216,11 @@ pub fn draw_status_bar(
 
         // Use more space for the hint
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(egui::RichText::new("F1: HELP ").font(font.clone()).color(theme.fg_instrument));
+            ui.label(
+                egui::RichText::new("F1: HELP ")
+                    .font(font.clone())
+                    .color(theme.fg_instrument),
+            );
             ui.separator();
             ui.label(egui::RichText::new(hint).font(font).color(theme.fg_note));
         });

@@ -1,42 +1,27 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NewNoteAction {
+    #[default]
     NoteCut,
     Continue,
     NoteOff,
     NoteFade,
 }
 
-impl Default for NewNoteAction {
-    fn default() -> Self {
-        NewNoteAction::NoteCut
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DuplicateCheckType {
+    #[default]
     Disabled,
     Note,
     Sample,
     Instrument,
 }
 
-impl Default for DuplicateCheckType {
-    fn default() -> Self {
-        DuplicateCheckType::Disabled
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DuplicateCheckAction {
+    #[default]
     NoteCut,
     NoteOff,
     NoteFade,
-}
-
-impl Default for DuplicateCheckAction {
-    fn default() -> Self {
-        DuplicateCheckAction::NoteCut
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -76,37 +61,19 @@ mod array_u8_120_serde {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EnvelopePoint {
     pub tick: u16,
     pub value: u8,
 }
 
-impl Default for EnvelopePoint {
-    fn default() -> Self {
-        EnvelopePoint { tick: 0, value: 0 }
-    }
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Envelope {
     pub points: Vec<EnvelopePoint>,
     pub sustain_point: Option<usize>,
     pub loop_start: Option<usize>,
     pub loop_end: Option<usize>,
     pub flags: EnvelopeFlags,
-}
-
-impl Default for Envelope {
-    fn default() -> Self {
-        Envelope {
-            points: Vec::new(),
-            sustain_point: None,
-            loop_start: None,
-            loop_end: None,
-            flags: EnvelopeFlags::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -220,7 +187,9 @@ impl Default for Instrument {
             sample_map: [0u8; 120],
             note_map: {
                 let mut m = [0u8; 120];
-                for i in 0..120 { m[i] = i as u8; }
+                for i in 0..120 {
+                    m[i] = i as u8;
+                }
                 m
             },
             volume_envelope: None,
@@ -251,7 +220,9 @@ impl Default for Instrument {
     }
 }
 
-fn default_midi_channel() -> u8 { 0 }
+fn default_midi_channel() -> u8 {
+    0
+}
 
 /// Identifies which of an instrument's four envelopes (volume, panning,
 /// pitch, filter) an operation targets. Lives here (next to `Envelope`
@@ -307,7 +278,10 @@ mod tests {
         let env = Envelope {
             points: vec![
                 EnvelopePoint { tick: 0, value: 0 },
-                EnvelopePoint { tick: 10, value: 64 },
+                EnvelopePoint {
+                    tick: 10,
+                    value: 64,
+                },
             ],
             sustain_point: Some(1),
             loop_start: None,

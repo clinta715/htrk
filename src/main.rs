@@ -131,9 +131,9 @@ fn apply_cli_overrides(config: &mut htrk::app_config::AppConfig, args: &[String]
 
 fn parse_port_arg(args: &[String], pos: usize, flag: &str) -> Result<u16, String> {
     match args.get(pos + 1) {
-        Some(s) => s.parse::<u16>().map_err(|_| {
-            format!("{} requires a numeric port 0-65535 (got `{}`)", flag, s)
-        }),
+        Some(s) => s
+            .parse::<u16>()
+            .map_err(|_| format!("{} requires a numeric port 0-65535 (got `{}`)", flag, s)),
         None => Err(format!("{} requires a value", flag)),
     }
 }
@@ -265,7 +265,10 @@ fn print_effect_reference() {
 /// playback without driving the GUI.
 fn print_mcp_help() {
     let version = env!("CARGO_PKG_VERSION");
-    println!("Holofonic Tracker v{} — MCP (Model Context Protocol) reference", version);
+    println!(
+        "Holofonic Tracker v{} — MCP (Model Context Protocol) reference",
+        version
+    );
     println!();
     println!("ENABLING THE SERVER");
     println!("    Edit config.toml:");
@@ -290,11 +293,13 @@ fn print_mcp_help() {
     println!("HANDSHAKE");
     println!("    Send a JSON-RPC initialize request to start a session:");
     println!();
-    println!(r#"        {{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{
+    println!(
+        r#"        {{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{
             "protocolVersion":"2024-11-05",
             "capabilities":{{}},
             "clientInfo":{{"name":"my-agent","version":"1.0"}}
-        }}}}"#);
+        }}}}"#
+    );
     println!();
     println!("    The server replies with its capabilities (including the tool list).");
     println!("    Call `tools/list` to enumerate tools, `tools/call` to invoke one.");
@@ -329,7 +334,8 @@ fn print_mcp_help() {
     println!();
     println!("EXAMPLE: read the current pattern");
     println!();
-    println!(r#"        {{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{
+    println!(
+        r#"        {{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{
             "name":"pattern.get",
             "arguments":{{
                 "order":0,
@@ -337,18 +343,21 @@ fn print_mcp_help() {
                 "end_row":15,
                 "channels":4
             }}
-        }}}}"#);
+        }}}}"#
+    );
     println!();
     println!("EXAMPLE: set a cell");
     println!();
-    println!(r#"        {{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{
+    println!(
+        r#"        {{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{
             "name":"pattern.set_cell",
             "arguments":{{
                 "order":0, "row":0, "channel":0,
                 "note":"C-5", "instrument":1, "volume":64,
                 "effect":"C", "param":"40"
             }}
-        }}}}"#);
+        }}}}"#
+    );
     println!();
     println!("NOTE / EFFECT PARSING");
     println!("    Notes: IT/XM style names (C-5, D#4, ---, ===, ^^^, ~~~)");

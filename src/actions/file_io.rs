@@ -1,9 +1,8 @@
-
 use std::sync::atomic::Ordering;
 
 use crate::app::HtrkApp;
-use crate::formats;
 use crate::audio::renderer::WavRenderer;
+use crate::formats;
 
 pub(crate) fn load_file(app: &mut HtrkApp, path: &str) {
     let data = match std::fs::read(path) {
@@ -22,10 +21,14 @@ pub(crate) fn load_file(app: &mut HtrkApp, path: &str) {
     match formats::load_module(&data) {
         Ok(mut module) => {
             if module.samples.len() < 65 {
-                module.samples.resize(65, crate::sequencer::Sample::default());
+                module
+                    .samples
+                    .resize(65, crate::sequencer::Sample::default());
             }
             if module.instruments.len() < 17 {
-                module.instruments.resize(17, crate::sequencer::Instrument::default());
+                module
+                    .instruments
+                    .resize(17, crate::sequencer::Instrument::default());
             }
 
             let name = module.name.clone();
@@ -68,7 +71,10 @@ pub(crate) fn import_wav(app: &mut HtrkApp, path: &str) {
     match crate::formats::wav::import_wav(&data) {
         Ok(mut sample) => {
             if sample.name.is_empty() {
-                if let Some(name) = std::path::Path::new(path).file_stem().and_then(|s| s.to_str()) {
+                if let Some(name) = std::path::Path::new(path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                {
                     sample.name = name.to_string();
                 }
             }
@@ -169,9 +175,7 @@ pub(crate) fn import_midi_with_opts(app: &mut HtrkApp, path: &str, rows_per_beat
 
         // Honor the MIDI tempo only if the current module is at the default
         // tempo (don't clobber a deliberate user tempo).
-        if imported.bpm > 0
-            && module.initial_bpm == crate::sequencer::module::DEFAULT_BPM
-        {
+        if imported.bpm > 0 && module.initial_bpm == crate::sequencer::module::DEFAULT_BPM {
             module.initial_bpm = imported.bpm;
         }
 
@@ -179,17 +183,22 @@ pub(crate) fn import_midi_with_opts(app: &mut HtrkApp, path: &str, rows_per_beat
         // imported channels.
         let need = imported.channels_used.max(module.channel_panning.len());
         if module.channel_panning.len() < need {
-            module.channel_panning.resize(need, crate::sequencer::module::PANNING_CENTER);
+            module
+                .channel_panning
+                .resize(need, crate::sequencer::module::PANNING_CENTER);
         }
         if module.channel_volume.len() < need {
-            module.channel_volume.resize(need, crate::sequencer::module::VOLUME_MAX);
+            module
+                .channel_volume
+                .resize(need, crate::sequencer::module::VOLUME_MAX);
         }
 
         let _ = stem;
         if imported.tracks_skipped > 0 {
             eprintln!(
                 "MIDI import: {} tracks skipped (beyond {}-channel limit)",
-                imported.tracks_skipped, crate::sequencer::pattern::MAX_CHANNELS
+                imported.tracks_skipped,
+                crate::sequencer::pattern::MAX_CHANNELS
             );
         }
     });
@@ -222,7 +231,12 @@ fn save_file_inner(app: &mut HtrkApp, path: &str) {
 
 pub(crate) fn open_wav_export_dialog(app: &mut HtrkApp) {
     let module_loaded = app.core.module.is_some();
-    let total_orders = app.core.module.as_ref().map(|m| m.order_list.len()).unwrap_or(0) as u64;
+    let total_orders = app
+        .core
+        .module
+        .as_ref()
+        .map(|m| m.order_list.len())
+        .unwrap_or(0) as u64;
     let sample_rate = if app.current_sample_rate > 0 {
         app.current_sample_rate
     } else {
@@ -235,12 +249,26 @@ pub(crate) fn open_wav_export_dialog(app: &mut HtrkApp) {
         "untitled".to_string()
     };
 
-    app.wav_export_state.default_directory = app.config.default_wav_path.as_ref().map(|p| {
-        let pb = std::path::PathBuf::from(p);
-        if pb.is_dir() { pb } else { std::path::PathBuf::new() }
-    }).filter(|p| p.as_os_str().is_empty().then(|| false).unwrap_or(true));
+    app.wav_export_state.default_directory = app
+        .config
+        .default_wav_path
+        .as_ref()
+        .map(|p| {
+            let pb = std::path::PathBuf::from(p);
+            if pb.is_dir() {
+                pb
+            } else {
+                std::path::PathBuf::new()
+            }
+        })
+        .filter(|p| !p.as_os_str().is_empty());
 
-    app.wav_export_state.open(&default_name, module_loaded, Some(total_orders), sample_rate);
+    app.wav_export_state.open(
+        &default_name,
+        module_loaded,
+        Some(total_orders),
+        sample_rate,
+    );
     app.wav_export_state.update_estimates(Some(total_orders));
 }
 
@@ -250,7 +278,8 @@ pub(crate) fn export_wav_with_settings(app: &mut HtrkApp) {
     let module = match &app.core.module {
         Some(m) => m.clone(),
         None => {
-            app.wav_export_state.finish_export(false, Some("No module loaded to export".to_string()));
+            app.wav_export_state
+                .finish_export(false, Some("No module loaded to export".to_string()));
             return;
         }
     };
@@ -258,7 +287,8 @@ pub(crate) fn export_wav_with_settings(app: &mut HtrkApp) {
     let file_path = match settings.file_path.clone() {
         Some(path) => path,
         None => {
-            app.wav_export_state.finish_export(false, Some("No file path selected".to_string()));
+            app.wav_export_state
+                .finish_export(false, Some("No file path selected".to_string()));
             return;
         }
     };
@@ -270,7 +300,8 @@ pub(crate) fn export_wav_with_settings(app: &mut HtrkApp) {
     };
 
     if sample_rate == 0 {
-        app.wav_export_state.finish_export(false, Some("No valid sample rate available".to_string()));
+        app.wav_export_state
+            .finish_export(false, Some("No valid sample rate available".to_string()));
         return;
     }
 
@@ -295,12 +326,10 @@ pub(crate) fn export_wav_with_settings(app: &mut HtrkApp) {
             },
         };
 
-        let result = std::fs::File::create(&file_path)
-            .and_then(|file| {
-                let writer = hound::WavWriter::new(file, spec)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-                Ok(writer)
-            });
+        let result = std::fs::File::create(&file_path).and_then(|file| {
+            let writer = hound::WavWriter::new(file, spec).map_err(std::io::Error::other)?;
+            Ok(writer)
+        });
 
         match result {
             Ok(mut writer) => {
@@ -317,21 +346,19 @@ pub(crate) fn export_wav_with_settings(app: &mut HtrkApp) {
                     _ => crate::audio::commands::LimiterMode::HardClip,
                 };
                 renderer.set_limiter_mode(limiter);
-                renderer.set_channels(settings.channel_mode == crate::ui::wav_export_window::ChannelMode::Stereo);
-
-                let render_result = renderer.render_with_settings(
-                    &mut writer,
-                    &settings,
-                    |p| {
-                        if cancel_arc.load(Ordering::SeqCst) {
-                            return false;
-                        }
-                        let pct = (p * 100.0) as u32;
-                        progress_arc.store(pct, Ordering::SeqCst);
-                        state_arc.store(1, Ordering::SeqCst);
-                        true
-                    },
+                renderer.set_channels(
+                    settings.channel_mode == crate::ui::wav_export_window::ChannelMode::Stereo,
                 );
+
+                let render_result = renderer.render_with_settings(&mut writer, &settings, |p| {
+                    if cancel_arc.load(Ordering::SeqCst) {
+                        return false;
+                    }
+                    let pct = (p * 100.0) as u32;
+                    progress_arc.store(pct, Ordering::SeqCst);
+                    state_arc.store(1, Ordering::SeqCst);
+                    true
+                });
 
                 match render_result {
                     Ok(()) => {
@@ -362,8 +389,14 @@ pub(crate) fn update_wav_export_progress(app: &mut HtrkApp) {
         return;
     }
 
-    let progress = app.wav_export_state.export_progress_atomic.load(Ordering::SeqCst);
-    let state = app.wav_export_state.export_state_atomic.load(Ordering::SeqCst);
+    let progress = app
+        .wav_export_state
+        .export_progress_atomic
+        .load(Ordering::SeqCst);
+    let state = app
+        .wav_export_state
+        .export_state_atomic
+        .load(Ordering::SeqCst);
 
     app.wav_export_state.export_progress = (progress as f32) / 100.0;
     app.wav_export_state.export_status = if progress > 0 {
@@ -394,7 +427,9 @@ pub(crate) fn save_config(app: &mut HtrkApp) {
             BrowserMode::Instruments => "instruments",
             BrowserMode::Projects => "projects",
         };
-        app.config.last_dirs.insert(key.to_string(), path.to_string_lossy().into_owned());
+        app.config
+            .last_dirs
+            .insert(key.to_string(), path.to_string_lossy().into_owned());
     }
     if let Some(ref path) = app.core.file_path {
         app.config.last_file_path = Some(path.clone());
@@ -425,7 +460,9 @@ pub(crate) fn check_auto_backup(app: &mut HtrkApp) {
     let name = if app.core.loaded_module_name.is_empty() {
         "untitled".to_string()
     } else {
-        app.core.loaded_module_name.trim_end_matches(".htk")
+        app.core
+            .loaded_module_name
+            .trim_end_matches(".htk")
             .trim_end_matches(".it")
             .trim_end_matches(".xm")
             .trim_end_matches(".s3m")

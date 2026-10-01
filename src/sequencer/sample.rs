@@ -17,18 +17,13 @@ pub struct SampleFlags {
     pub has_trailing_byte: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum VibratoWaveform {
+    #[default]
     Sine,
     Square,
     Ramp,
     Random,
-}
-
-impl Default for VibratoWaveform {
-    fn default() -> Self {
-        VibratoWaveform::Sine
-    }
 }
 
 mod arc_vec_f32_serde {

@@ -5,25 +5,55 @@ use crate::mcp::protocol::*;
 
 /// Tools that require mutation access (routed through main-thread command queue).
 pub const MUTATION_TOOLS: &[&str] = &[
-    "module.create", "module.load", "module.save",
-    "order.set", "order.append", "order.insert", "order.remove", "order.set_entry",
+    "module.create",
+    "module.load",
+    "module.save",
+    "order.set",
+    "order.append",
+    "order.insert",
+    "order.remove",
+    "order.set_entry",
     "pattern.ensure",
-    "cell.set", "cell.set_batch",
-    "pattern.fill", "pattern.clear", "pattern.transpose", "pattern.interpolate",
-    "instrument.create", "instrument.remove", "instrument.set_property",
-    "instrument.map_note", "instrument.map_range",
-    "sample.load", "sample.remove", "sample.set_property",
-    "envelope.set", "envelope.add_point", "envelope.remove_point", "envelope.generate",
-    "automation.create", "automation.remove", "automation.add_point", "automation.clear",
-    "playback.play", "playback.stop", "playback.set_position",
-    "playback.set_bpm", "playback.set_speed",
-    "channel.set_panning", "channel.set_volume", "channel.set_mute", "channel.set_solo",
-    "sendfx.set_bus", "sendfx.set_return_level",
+    "cell.set",
+    "cell.set_batch",
+    "pattern.fill",
+    "pattern.clear",
+    "pattern.transpose",
+    "pattern.interpolate",
+    "instrument.create",
+    "instrument.remove",
+    "instrument.set_property",
+    "instrument.map_note",
+    "instrument.map_range",
+    "sample.load",
+    "sample.remove",
+    "sample.set_property",
+    "envelope.set",
+    "envelope.add_point",
+    "envelope.remove_point",
+    "envelope.generate",
+    "automation.create",
+    "automation.remove",
+    "automation.add_point",
+    "automation.clear",
+    "playback.play",
+    "playback.stop",
+    "playback.set_position",
+    "playback.set_bpm",
+    "playback.set_speed",
+    "channel.set_panning",
+    "channel.set_volume",
+    "channel.set_mute",
+    "channel.set_solo",
+    "sendfx.set_bus",
+    "sendfx.set_return_level",
     "sample_library.import",
     "phrase.generate",
     "pattern.transform",
     "midi.import",
-    "undo.last", "undo.to", "redo.last",
+    "undo.last",
+    "undo.to",
+    "redo.last",
 ];
 
 pub fn list_tools() -> Vec<ToolDefinition> {
@@ -681,14 +711,17 @@ fn tool_def(name: &str, desc: &str, schema: serde_json::Value) -> ToolDefinition
 pub fn call_tool(name: &str, params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
     match name {
         "module.info" => Ok(crate::mcp::resources::read_resource("htrk://state", ctx)?),
-        "order.get"   => Ok(crate::mcp::resources::read_resource("htrk://order", ctx)?),
-        "cell.get"    => cell_get(params, ctx),
-        "playback.state" => Ok(crate::mcp::resources::read_resource("htrk://playback", ctx)?),
+        "order.get" => Ok(crate::mcp::resources::read_resource("htrk://order", ctx)?),
+        "cell.get" => cell_get(params, ctx),
+        "playback.state" => Ok(crate::mcp::resources::read_resource(
+            "htrk://playback",
+            ctx,
+        )?),
 
         // Sample library tools
         "sample_library.configure" => cmd_sample_library_configure(params, ctx),
-        "sample_library.list_dir"  => cmd_sample_library_list_dir(params, ctx),
-        "sample_library.search"    => cmd_sample_library_search(params, ctx),
+        "sample_library.list_dir" => cmd_sample_library_list_dir(params, ctx),
+        "sample_library.search" => cmd_sample_library_search(params, ctx),
 
         // Plugin tools
         "plugin.scan" => crate::mcp::plugin_tools::cmd_plugin_scan(params, ctx),
@@ -696,35 +729,61 @@ pub fn call_tool(name: &str, params: serde_json::Value, ctx: &ToolContext) -> Cm
         "plugin.info" => crate::mcp::plugin_tools::cmd_plugin_info(params, ctx),
 
         // Preset tools
-        "preset.scan"          => crate::mcp::preset_tools::cmd_preset_scan(params, ctx),
-        "preset.list"          => crate::mcp::preset_tools::cmd_preset_list(params, ctx),
-        "preset.info"          => crate::mcp::preset_tools::cmd_preset_info(params, ctx),
-        "preset.list_by_plugin"=> crate::mcp::preset_tools::cmd_preset_list_by_plugin(params, ctx),
-        "preset.status"        => crate::mcp::preset_tools::cmd_preset_status(params, ctx),
+        "preset.scan" => crate::mcp::preset_tools::cmd_preset_scan(params, ctx),
+        "preset.list" => crate::mcp::preset_tools::cmd_preset_list(params, ctx),
+        "preset.info" => crate::mcp::preset_tools::cmd_preset_info(params, ctx),
+        "preset.list_by_plugin" => crate::mcp::preset_tools::cmd_preset_list_by_plugin(params, ctx),
+        "preset.status" => crate::mcp::preset_tools::cmd_preset_status(params, ctx),
 
-        _ if MUTATION_TOOLS.contains(&name) => {
-            Err("Requires mutation dispatch".into())
-        }
-        _ => Err(format!("Unknown tool '{name}'"))
+        _ if MUTATION_TOOLS.contains(&name) => Err("Requires mutation dispatch".into()),
+        _ => Err(format!("Unknown tool '{name}'")),
     }
 }
 
 fn cell_get(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
-    let order = params.get("order").and_then(|v| v.as_i64()).ok_or("Missing 'order'")? as usize;
-    let row = params.get("row").and_then(|v| v.as_i64()).ok_or("Missing 'row'")? as usize;
-    let channel = params.get("channel").and_then(|v| v.as_i64()).ok_or("Missing 'channel'")? as usize;
+    let order = params
+        .get("order")
+        .and_then(|v| v.as_i64())
+        .ok_or("Missing 'order'")? as usize;
+    let row = params
+        .get("row")
+        .and_then(|v| v.as_i64())
+        .ok_or("Missing 'row'")? as usize;
+    let channel = params
+        .get("channel")
+        .and_then(|v| v.as_i64())
+        .ok_or("Missing 'channel'")? as usize;
 
-    let module = ctx.module_snapshot.module_json.as_ref().ok_or("No module loaded")?;
-    let order_list = module.get("order_list").and_then(|v| v.as_array()).ok_or("No order list")?;
-    let pat_idx = order_list.get(order).and_then(|v| v.as_i64()).ok_or("Order index out of range")? as usize;
+    let module = ctx
+        .module_snapshot
+        .module_json
+        .as_ref()
+        .ok_or("No module loaded")?;
+    let order_list = module
+        .get("order_list")
+        .and_then(|v| v.as_array())
+        .ok_or("No order list")?;
+    let pat_idx = order_list
+        .get(order)
+        .and_then(|v| v.as_i64())
+        .ok_or("Order index out of range")? as usize;
 
-    let pattern = ctx.module_snapshot.patterns_json.iter()
+    let pattern = ctx
+        .module_snapshot
+        .patterns_json
+        .iter()
         .find(|(i, _)| *i == pat_idx)
         .map(|(_, data)| data)
         .ok_or("Pattern not found")?;
 
-    let pat_data = pattern.get("data").and_then(|v| v.as_array()).ok_or("Invalid pattern data")?;
-    let row_data = pat_data.get(row).and_then(|v| v.as_array()).ok_or("Row out of range")?;
+    let pat_data = pattern
+        .get("data")
+        .and_then(|v| v.as_array())
+        .ok_or("Invalid pattern data")?;
+    let row_data = pat_data
+        .get(row)
+        .and_then(|v| v.as_array())
+        .ok_or("Row out of range")?;
     let cell = row_data.get(channel).ok_or("Channel out of range")?;
     Ok(cell.clone())
 }
@@ -732,32 +791,44 @@ fn cell_get(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
 // ── Sample library handlers (read-only, run on MCP thread) ──
 
 fn cmd_sample_library_configure(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
-    let roots_arr = params.get("roots")
+    let roots_arr = params
+        .get("roots")
         .and_then(|v| v.as_array())
         .ok_or("Missing 'roots' array")?;
 
-    let roots: Vec<std::path::PathBuf> = roots_arr.iter()
+    let roots: Vec<std::path::PathBuf> = roots_arr
+        .iter()
         .filter_map(|v| v.as_str())
         .map(std::path::PathBuf::from)
         .collect();
 
     let count = roots.len();
-    let mut library = ctx.library.write().map_err(|e| format!("Library lock poisoned: {e}"))?;
+    let mut library = ctx
+        .library
+        .write()
+        .map_err(|e| format!("Library lock poisoned: {e}"))?;
     library.set_roots(roots);
 
     Ok(json!({ "roots_configured": count }))
 }
 
 fn cmd_sample_library_list_dir(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
-    let path_str = params.get("path")
+    let path_str = params
+        .get("path")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'path'")?;
 
     let page = params.get("page").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
-    let page_size = params.get("page_size").and_then(|v| v.as_i64()).unwrap_or(50) as usize;
+    let page_size = params
+        .get("page_size")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(50) as usize;
 
     let filter = params.get("filter").and_then(|f| {
-        let name_contains = f.get("name_contains").and_then(|v| v.as_str()).map(String::from);
+        let name_contains = f
+            .get("name_contains")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let category = f.get("category").and_then(|v| v.as_str()).map(String::from);
         let min_duration = f.get("min_duration").and_then(|v| v.as_f64());
         let max_duration = f.get("max_duration").and_then(|v| v.as_f64());
@@ -765,7 +836,10 @@ fn cmd_sample_library_list_dir(params: serde_json::Value, ctx: &ToolContext) -> 
         let max_bpm = f.get("max_bpm").and_then(|v| v.as_f64()).map(|n| n as f32);
         let key = f.get("key").and_then(|v| v.as_str()).map(String::from);
         let tag = f.get("tag").and_then(|v| v.as_str()).map(String::from);
-        let channels_filter = f.get("channels_filter").and_then(|v| v.as_u64()).map(|n| n as u8);
+        let channels_filter = f
+            .get("channels_filter")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u8);
         let has_any = name_contains.is_some()
             || category.is_some()
             || min_duration.is_some()
@@ -792,27 +866,45 @@ fn cmd_sample_library_list_dir(params: serde_json::Value, ctx: &ToolContext) -> 
         }
     });
 
-    let mut library = ctx.library.write().map_err(|e| format!("Library lock poisoned: {e}"))?;
-    let listing = library.list_dir(std::path::Path::new(path_str), page, page_size, filter.as_ref())?;
+    let mut library = ctx
+        .library
+        .write()
+        .map_err(|e| format!("Library lock poisoned: {e}"))?;
+    let listing = library.list_dir(
+        std::path::Path::new(path_str),
+        page,
+        page_size,
+        filter.as_ref(),
+    )?;
     serde_json::to_value(&listing).map_err(|e| format!("Serialization error: {e}"))
 }
 
 fn cmd_sample_library_search(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
-    let query = params.get("query")
+    let query = params
+        .get("query")
         .and_then(|v| v.as_str())
         .ok_or("Missing 'query'")?;
 
     let page = params.get("page").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
-    let page_size = params.get("page_size").and_then(|v| v.as_i64()).unwrap_or(50) as usize;
+    let page_size = params
+        .get("page_size")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(50) as usize;
 
-    let scope_roots: Option<Vec<std::path::PathBuf>> = params.get("scope_roots")
+    let scope_roots: Option<Vec<std::path::PathBuf>> = params
+        .get("scope_roots")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter()
-            .filter_map(|v| v.as_str())
-            .map(std::path::PathBuf::from)
-            .collect());
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(std::path::PathBuf::from)
+                .collect()
+        });
 
-    let library = ctx.library.read().map_err(|e| format!("Library lock poisoned: {e}"))?;
+    let library = ctx
+        .library
+        .read()
+        .map_err(|e| format!("Library lock poisoned: {e}"))?;
     let results = library.search(query, scope_roots.as_deref(), page, page_size);
     serde_json::to_value(&results).map_err(|e| format!("Serialization error: {e}"))
 }

@@ -30,14 +30,14 @@ pub fn load_module(data: &[u8]) -> FormatResult<Module> {
     }
     let version = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
     let _flags = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
-    
+
     if version > HTK_VERSION {
         return Err(FormatError::InvalidHeader {
             expected: format!("HTK version <= {}", HTK_VERSION),
             found: version.to_le_bytes(),
         });
     }
-    
+
     let payload = &data[12..];
     let mut module: Module = bincode::deserialize(payload)?;
     module.format = ModuleFormat::HTK;

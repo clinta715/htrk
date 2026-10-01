@@ -1,4 +1,3 @@
-
 use super::helpers::calculate_sample_offset;
 use crate::audio::sequencer_engine::{PluginNoteEvent, SequencerEngine};
 
@@ -50,7 +49,8 @@ impl SequencerEngine {
             }
             module.instruments[idx]
                 .midi_base_channel
-                .wrapping_add(channel as u8) % 16
+                .wrapping_add(channel as u8)
+                % 16
         };
         self.pending_plugin_note_events.push(PluginNoteEvent {
             instrument_idx,
@@ -112,28 +112,38 @@ impl SequencerEngine {
         let prev_instrument = self.state.channels[channel].last_instrument;
 
         // Common: instrument
-        if cell.instrument.is_some() {
-            self.state.channels[channel].last_instrument = cell.instrument.unwrap();
+        if let Some(inst) = cell.instrument {
+            self.state.channels[channel].last_instrument = inst;
         }
 
         let instrument_idx = self.state.channels[channel].last_instrument as usize;
         let has_instruments = !module.instruments.is_empty();
 
-        let (sample_idx, remapped_key) = if has_instruments && instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            let inst = &module.instruments[instrument_idx];
-            match cell.note {
-                Note::On(key) if (key as usize) < 120 => {
-                    let idx = inst.sample_map[key as usize] as usize;
-                    let rk = inst.note_map[key as usize];
-                    (idx, if rk < 120 { rk } else { key })
+        let (sample_idx, remapped_key) =
+            if has_instruments && instrument_idx > 0 && instrument_idx < module.instruments.len() {
+                let inst = &module.instruments[instrument_idx];
+                match cell.note {
+                    Note::On(key) if (key as usize) < 120 => {
+                        let idx = inst.sample_map[key as usize] as usize;
+                        let rk = inst.note_map[key as usize];
+                        (idx, if rk < 120 { rk } else { key })
+                    }
+                    _ => (self.state.channels[channel].last_sample as usize, {
+                        match cell.note {
+                            Note::On(k) => k,
+                            _ => 0,
+                        }
+                    }),
                 }
-                _ => (self.state.channels[channel].last_sample as usize, {
-                    match cell.note { Note::On(k) => k, _ => 0 }
-                }),
-            }
-        } else {
-            (instrument_idx, match cell.note { Note::On(k) => k, _ => 0 })
-        };
+            } else {
+                (
+                    instrument_idx,
+                    match cell.note {
+                        Note::On(k) => k,
+                        _ => 0,
+                    },
+                )
+            };
 
         if sample_idx > 0 && sample_idx < module.samples.len() {
             self.state.channels[channel].last_sample = sample_idx as u8;
@@ -146,7 +156,9 @@ impl SequencerEngine {
         };
 
         // Set channel defaults from sample
-        self.with_processor_mut(|processor, engine| processor.init_sample_defaults(engine, channel, cell, sample));
+        self.with_processor_mut(|processor, engine| {
+            processor.init_sample_defaults(engine, channel, cell, sample)
+        });
 
         // Volume column
         if let Some(vol) = cell.volume {
@@ -156,7 +168,9 @@ impl SequencerEngine {
                 let mapped = ((vol as u16 * 255 + 49) / 99).min(255) as u8; // 0-99 → 0-255, rounding
                 self.state.channels[channel].last_send_param_value[idx] = mapped;
             } else {
-                self.with_processor_mut(|processor, engine| processor.process_volume_column(engine, channel, vol));
+                self.with_processor_mut(|processor, engine| {
+                    processor.process_volume_column(engine, channel, vol)
+                });
             }
         }
         // Set volume effects
@@ -173,7 +187,8 @@ impl SequencerEngine {
 
         let is_tone_portamento = matches!(
             cell.effect,
-            Effect::TonePortamento { .. } | Effect::TonePortamentoVolumeSlide { .. }
+            Effect::TonePortamento { .. }
+                | Effect::TonePortamentoVolumeSlide { .. }
                 | Effect::VolPortamento { .. }
         );
 
@@ -189,63 +204,86 @@ impl SequencerEngine {
             if let Note::On(key) = cell.note {
                 self.state.channels[channel].last_note = Note::On(key);
             }
-                } else {
-                    match cell.note {
-                        Note::On(key) => {
-                            let has_plugin = has_instruments
-                                && instrument_idx > 0
-                                && instrument_idx < module.instruments.len()
-                                && module.instruments[instrument_idx].plugin.is_some();
+        } else {
+            match cell.note {
+                Note::On(key) => {
+                    let has_plugin = has_instruments
+                        && instrument_idx > 0
+                        && instrument_idx < module.instruments.len()
+                        && module.instruments[instrument_idx].plugin.is_some();
 
-                            if has_plugin {
-                                // Monophonic interruption: a track plays one
-                                // note at a time, so a new Note::On must first
-                                // release the previously-held plugin note on
-                                // this channel (mirrors the sample path calling
-                                // `handle_nna(NoteCut)` before `allocate_voice`).
-                                // Must run BEFORE updating `last_note` below, so
-                                // the helper reads the OLD key from channel state.
-                                self.emit_plugin_note_off(channel, prev_instrument, true);
+                    if has_plugin {
+                        // Monophonic interruption: a track plays one
+                        // note at a time, so a new Note::On must first
+                        // release the previously-held plugin note on
+                        // this channel (mirrors the sample path calling
+                        // `handle_nna(NoteCut)` before `allocate_voice`).
+                        // Must run BEFORE updating `last_note` below, so
+                        // the helper reads the OLD key from channel state.
+                        self.emit_plugin_note_off(channel, prev_instrument, true);
 
-                                let midi_ch = module.instruments[instrument_idx]
-                                    .midi_base_channel
-                                    .wrapping_add(channel as u8) % 16;
-                                self.pending_plugin_note_events.push(PluginNoteEvent {
-                                    instrument_idx: instrument_idx as u8,
-                                    midi_channel: midi_ch,
-                                    key,
-                                    velocity: 100,
-                                    note_on: true,
-                                });
-                                // Apply instrument parameter macros.
-                                // For each macro defined on this instrument,
-                                // read the source value (currently just the
-                                // cell's volume column), normalize to
-                                // 0.0–1.0, remap to the macro's range, and
-                                // queue a SetInstrumentPluginParam value.
-                                // The audio engine routes queued values to
-                                // the matching instrument_plugin_processors
-                                // slot on the next tick.
-                                if let Some(vol) = cell.volume {
-                                    let inst = &module.instruments[instrument_idx];
-                                    for m in &inst.macros {
-                                        let normalized = (vol as f32 / 64.0).clamp(0.0, 1.0);
-                                        let value = m.range_min
-                                            + normalized * (m.range_max - m.range_min);
-                                        self.pending_instrument_plugin_param_changes
-                                            .push((instrument_idx as u8, m.param_id, value));
-                                    }
-                                }
-                            } else if is_tone_portamento {
-                                self.with_processor_mut(|processor, engine| processor.setup_portamento(engine, channel, key, remapped_key, sample, sample_idx));
-                            } else {
-                                self.with_processor_mut(|processor, engine| processor.trigger_note(engine, channel, key, remapped_key, sample, sample_idx, cell, instrument_idx));
+                        let midi_ch = module.instruments[instrument_idx]
+                            .midi_base_channel
+                            .wrapping_add(channel as u8)
+                            % 16;
+                        self.pending_plugin_note_events.push(PluginNoteEvent {
+                            instrument_idx: instrument_idx as u8,
+                            midi_channel: midi_ch,
+                            key,
+                            velocity: 100,
+                            note_on: true,
+                        });
+                        // Apply instrument parameter macros.
+                        // For each macro defined on this instrument,
+                        // read the source value (currently just the
+                        // cell's volume column), normalize to
+                        // 0.0–1.0, remap to the macro's range, and
+                        // queue a SetInstrumentPluginParam value.
+                        // The audio engine routes queued values to
+                        // the matching instrument_plugin_processors
+                        // slot on the next tick.
+                        if let Some(vol) = cell.volume {
+                            let inst = &module.instruments[instrument_idx];
+                            for m in &inst.macros {
+                                let normalized = (vol as f32 / 64.0).clamp(0.0, 1.0);
+                                let value = m.range_min + normalized * (m.range_max - m.range_min);
+                                self.pending_instrument_plugin_param_changes.push((
+                                    instrument_idx as u8,
+                                    m.param_id,
+                                    value,
+                                ));
                             }
-                            // Record the new note as the channel's held note
-                            // (after the plugin release above so it doesn't
-                            // shadow the previous note being interrupted).
-                            self.state.channels[channel].last_note = Note::On(key);
                         }
+                    } else if is_tone_portamento {
+                        self.with_processor_mut(|processor, engine| {
+                            processor.setup_portamento(
+                                engine,
+                                channel,
+                                key,
+                                remapped_key,
+                                sample,
+                                sample_idx,
+                            )
+                        });
+                    } else {
+                        self.with_processor_mut(|processor, engine| {
+                            processor.trigger_note(
+                                engine,
+                                channel,
+                                key,
+                                remapped_key,
+                                sample,
+                                sample_idx,
+                                cell,
+                                instrument_idx,
+                            )
+                        });
+                    }
+                    // Record the new note as the channel's held note
+                    // (after the plugin release above so it doesn't
+                    // shadow the previous note being interrupted).
+                    self.state.channels[channel].last_note = Note::On(key);
+                }
                 Note::Off => {
                     let has_plugin = has_instruments
                         && instrument_idx > 0
@@ -258,7 +296,9 @@ impl SequencerEngine {
                         // placeholder, or the synth never sees the release.
                         self.emit_plugin_note_off(channel, instrument_idx as u8, false);
                     } else {
-                        self.with_processor_mut(|processor, engine| processor.handle_note_off(engine, channel));
+                        self.with_processor_mut(|processor, engine| {
+                            processor.handle_note_off(engine, channel)
+                        });
                     }
                 }
                 Note::Cut => {
@@ -287,7 +327,12 @@ impl SequencerEngine {
         }
     }
 
-    pub(crate) fn calculate_sample_offset(&self, channel: usize, cell: &Cell, sample: &Sample) -> usize {
+    pub(crate) fn calculate_sample_offset(
+        &self,
+        channel: usize,
+        cell: &Cell,
+        sample: &Sample,
+    ) -> usize {
         calculate_sample_offset(&self.state, channel, cell, sample)
     }
 }

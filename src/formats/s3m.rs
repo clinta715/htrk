@@ -4,8 +4,7 @@ use crate::errors::{FormatError, FormatResult};
 use crate::formats::FormatHandler;
 use crate::sequencer::{
     effect::{FormatEffect, S3mEffect},
-    Effect, Instrument, LoopType, Module, ModuleFormat, Note, Pattern, Sample,
-    MAX_CHANNELS,
+    Effect, Instrument, LoopType, Module, ModuleFormat, Note, Pattern, Sample, MAX_CHANNELS,
 };
 
 const S3M_HEADER_SIZE: usize = 96;
@@ -16,7 +15,9 @@ const S3M_MAX_CHANNELS: usize = 32;
 fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
     match effect_code {
         1 => Effect::SetTempo { bpm: param },
-        2 => Effect::PositionJump { order: param as u16 },
+        2 => Effect::PositionJump {
+            order: param as u16,
+        },
         3 => {
             let row = (param >> 4) * 10 + (param & 0x0F);
             Effect::PatternBreak { row: row as u16 }
@@ -25,20 +26,28 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
             up: param >> 4,
             down: param & 0x0F,
         },
-         5 => {
+        5 => {
             if param >= 0xF0 {
-                Effect::ExtraFinePortamentoDown { speed: param & 0x0F }
+                Effect::ExtraFinePortamentoDown {
+                    speed: param & 0x0F,
+                }
             } else if param >= 0xE0 {
-                Effect::FinePortamentoDown { speed: param & 0x0F }
+                Effect::FinePortamentoDown {
+                    speed: param & 0x0F,
+                }
             } else {
                 Effect::PortamentoDown { speed: param }
             }
         }
         6 => {
             if param >= 0xF0 {
-                Effect::ExtraFinePortamentoUp { speed: param & 0x0F }
+                Effect::ExtraFinePortamentoUp {
+                    speed: param & 0x0F,
+                }
             } else if param >= 0xE0 {
-                Effect::FinePortamentoUp { speed: param & 0x0F }
+                Effect::FinePortamentoUp {
+                    speed: param & 0x0F,
+                }
             } else {
                 Effect::PortamentoUp { speed: param }
             }
@@ -48,7 +57,10 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
             speed: param >> 4,
             depth: param & 0x0F,
         },
-        9 => Effect::Tremor { ontime: param >> 4, offtime: param & 0x0F },
+        9 => Effect::Tremor {
+            ontime: param >> 4,
+            offtime: param & 0x0F,
+        },
         10 => Effect::Arpeggio {
             note1: param >> 4,
             note2: param & 0x0F,
@@ -75,19 +87,32 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
             match sub {
                 0x1 => Effect::GlissandoControl { on: val != 0 },
                 0x2 => Effect::SetFineTune { tune: val },
-                0x3 => Effect::VibratoWaveform { waveform: val & 0x03 },
-                0x4 => Effect::TremoloWaveform { waveform: val & 0x03 },
-                0x5 => Effect::SetPanPosition { pan: (val << 4) | val },
+                0x3 => Effect::VibratoWaveform {
+                    waveform: val & 0x03,
+                },
+                0x4 => Effect::TremoloWaveform {
+                    waveform: val & 0x03,
+                },
+                0x5 => Effect::SetPanPosition {
+                    pan: (val << 4) | val,
+                },
                 0x6 => Effect::PatternLoop { count: val },
-                0x7 => Effect::TremoloWaveform { waveform: val & 0x03 },
-                0x8 => Effect::SetPanning { pan: (val << 4) | val },
+                0x7 => Effect::TremoloWaveform {
+                    waveform: val & 0x03,
+                },
+                0x8 => Effect::SetPanning {
+                    pan: (val << 4) | val,
+                },
                 0x9 => Effect::None, // S9x - not used
-                0xA => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::Raw { effect: 0x19A, param: val })), // SAx - High Sample Offset
+                0xA => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::Raw {
+                    effect: 0x19A,
+                    param: val,
+                })), // SAx - High Sample Offset
                 0xB => Effect::PatternLoop { count: val }, // SBx - Pattern Loop
                 0xC => Effect::NoteCutAfter { ticks: val }, // SCx - Note Cut
                 0xD => Effect::NoteDelay { ticks: val }, // SDx - Note Delay
                 0xE => Effect::PatternDelay { ticks: val }, // SEx - Pattern Delay
-                _ => Effect::None, // S0x, SFx and others - not used
+                _ => Effect::None,   // S0x, SFx and others - not used
             }
         }
         20 => Effect::SetSpeed { speed: param },
@@ -95,13 +120,20 @@ fn convert_s3m_effect(effect_code: u8, param: u8) -> Effect {
             speed: param >> 4,
             depth: param & 0x0F,
         }, // U - Fine Vibrato (simplified as Vibrato for now)
-        22 => Effect::SetGlobalVolume { volume: (param.min(64) as u16 * 128 / 64) as u8 }, // V - Set Global Volume
+        22 => Effect::SetGlobalVolume {
+            volume: (param.min(64) as u16 * 128 / 64) as u8,
+        }, // V - Set Global Volume
         23 => Effect::GlobalVolumeSlide {
             up: (param >> 4) as i8 * 2,
             down: (param & 0x0F) as i8 * 2,
         }, // W - Global Volume Slide
-        24 => Effect::SetPanning { pan: (param as u16 * 255 / 128).min(255) as u8 }, // X - Set Panning
-        _ if effect_code > 0 => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::Raw { effect: effect_code as u16, param })),
+        24 => Effect::SetPanning {
+            pan: (param as u16 * 255 / 128).min(255) as u8,
+        }, // X - Set Panning
+        _ if effect_code > 0 => Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::Raw {
+            effect: effect_code as u16,
+            param,
+        })),
         _ => Effect::None,
     }
 }
@@ -149,7 +181,9 @@ fn effect_to_s3m(effect: &Effect) -> (u8, u8) {
                 (*effect as u8, *param)
             }
         }
-        Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::SetSampleOffset(offset))) => (15, (offset >> 8) as u8),
+        Effect::FormatSpecific(FormatEffect::S3m(S3mEffect::SetSampleOffset(offset))) => {
+            (15, (offset >> 8) as u8)
+        }
         Effect::FormatSpecific(_) => (0, 0),
         _ => (0, 0),
     }
@@ -202,12 +236,20 @@ impl FormatHandler for S3mHandler {
                 num_channels = num_channels.max((channel_settings[i] & 0x1F) as usize + 1);
             }
         }
-        let _num_channels = if num_channels == 0 { 4 } else { num_channels.min(MAX_CHANNELS).max(1) };
+        let _num_channels = if num_channels == 0 {
+            4
+        } else {
+            num_channels.clamp(1, MAX_CHANNELS)
+        };
 
         let mut offset = S3M_HEADER_SIZE;
 
         let orders = read_bytes(data, &mut offset, order_count)?.to_vec();
-        let _filtered_orders: Vec<u8> = orders.iter().filter(|&&o| o != 0xFF && o != 0xFE).copied().collect();
+        let _filtered_orders: Vec<u8> = orders
+            .iter()
+            .filter(|&&o| o != 0xFF && o != 0xFE)
+            .copied()
+            .collect();
 
         let sample_paraptrs = read_u16_vec(data, &mut offset, sample_count)?;
         let pattern_paraptrs = read_u16_vec(data, &mut offset, pattern_count)?;
@@ -250,53 +292,63 @@ impl FormatHandler for S3mHandler {
 
             let has_loop = hdr_offset + 32 <= data.len() && (data[hdr_offset + 31] & 0x01) != 0;
             let is_ping_pong = hdr_offset + 32 <= data.len() && (data[hdr_offset + 31] & 0x02) != 0;
-            let loop_type = if has_loop && loop_end_raw > loop_start_raw && loop_end_raw <= data_length {
-                if is_ping_pong {
-                    LoopType::PingPong
+            let loop_type =
+                if has_loop && loop_end_raw > loop_start_raw && loop_end_raw <= data_length {
+                    if is_ping_pong {
+                        LoopType::PingPong
+                    } else {
+                        LoopType::Forward
+                    }
                 } else {
-                    LoopType::Forward
-                }
-            } else {
-                LoopType::None
-            };
+                    LoopType::None
+                };
 
             let is_unsigned = sample_format == 2;
 
-            let sample_data = if sample_type == 1 && data_length > 0 && data_offset + data_length <= data.len() {
-                if is_16bit {
-                    data[data_offset..data_offset + data_length]
-                        .chunks_exact(2)
-                        .map(|chunk| {
-                            let val = i16::from_le_bytes([chunk[0], chunk[1]]);
-                            val as f32 / 32768.0
-                        })
-                        .collect::<Vec<f32>>()
+            let sample_data =
+                if sample_type == 1 && data_length > 0 && data_offset + data_length <= data.len() {
+                    if is_16bit {
+                        data[data_offset..data_offset + data_length]
+                            .chunks_exact(2)
+                            .map(|chunk| {
+                                let val = i16::from_le_bytes([chunk[0], chunk[1]]);
+                                val as f32 / 32768.0
+                            })
+                            .collect::<Vec<f32>>()
+                    } else {
+                        data[data_offset..data_offset + data_length]
+                            .iter()
+                            .map(|&b| {
+                                let val = if is_unsigned {
+                                    (b as i16) - 128
+                                } else {
+                                    b as i8 as i16
+                                };
+                                val as f32 / 128.0
+                            })
+                            .collect::<Vec<f32>>()
+                    }
                 } else {
-                    data[data_offset..data_offset + data_length]
-                        .iter()
-                        .map(|&b| {
-                            let val = if is_unsigned {
-                                (b as i16) - 128
-                            } else {
-                                b as i8 as i16
-                            };
-                            val as f32 / 128.0
-                        })
-                        .collect::<Vec<f32>>()
-                }
-            } else {
-                Vec::new()
-            };
+                    Vec::new()
+                };
 
-            let loop_start = if is_16bit { loop_start_raw / 2 } else { loop_start_raw };
+            let loop_start = if is_16bit {
+                loop_start_raw / 2
+            } else {
+                loop_start_raw
+            };
             let loop_end = if loop_type != LoopType::None {
-                if is_16bit { loop_end_raw / 2 } else { loop_end_raw }
+                if is_16bit {
+                    loop_end_raw / 2
+                } else {
+                    loop_end_raw
+                }
             } else {
                 0
             };
 
             let pan = if i < 32 && (default_panning[i] & 0x80) != 0 {
-                ((default_panning[i] & 0x0F) as u8) * 4
+                (default_panning[i] & 0x0F) * 4
             } else {
                 32
             };
@@ -375,7 +427,7 @@ impl FormatHandler for S3mHandler {
                                 let octave = v >> 4;
                                 let semitone = v & 0x0F;
                                 if octave < 12 && semitone < 12 {
-                                    let key = octave as u8 * 12 + semitone as u8 + 12;
+                                    let key = octave * 12 + semitone + 12;
                                     if key < 120 {
                                         Note::On(key)
                                     } else {
@@ -412,7 +464,8 @@ impl FormatHandler for S3mHandler {
                         let effect_param = packed[pos + 1];
                         pos += 2;
                         if channel < S3M_MAX_CHANNELS {
-                            pattern.data[row][channel].effect = convert_s3m_effect(effect_code, effect_param);
+                            pattern.data[row][channel].effect =
+                                convert_s3m_effect(effect_code, effect_param);
                         }
                     }
                 }
@@ -441,7 +494,7 @@ impl FormatHandler for S3mHandler {
                 continue;
             }
             if (default_panning[ch] & 0x80) != 0 {
-                channel_panning[ch] = ((default_panning[ch] & 0x0F) as u8) * 4;
+                channel_panning[ch] = (default_panning[ch] & 0x0F) * 4;
             } else if ch % 2 == 0 {
                 channel_panning[ch] = 0;
             } else {
@@ -461,8 +514,16 @@ impl FormatHandler for S3mHandler {
             samples,
             initial_bpm: initial_tempo as u16,
             initial_speed: if initial_speed == 0 { 6 } else { initial_speed },
-            initial_global_volume: if global_volume == 0 { 128 } else { (global_volume as u16 * 128 / 64).min(128) as u8 },
-            initial_mixing_volume: if master_volume == 0 { 48 } else { master_volume },
+            initial_global_volume: if global_volume == 0 {
+                128
+            } else {
+                (global_volume as u16 * 128 / 64).min(128) as u8
+            },
+            initial_mixing_volume: if master_volume == 0 {
+                48
+            } else {
+                master_volume
+            },
             channel_panning,
             channel_volume: vec![64u8; s3m_count],
             flags: crate::sequencer::ModuleFlags::default(),
@@ -481,7 +542,12 @@ fn u16_at(data: &[u8], offset: usize) -> u16 {
 }
 
 fn u32_at(data: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+    u32::from_le_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ])
 }
 
 fn read_string(data: &[u8], offset: usize, len: usize) -> FormatResult<String> {
@@ -594,7 +660,7 @@ fn pack_pattern(pattern: &Pattern) -> Vec<u8> {
                     Note::Off => packed.push(0xFF),
                     Note::On(key) => {
                         let adjusted = key as i16 - 12;
-                        if adjusted >= 0 && adjusted < 144 {
+                        if (0..144).contains(&adjusted) {
                             let octave = (adjusted / 12) as u8;
                             let semitone = (adjusted % 12) as u8;
                             if octave < 12 {
@@ -658,8 +724,12 @@ pub fn save_module(module: &Module) -> Vec<u8> {
 
     buf.extend_from_slice(b"SCRM");
 
-    buf.push(module.initial_global_volume.min(128) as u8);
-    buf.push(if module.initial_speed == 0 { 6 } else { module.initial_speed });
+    buf.push(module.initial_global_volume.min(128));
+    buf.push(if module.initial_speed == 0 {
+        6
+    } else {
+        module.initial_speed
+    });
     buf.push(module.initial_bpm.min(255) as u8);
     buf.push(48);
     buf.push(0);
@@ -676,8 +746,9 @@ pub fn save_module(module: &Module) -> Vec<u8> {
 
     buf.extend_from_slice(&module.order_list[..order_count as usize]);
 
-    let sample_para_base = buf.len() + (num_samples as usize) * 2 + (num_patterns as usize) * 2 + 32;
-    let first_sample_para = (sample_para_base + 15) / 16;
+    let sample_para_base =
+        buf.len() + (num_samples as usize) * 2 + (num_patterns as usize) * 2 + 32;
+    let first_sample_para = sample_para_base.div_ceil(16);
 
     let mut sample_paras = Vec::new();
     for i in 0..num_samples as usize {
@@ -706,7 +777,7 @@ pub fn save_module(module: &Module) -> Vec<u8> {
     }
     buf.extend_from_slice(&default_panning);
 
-    while buf.len() < first_sample_para as usize * 16 {
+    while buf.len() < first_sample_para * 16 {
         buf.push(0);
     }
 
@@ -744,12 +815,13 @@ pub fn save_module(module: &Module) -> Vec<u8> {
         let c2speed = sample.sample_rate;
         shdr[32..36].copy_from_slice(&c2speed.to_le_bytes());
 
-        let data_para = (buf.len() + S3M_SAMPLE_HEADER_SIZE + 15) / 16;
+        let data_para = (buf.len() + S3M_SAMPLE_HEADER_SIZE).div_ceil(16);
         let data_offset = data_para * 16;
         let data_offset_from_hdr = data_offset - buf.len() - S3M_SAMPLE_HEADER_SIZE;
 
         let hi = ((buf.len() + S3M_SAMPLE_HEADER_SIZE + data_offset_from_hdr) / 65536) as u8;
-        let lo = (((buf.len() + S3M_SAMPLE_HEADER_SIZE + data_offset_from_hdr) / 16) & 0xFFFF) as u16;
+        let lo =
+            (((buf.len() + S3M_SAMPLE_HEADER_SIZE + data_offset_from_hdr) / 16) & 0xFFFF) as u16;
         shdr[13] = hi;
         shdr[14..16].copy_from_slice(&lo.to_le_bytes());
 
@@ -839,16 +911,13 @@ mod tests {
         let pat_para: u16 = 16;
         buf.extend_from_slice(&pat_para.to_le_bytes());
 
-        for _ in 0..32 {
-            buf.push(0x80);
-        }
+        buf.extend(std::iter::repeat_n(0x80, 32));
 
         while buf.len() < 256 {
             buf.push(0);
         }
 
-        let mut packed = Vec::new();
-        packed.push(0);
+        let packed = vec![0u8];
         let mut pat_data = Vec::new();
         write_u16_le(&mut pat_data, packed.len() as u16);
         pat_data.extend_from_slice(&packed);
@@ -912,7 +981,10 @@ mod tests {
 
     #[test]
     fn convert_effect_pattern_break() {
-        assert_eq!(convert_s3m_effect(3, 0x13), Effect::PatternBreak { row: 13 });
+        assert_eq!(
+            convert_s3m_effect(3, 0x13),
+            Effect::PatternBreak { row: 13 }
+        );
     }
 
     #[test]
@@ -925,7 +997,10 @@ mod tests {
 
     #[test]
     fn convert_effect_tone_portamento() {
-        assert_eq!(convert_s3m_effect(7, 10), Effect::TonePortamento { speed: 10 });
+        assert_eq!(
+            convert_s3m_effect(7, 10),
+            Effect::TonePortamento { speed: 10 }
+        );
     }
 
     #[test]
@@ -951,7 +1026,10 @@ mod tests {
 
     #[test]
     fn convert_effect_s_note_cut() {
-        assert_eq!(convert_s3m_effect(19, 0xC3), Effect::NoteCutAfter { ticks: 3 });
+        assert_eq!(
+            convert_s3m_effect(19, 0xC3),
+            Effect::NoteCutAfter { ticks: 3 }
+        );
     }
 
     #[test]
@@ -961,7 +1039,10 @@ mod tests {
 
     #[test]
     fn convert_effect_s_pattern_delay() {
-        assert_eq!(convert_s3m_effect(19, 0xE2), Effect::PatternDelay { ticks: 2 });
+        assert_eq!(
+            convert_s3m_effect(19, 0xE2),
+            Effect::PatternDelay { ticks: 2 }
+        );
     }
 
     #[test]
@@ -1099,7 +1180,7 @@ mod tests {
         assert_eq!(loaded.initial_bpm, 125);
         assert_eq!(loaded.order_list.len(), 1);
         assert_eq!(loaded.patterns.len(), 1);
-        assert!(loaded.samples.len() >= 1);
+        assert!(!loaded.samples.is_empty());
     }
 
     #[test]
@@ -1143,11 +1224,9 @@ mod tests {
         buf.extend_from_slice(&[0u8, 0]);
 
         let _pan_offset = buf.len();
-        for _ in 0..32 {
-            buf.push(0x80);
-        }
+        buf.extend(std::iter::repeat_n(0x80, 32));
 
-        while buf.len() % 16 != 0 {
+        while !buf.len().is_multiple_of(16) {
             buf.push(0);
         }
 
@@ -1167,7 +1246,7 @@ mod tests {
         shdr[76..80].copy_from_slice(b"SCRS");
 
         let shdr_end = buf.len() + S3M_SAMPLE_HEADER_SIZE;
-        let data_para = ((shdr_end + 15) / 16) as u32;
+        let data_para = shdr_end.div_ceil(16) as u32;
 
         let hi = (data_para >> 16) as u8;
         let lo = (data_para & 0xFFFF) as u16;
@@ -1181,15 +1260,14 @@ mod tests {
         }
         buf.extend_from_slice(&sample_data);
 
-        while buf.len() % 16 != 0 {
+        while !buf.len().is_multiple_of(16) {
             buf.push(0);
         }
         let pat_hdr_para = (buf.len() / 16) as u16;
         buf[pattern_para_offset..pattern_para_offset + 2]
             .copy_from_slice(&pat_hdr_para.to_le_bytes());
 
-        let mut packed = Vec::new();
-        packed.push(0);
+        let packed = vec![0u8];
         let mut pat_data = Vec::new();
         write_u16_le(&mut pat_data, packed.len() as u16);
         pat_data.extend_from_slice(&packed);
@@ -1220,14 +1298,7 @@ mod tests {
         let mut buf = build_minimal_s3m();
         let pat_offset = 256;
 
-        let mut packed = Vec::new();
-        packed.push(0x20 | 0);
-        packed.push(0x40);
-        packed.push(1);
-        packed.push(0x80);
-        packed.push(1);
-        packed.push(140);
-        packed.push(0);
+        let packed = vec![0x20u8, 0x40, 1, 0x80, 1, 140, 0];
 
         let mut pat_data = Vec::new();
         write_u16_le(&mut pat_data, packed.len() as u16);
@@ -1260,4 +1331,3 @@ mod tests {
         assert_eq!(handler.file_extension(), "s3m");
     }
 }
-

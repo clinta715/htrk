@@ -114,13 +114,14 @@ When any egui widget has keyboard focus, or when any dialog is open, the `handle
 - `Event::Text` must always be handled **before** the focus gate, because it carries both widget text input AND note-preview keystrokes.
 - When `any_dialog_open` is true, `Event::Text` must call `note_key_preview_only()` (not `handle_text_input()`) to prevent cell editing underneath a visible dialog.
 - Never compute `any_dialog_open` inside `ctx.input()` — compute it outside so all branches agree on the same dialog-state snapshot.
-- `any_dialog_open` MUST include every dialog in the app: `file_browser.show`, `settings_state.open`, `wav_export_state.open`, `sample_export_dialog.is_some()`, `show_about`, `show_shortcuts`, `show_exit_confirm`, `show_phrase_generator`, `slice_dialog_open`. When adding a new dialog, add it to this list.
+- `any_dialog_open` and the Escape handler are derived from the **dialog registry** (`src/app/dialog_registry.rs`): the `dialog_registry!` macro builds the `Dialog` enum + `Dialog::ALL` (Escape-close priority order) + `is_open`/`close` accessors from ONE list. When adding a new dialog, add ONE line to that macro invocation — it is then automatically gated by `any_dialog_open()` and closed by Escape. Do not hand-maintain dialog OR-lists or Escape chains anywhere else.
+- Escape closes the topmost dialog in registry priority order (`close_topmost_dialog`); only toggles `edit_mode` when nothing is open.
 - All pattern-editing keys (Ctrl+Z/Y/C/X/V/A, Alt+ editing combos, Delete, Backspace, Insert, arrows, Tab, Home/End, PageUp/Down) MUST be gated on `!any_dialog_open`.
 - View-switching keys (F2/F3/F4) MUST be gated on `!any_dialog_open`; playback keys (F5-F9) are NOT gated (useful during dialogs).
 - Octave (`[`/`]`), pattern navigation (`-`/`=`/`+`), Alt+Num cursor_skip, Alt+M/S/N channel controls MUST be gated on `!any_dialog_open`.
 - Escape closes the topmost open dialog (in priority order) when `any_dialog_open`; only toggles `edit_mode` when no dialog is open.
 - When adding a new keyboard shortcut that should work regardless of widget focus, add it to a pre-gate `ctx.input()` pass, not the main match block.
-- **Event-strip ordering**: The `ctx.input_mut` that strips Tab/Arrow events from the queue so egui widgets don't react to them MUST run AFTER `handle_plain_key` (which reads those same events to move the cursor), NOT before it. It must also NOT run when a widget has focus (`has_focus == false` is guaranteed by the focus gate's early return). Placing the strip before the handlers breaks arrow navigation and Tab between columns. This was a regression from commit `58265b3` that was fixed by moving the strip to after `handle_plain_key`.
+- **Event-strip ordering**: The single end-of-frame `ctx.input_mut` strip (which removes Menu/Tab-owned plus leftover Tab/Arrow events so egui widgets don't react to them) MUST run AFTER dispatch (which reads those same events to move the cursor), NOT before it. It must also NOT run when a widget has focus (`has_focus == false` is guaranteed by the focus gate's early return). Placing the strip before the handlers breaks arrow navigation and Tab between columns. This was a regression from commit `58265b3` that was fixed by moving the strip to after `handle_plain_key`.
 
 ## 12. Save-on-Exit Confirmation
 
@@ -165,7 +166,7 @@ When the order list references a pattern index that doesn't exist in `module.pat
 - `chord_progression_degrees()` maps progressions to scale degree indices, branching on major/minor scale.
 
 ### Parameter Persistence
-All phrase generator parameters persist via `egui::Id` temp storage (`ui.data()` / `ui.data_mut()`), NOT through `AppConfig`. Changes are lost on app restart.
+All phrase generator parameters live in `PhraseGenState` (`src/ui/phrase_generator_dialog.rs`, stored as `HtrkApp::phrase_gen_state`), NOT through `AppConfig`. Changes are lost on app restart.
 
 ### Adding New Modes
 1. Add variant to `GenMode` and `GenMode::all()`.
@@ -283,6 +284,17 @@ Use the SP_* constants instead of inline `.add_space()`:
 - When adding a new `.size(N)` call, use the corresponding FONT_* constant.
 - When adding a new `section_header`-like label, use `style::section_header()`.
 - When adding a colored label outside standard widgets, check if an existing `theme.*` token fits before creating a new literal.
+
+### Layout-Stability Rule (P5)
+Conditional rendering must never move surrounding panels. Every view that can
+appear/disappear (empty-module placeholders, optional editors, collapsing
+sections, dialog-adjacent strips) MUST either reserve its space when hidden
+or render a same-size fallback — the playback pattern grid (`current_pattern_or_default()`,
+§13) is the precedent: the grid is always drawn, falling back to the editing
+pattern so channel blocks and the footer never jump when playback starts/stops.
+- When adding a new view or an empty-state branch, render the fallback FIRST and verify: toggle the condition while watching neighboring panel edges (no 1-frame jumps).
+- `CollapsingHeader` content that changes height frame-to-frame must carry an explicit `id_salt` (see §25 plugin_param_scroll rule); never rely on auto-generated scroll IDs.
+- New top-level views must be reachable in `smoketest/` (fixture + visibility assert) so layout regressions fail loudly.
 
 ### Per-Frame Allocation Discipline (Pattern Grid)
 `draw_pattern_grid` runs every frame and iterates every visible cell (visible_rows × visible_channels × 5 sub-columns). String allocations inside this loop are the dominant per-frame heap traffic. Rules:
@@ -474,15 +486,15 @@ Standard Windows/macOS-style menu bar activation via the keyboard. Three behavio
 2. **Alt+letter** (Alt + F/E/V/A/H): opens the corresponding menu directly — sets `menu_bar_active = true`, `active_menu = idx`, `force_open_menu = Some(idx)`.
 3. **Menu bar active navigation** (when `menu_bar_active && !popup_open`): Left/Right cycle menus, Down/Enter opens, plain F/E/V/A/H jumps, Escape deactivates.
 
-### State Fields (`HtrkApp`)
-- `menu_bar_active: bool` — menu bar is in keyboard-nav mode.
+### State Fields (`MenuNavState` in `src/actions/input.rs`, stored as `HtrkApp::menu_nav`)
+- `bar_active: bool` — menu bar is in keyboard-nav mode.
 - `active_menu: usize` — index of highlighted menu (0=File, 1=Edit, 2=View, 3=Audio, 4=Help).
-- `force_open_menu: Option<usize>` — one-shot: force-open this menu's popup this frame. Consumed (`.take()`) by `handle_menu_bar` before `draw_menu_bar`.
-- `alt_prev_frame: bool` — previous frame's `modifiers.alt`, for press/release transition detection.
-- `alt_intercepted: bool` — set true when any key was pressed while Alt held (so the release is NOT treated as a tap).
+- `force_open: Option<usize>` — one-shot: force-open this menu's popup this frame. Consumed via `.take_force_open()` by `handle_menu_bar` before `draw_menu_bar`.
+- `alt_prev: bool` — previous frame's `modifiers.alt`, for press/release transition detection.
+- `intercepted: bool` — set true when any key was pressed while Alt held (so the release is NOT treated as a tap).
 
-### Handler Flow (`handle_alt_menu` in `src/actions/keyboard.rs`)
-Called FIRST in `handle_keyboard_input`, BEFORE `handle_early_text` and the focus gate, so Alt+letter works regardless of widget focus. Events consumed here are stripped from the queue.
+### Handler Flow (`route_intents` in `src/actions/input.rs`)
+Single-pass pipeline in `handle_keyboard_input`: ONE `ctx.input()` snapshot into `InputSnapshot`, pure `route_intents` (Text → preview/edit pre-gate per §11, menu keys → `MenuNavState::handle_key` pre-gate per §24, Tab → channel steal pre-gate, focused-widget keys parked, rest → app dispatch), then ONE `ctx.input_mut().retain()` strip. Handlers consume intents and never touch the event queue.
 
 ### Popup Force-Open Mechanism
 `draw_menu_bar` uses `top_menu_button` (not `dev_menu_button`) for the 5 top-level menus. When `force_open_menu == Some(idx)`:
@@ -501,11 +513,11 @@ Alt+F/E/V/A/H take priority for menu opening. The following pattern-editor short
 - All other Alt+letter shortcuts (Alt+M, Alt+S, Alt+N, Alt+L, Alt+C, Alt+P, Alt+X, Alt+B, Alt+Z, Alt+I, Alt+K, Alt+R, Alt+0-9) remain unchanged.
 
 ### Rule for Future Changes
-- When adding a new top-level menu, update `NUM_MENUS` and `menu_index_for_key` in `keyboard.rs`, and add a `top_menu_button` call in `menu_bar.rs` with the correct index.
-- `handle_alt_menu` must run before the focus gate and before `handle_early_text`.
-- The `force_open_menu` field is a one-shot — always consume it via `.take()` in `handle_menu_bar`, never read it directly.
+- When adding a new top-level menu, update `NUM_MENUS` and `menu_index_for_key` in `src/actions/input.rs`, and add a `top_menu_button` call in `menu_bar.rs` with the correct index.
+- Menu routing (`MenuNavState::handle_key` inside `route_intents`) must run before the focus gate; `Event::Text` dispatch stays pre-gate per §11. Never add a second `ctx.input()` read or `events.retain` — extend `route_intents`/`IntentOwner` instead.
+- The `force_open` field is a one-shot — always consume it via `.take_force_open()` in `handle_menu_bar`, never read it directly.
 - Sub-menus inside top-level menus (Track, Column, Open Recent, etc.) still use `dev_menu_button` — only the 5 top-level menus use `top_menu_button`.
-- When `menu_bar_active` is true and no popup is open, navigation keys (arrows, enter, escape, menu letters) are stripped from the event queue so they don't reach the pattern editor.
+- When `bar_active` is true and no popup is open, navigation keys (arrows, enter, escape, menu letters) are owned by the menu (`IntentOwner::Menu`, stripped) so they don't reach the pattern editor.
 
 ## 25. Instrument Editor Session (2026-07-06)
 
@@ -592,3 +604,14 @@ Per-sample gain ramping inside the mixer's render loop. Two modes share one mech
 - `ONSET_RAMP_SAMPLES` (64) is a `const` at the top of `mixer.rs`. Tunable; do not make it a runtime value without considering the per-voice branch in the inner loop.
 - Do **not** repurpose `smoothed_volume`/`smoothed_panning` for anything else — they are load-bearing ramp state read by the mixer every sample.
 - Per-sample **filter cutoff** ramping is deferred (cutoff steps per-tick too, but filter zipper is far less audible than gain zipper). If added later, follow the same `GainRamp`-style struct-of-values pattern to avoid the `voice.sample` borrow conflict.
+
+## 28. Withdrawn Releases Policy (2026-09-25)
+
+**Withdrawn releases/plugins were withdrawn for good reason — never install or re-enable them.**
+
+- When an updater or installer reports a release as **withdrawn, yanked, revoked, or deprecated** (e.g. cua-driver's installer guard: `"<release> was withdrawn and must not be installed"`), treat that as a hard stop.
+- Do **not** route around the guard: no version pinning to force the withdrawn build, no removing the pin to bypass the check, no manual download of the artifact from GitHub Releases or another mirror.
+- A withdrawn version may still be advertised as "latest" by a releases API (a withdrawn tag stays listed on GitHub) — an `update_available: true` flag does NOT override a withdrawal. The withdrawal verdict is authoritative.
+- Stay on the current working version until a **non-withdrawn** successor is released. It is fine to record the withdrawn version in the tool's own dismissal state (`dismissed_versions`) so it stops being offered.
+- Example (2026-09-25): cua-driver 0.28.3 was withdrawn; the environment stayed on 0.23.2 and 0.28.3 was added to `~/.cua-driver/version_check.json` `dismissed_versions`.
+- This applies to every class of external component: MCP servers, agent skills, plugins, toolchain components, and app dependencies. If the maintainer pulled it, do not run it.

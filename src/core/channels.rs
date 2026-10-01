@@ -27,7 +27,11 @@ impl HtrkCore {
     pub fn set_send_level(&mut self, channel: usize, send_index: usize, level: f32) {
         if channel < self.send_levels.len() && send_index < NUM_SEND_BUSES {
             self.send_levels[channel][send_index] = level;
-            self.send_command(AudioCommand::SetSendLevel { channel, send_index, level });
+            self.send_command(AudioCommand::SetSendLevel {
+                channel,
+                send_index,
+                level,
+            });
         }
     }
 

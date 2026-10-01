@@ -1,8 +1,8 @@
-use eframe::egui;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::Module;
 use crate::ui::style::FONT_BODY;
 use crate::ui::TrackerTheme;
+use eframe::egui;
 
 const INLINE_PALETTE_HEIGHT: f32 = 120.0;
 
@@ -13,12 +13,11 @@ pub fn draw_inline_sample_palette(
     playback_state: &AtomicPlaybackState,
     theme: &TrackerTheme,
     reset_scroll: bool,
+    drag_payload: &mut Option<u8>,
 ) {
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Samples").font(egui::FontId::proportional(11.0))
-            );
+            ui.label(egui::RichText::new("Samples").font(egui::FontId::proportional(11.0)));
         });
 
         egui::ScrollArea::vertical()
@@ -27,7 +26,8 @@ pub fn draw_inline_sample_palette(
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if reset_scroll {
-                    let (_, resp) = ui.allocate_exact_size(egui::vec2(1.0, 1.0), egui::Sense::hover());
+                    let (_, resp) =
+                        ui.allocate_exact_size(egui::vec2(1.0, 1.0), egui::Sense::hover());
                     ui.scroll_to_rect(resp.rect, Some(egui::Align::TOP));
                 }
                 let mut any_clicked = false;
@@ -65,7 +65,14 @@ pub fn draw_inline_sample_palette(
                         };
 
                         if has_data {
-                            draw_waveform_thumbnail(&painter, rect, &sample.data, is_selected, &positions, theme);
+                            draw_waveform_thumbnail(
+                                &painter,
+                                rect,
+                                &sample.data,
+                                is_selected,
+                                &positions,
+                                theme,
+                            );
                         }
 
                         if !positions.is_empty() {
@@ -120,7 +127,7 @@ pub fn draw_inline_sample_palette(
 
                         // Drag source for sample-map drop target
                         if resp.drag_started() {
-                            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("sample_drag_payload"), i as u8));
+                            *drag_payload = Some(i as u8);
                         }
 
                         resp
@@ -189,7 +196,7 @@ pub(crate) fn draw_waveform_thumbnail(
                 egui::pos2(x_pos, mid_y - max * half_h),
                 egui::pos2(x_pos, mid_y - min * half_h),
             ],
-            egui::Stroke::new(1.0, color),
+            egui::Stroke::new(1.0_f32, color),
         );
     }
 
@@ -197,8 +204,11 @@ pub(crate) fn draw_waveform_thumbnail(
         let x_pos = thumb_left + (pos as f32 / len as f32) * thumb_width;
         if x_pos >= thumb_left && x_pos <= thumb_left + thumb_width {
             painter.line_segment(
-                [egui::pos2(x_pos, rect.top()), egui::pos2(x_pos, rect.bottom())],
-                egui::Stroke::new(1.0, theme.playback_position_line),
+                [
+                    egui::pos2(x_pos, rect.top()),
+                    egui::pos2(x_pos, rect.bottom()),
+                ],
+                egui::Stroke::new(1.0_f32, theme.playback_position_line),
             );
         }
     }
@@ -211,6 +221,7 @@ pub fn draw_sample_browser_popup(
     open: &mut bool,
     playback_state: &AtomicPlaybackState,
     theme: &TrackerTheme,
+    filter: &mut String,
 ) -> Option<u8> {
     let mut result = None;
     let mut should_close = false;
@@ -222,15 +233,15 @@ pub fn draw_sample_browser_popup(
         .default_size(egui::vec2(280.0, 350.0))
         .min_size(egui::vec2(180.0, 150.0))
         .show(ctx, |ui| {
-            let filter_id = ui.make_persistent_id("sample_browser_filter");
-            let mut filter = ui.data(|d| d.get_temp::<String>(filter_id).unwrap_or_default());
-
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Search:").size(FONT_BODY).color(theme.fg_dim));
-                let resp = ui.add(egui::TextEdit::singleline(&mut filter).desired_width(ui.available_width()));
-                if resp.changed() {
-                    ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
-                }
+                ui.label(
+                    egui::RichText::new("Search:")
+                        .size(FONT_BODY)
+                        .color(theme.fg_dim),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(filter).desired_width(ui.available_width()),
+                );
             });
             ui.add_space(2.0);
 
@@ -301,7 +312,14 @@ pub fn draw_sample_browser_popup(
                                 egui::pos2(rect.right() - 4.0, rect.bottom() - 2.0),
                             );
                             painter.rect_filled(thumb_rect, 1.0, theme.meter_bg);
-                            draw_waveform_thumbnail_browser(&painter, thumb_rect, &sample.data, is_selected, &playback_state.sample_positions_for(i), theme);
+                            draw_waveform_thumbnail_browser(
+                                &painter,
+                                thumb_rect,
+                                &sample.data,
+                                is_selected,
+                                &playback_state.sample_positions_for(i),
+                                theme,
+                            );
                         }
 
                         if resp.clicked() {
@@ -326,7 +344,6 @@ pub fn draw_sample_browser_popup(
                 ui.add_space(2.0);
                 if ui.button("Clear Search").clicked() {
                     filter.clear();
-                    ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
                 }
             }
         });
@@ -391,7 +408,7 @@ fn draw_waveform_thumbnail_browser(
                 egui::pos2(x_pos, mid_y - max * half_h),
                 egui::pos2(x_pos, mid_y - min * half_h),
             ],
-            egui::Stroke::new(1.0, color),
+            egui::Stroke::new(1.0_f32, color),
         );
     }
 
@@ -399,8 +416,11 @@ fn draw_waveform_thumbnail_browser(
         let x_pos = left + (pos as f32 / len as f32) * width;
         if x_pos >= left && x_pos <= left + width {
             painter.line_segment(
-                [egui::pos2(x_pos, rect.top()), egui::pos2(x_pos, rect.bottom())],
-                egui::Stroke::new(1.0, theme.playback_position_line),
+                [
+                    egui::pos2(x_pos, rect.top()),
+                    egui::pos2(x_pos, rect.bottom()),
+                ],
+                egui::Stroke::new(1.0_f32, theme.playback_position_line),
             );
         }
     }

@@ -5,17 +5,27 @@ use crate::sequencer::automation::{AutomationPoint, InterpolationMode};
 use super::HtrkCore;
 
 impl HtrkCore {
-    pub fn handle_automation_interaction(&mut self, interaction: crate::ui::pattern_grid::AutomationInteraction) {
+    pub fn handle_automation_interaction(
+        &mut self,
+        interaction: crate::ui::pattern_grid::AutomationInteraction,
+    ) {
         self.ensure_module_ownership();
         match interaction {
-            crate::ui::pattern_grid::AutomationInteraction::PointCreated { channel, order, row, value } => {
+            crate::ui::pattern_grid::AutomationInteraction::PointCreated {
+                channel,
+                order,
+                row,
+                value,
+            } => {
                 if let Some(ref mut module) = self.module {
                     if let Some(arc_module) = Arc::get_mut(module) {
                         let target = match self.automation_targets.get(channel).copied().flatten() {
                             Some(t) => t,
                             None => return,
                         };
-                        let track = arc_module.automation_tracks.iter_mut()
+                        let track = arc_module
+                            .automation_tracks
+                            .iter_mut()
                             .find(|tr| tr.channel == Some(channel) && tr.target == target);
                         if let Some(track) = track {
                             track.insert_point(AutomationPoint {
@@ -29,14 +39,21 @@ impl HtrkCore {
                 }
                 self.sync_module_to_audio();
             }
-            crate::ui::pattern_grid::AutomationInteraction::PointMoved { channel, order, row, value } => {
+            crate::ui::pattern_grid::AutomationInteraction::PointMoved {
+                channel,
+                order,
+                row,
+                value,
+            } => {
                 if let Some(ref mut module) = self.module {
                     if let Some(arc_module) = Arc::get_mut(module) {
                         let target = match self.automation_targets.get(channel).copied().flatten() {
                             Some(t) => t,
                             None => return,
                         };
-                        let track = arc_module.automation_tracks.iter_mut()
+                        let track = arc_module
+                            .automation_tracks
+                            .iter_mut()
                             .find(|tr| tr.channel == Some(channel) && tr.target == target);
                         if let Some(track) = track {
                             track.insert_point(AutomationPoint {
@@ -57,7 +74,9 @@ impl HtrkCore {
                             Some(t) => t,
                             None => return,
                         };
-                        let track = arc_module.automation_tracks.iter_mut()
+                        let track = arc_module
+                            .automation_tracks
+                            .iter_mut()
                             .find(|tr| tr.channel == Some(channel) && tr.target == target);
                         if let Some(track) = track {
                             for (order, row, value) in points {
@@ -86,15 +105,20 @@ impl HtrkCore {
                     Some(t) => t,
                     None => return,
                 };
-                let track = arc_module.automation_tracks.iter_mut()
+                let track = arc_module
+                    .automation_tracks
+                    .iter_mut()
                     .find(|tr| tr.channel == Some(channel) && tr.target == target);
                 if let Some(track) = track {
-                    let existing = track.points.iter().find(|p| p.order == selected_order && p.row == row_u16);
+                    let existing = track
+                        .points
+                        .iter()
+                        .find(|p| p.order == selected_order && p.row == row_u16);
                     let value = match existing {
                         Some(p) => {
                             let old_byte = (p.value * 255.0).round() as u8;
                             (old_byte & 0xF0) | digit
-                        },
+                        }
                         None => digit,
                     };
                     track.insert_point(AutomationPoint {
@@ -119,7 +143,9 @@ impl HtrkCore {
                     Some(t) => t,
                     None => return,
                 };
-                let track = arc_module.automation_tracks.iter_mut()
+                let track = arc_module
+                    .automation_tracks
+                    .iter_mut()
                     .find(|tr| tr.channel == Some(channel) && tr.target == target);
                 if let Some(track) = track {
                     track.remove_point_at(selected_order, row_u16);

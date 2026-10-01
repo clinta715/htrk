@@ -1,5 +1,5 @@
-use eframe::egui;
 use super::theme::TrackerTheme;
+use eframe::egui;
 
 // ── Typography scale ────────────────────────────────────────────
 // Use these constants throughout the UI instead of magic number `.size()` calls.

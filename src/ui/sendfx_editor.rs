@@ -1,11 +1,11 @@
-use eframe::egui;
-use crate::audio::engine::CommandSender;
 use crate::audio::commands::AudioCommand;
+use crate::audio::engine::CommandSender;
 use crate::audio::plugins::{EditorMode, HostedPluginHandle};
 use crate::sequencer::effect::SendEffectType;
 use crate::sequencer::effect::NUM_SEND_BUSES;
-use crate::ui::sendfx_panel::EframeHwnd;
+use crate::ui::sendfx_panel::{EframeHwnd, SendFxPanel};
 use crate::ui::style::{FONT_CAPTION, SP_SM, SP_XS};
+use eframe::egui;
 
 fn param_label(effect: SendEffectType, index: u32) -> &'static str {
     match effect {
@@ -68,6 +68,7 @@ fn send_bus_label(effect: SendEffectType) -> &'static str {
 pub(crate) fn draw_plugin_parameter_sliders(
     ui: &mut egui::Ui,
     handle: &dyn HostedPluginHandle,
+    filter: &mut String,
     mut on_change: impl FnMut(u32, f32),
 ) {
     let params = handle.parameter_info();
@@ -76,31 +77,25 @@ pub(crate) fn draw_plugin_parameter_sliders(
     }
     ui.collapsing(format!("Parameters ({})", params.len()), |ui| {
         // Quick filter — invaluable for plugins with dozens of params.
-        let filter_id = ui.make_persistent_id("plugin_param_filter");
-        let mut filter = ui.data(|d| d.get_temp::<String>(filter_id).unwrap_or_default());
+        // Typed per-caller state (P3).
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("Filter:")
                     .size(FONT_CAPTION)
                     .color(ui.visuals().weak_text_color()),
             );
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut filter)
+            ui.add(
+                egui::TextEdit::singleline(filter)
                     .hint_text("parameter name…")
                     .desired_width(ui.available_width()),
             );
-            if resp.changed() {
-                ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
-            }
         });
         ui.add_space(SP_XS);
 
         let filter_lower = filter.to_lowercase();
         let visible: Vec<_> = params
             .iter()
-            .filter(|p| {
-                filter_lower.is_empty() || p.name.to_lowercase().contains(&filter_lower)
-            })
+            .filter(|p| filter_lower.is_empty() || p.name.to_lowercase().contains(&filter_lower))
             .collect();
         if visible.is_empty() {
             ui.label(egui::RichText::new(format!("No parameters match \"{}\".", filter)).weak());
@@ -182,10 +177,7 @@ pub(crate) fn draw_plugin_parameter_sliders(
                         if col + 1 < NUM_COLS {
                             let x = row_left + (col as f32 + 1.0) * col_w;
                             ui.painter().line_segment(
-                                [
-                                    egui::pos2(x, row_top),
-                                    egui::pos2(x, row_top + row_h),
-                                ],
+                                [egui::pos2(x, row_top), egui::pos2(x, row_top + row_h)],
                                 div_color,
                             );
                         }
@@ -210,11 +202,7 @@ fn truncate_label(s: &str, max: usize) -> String {
 pub fn draw_sendfx_view(
     ui: &mut egui::Ui,
     command_sender: &mut Option<CommandSender>,
-    send_bus_types: &mut [SendEffectType; NUM_SEND_BUSES],
-    send_bus_params: &mut [[f32; 5]; NUM_SEND_BUSES],
-    send_pre_fader: &mut [bool; NUM_SEND_BUSES],
-    plugin_names: &mut [Option<String>; NUM_SEND_BUSES],
-    plugin_browser_open_for: &mut Option<usize>,
+    panel: &mut SendFxPanel,
     plugin_handles: &mut [Option<Box<dyn HostedPluginHandle>>; NUM_SEND_BUSES],
     eframe_hwnd: Option<EframeHwnd>,
     // Called when the user clicks "Remove" on a plugin. The first arg is
@@ -232,12 +220,16 @@ pub fn draw_sendfx_view(
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_min_width(200.0);
                 let bus_letter = char::from(b'A' + si as u8);
-                let bus_label = format!("Send Bus {} ({})", bus_letter, send_bus_label(send_bus_types[si]));
+                let bus_label = format!(
+                    "Send Bus {} ({})",
+                    bus_letter,
+                    send_bus_label(panel.effect_types[si])
+                );
                 ui.label(egui::RichText::new(&bus_label).strong().size(14.0));
 
                 ui.horizontal(|ui| {
                     ui.label("Type:");
-                    let type_name = send_bus_types[si].name();
+                    let type_name = panel.effect_types[si].name();
                     egui::ComboBox::from_id_salt(("bus_type", si))
                         .selected_text(type_name)
                         .show_ui(ui, |ui| {
@@ -250,9 +242,12 @@ pub fn draw_sendfx_view(
                                 SendEffectType::Phaser,
                             ];
                             for &vt in &variants {
-                                if ui.selectable_label(send_bus_types[si] == vt, vt.name()).clicked() {
-                                    send_bus_types[si] = vt;
-                                    send_bus_params[si] = [0.0; 5]; // Reset params for new effect type
+                                if ui
+                                    .selectable_label(panel.effect_types[si] == vt, vt.name())
+                                    .clicked()
+                                {
+                                    panel.effect_types[si] = vt;
+                                    panel.params[si] = [0.0; 5]; // Reset params for new effect type
                                     if let Some(ref mut sender) = command_sender {
                                         sender.send(AudioCommand::SetSendEffectType {
                                             send_index: si,
@@ -265,18 +260,18 @@ pub fn draw_sendfx_view(
                 });
 
                 // ── Plugin slot ──
-                let plugin_name = plugin_names[si].as_deref().unwrap_or("").to_string();
+                let plugin_name = panel.plugin_names[si].as_deref().unwrap_or("").to_string();
                 if !plugin_name.is_empty() {
                     ui.colored_label(
                         egui::Color32::from_rgb(100, 255, 100),
-                        format!("Plugin: {plugin_name}")
+                        format!("Plugin: {plugin_name}"),
                     );
                 } else {
                     ui.label(egui::RichText::new("(built-in effect)").weak().size(11.0));
                 }
                 ui.horizontal(|ui| {
                     if ui.button("Plugin...").clicked() {
-                        *plugin_browser_open_for = Some(si);
+                        panel.plugin_browser_open_for = Some(si);
                     }
                     if !plugin_name.is_empty() {
                         let has_editor = plugin_handles[si]
@@ -287,9 +282,8 @@ pub fn draw_sendfx_view(
                             .as_ref()
                             .map(|h| h.is_editor_open())
                             .unwrap_or(false);
-                        let current_mode = plugin_handles[si]
-                            .as_ref()
-                            .and_then(|h| h.editor_mode());
+                        let current_mode =
+                            plugin_handles[si].as_ref().and_then(|h| h.editor_mode());
 
                         if has_editor {
                             if is_open {
@@ -303,11 +297,7 @@ pub fn draw_sendfx_view(
                                     Some(EditorMode::Floating) => "Floating",
                                     None => "",
                                 };
-                                ui.label(
-                                    egui::RichText::new(mode_label)
-                                        .weak()
-                                        .size(10.0),
-                                );
+                                ui.label(egui::RichText::new(mode_label).weak().size(10.0));
                             } else {
                                 // "Edit..." opens the plugin's own floating
                                 // window. The in-app parameter sliders below
@@ -331,10 +321,7 @@ pub fn draw_sendfx_view(
                                 .as_ref()
                                 .and_then(|h| h.last_editor_error())
                             {
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(255, 100, 100),
-                                    err,
-                                );
+                                ui.colored_label(egui::Color32::from_rgb(255, 100, 100), err);
                             }
                         }
 
@@ -355,7 +342,7 @@ pub fn draw_sendfx_view(
                                 });
                             }
                             plugin_handles[si] = None;
-                            plugin_names[si] = None;
+                            panel.plugin_names[si] = None;
                         }
                     }
                 });
@@ -370,6 +357,7 @@ pub fn draw_sendfx_view(
                     draw_plugin_parameter_sliders(
                         ui,
                         handle.as_ref(),
+                        &mut panel.param_filter,
                         |param_id, value| {
                             if let Some(ref mut sender) = command_sender {
                                 sender.send(AudioCommand::SetSendPluginParam {
@@ -384,36 +372,44 @@ pub fn draw_sendfx_view(
 
                 ui.separator();
 
-                let params = &mut send_bus_params[si];
+                let params = &mut panel.params[si];
 
                 let mut rl = params[0];
                 ui.add(egui::Slider::new(&mut rl, 0.0..=1.0).text("Return"));
                 if (rl - params[0]).abs() > 0.005 {
                     params[0] = rl;
                     if let Some(ref mut sender) = command_sender {
-                        sender.send(AudioCommand::SetSendReturnLevel { send_index: si, level: rl });
+                        sender.send(AudioCommand::SetSendReturnLevel {
+                            send_index: si,
+                            level: rl,
+                        });
                     }
                 }
 
-                let mut pf = send_pre_fader[si];
+                let mut pf = panel.pre_fader[si];
                 ui.checkbox(&mut pf, "Pre-Fader");
-                if pf != send_pre_fader[si] {
-                    send_pre_fader[si] = pf;
+                if pf != panel.pre_fader[si] {
+                    panel.pre_fader[si] = pf;
                     if let Some(ref mut sender) = command_sender {
-                        sender.send(AudioCommand::SetSendPreFader { send_index: si, pre_fader: pf });
+                        sender.send(AudioCommand::SetSendPreFader {
+                            send_index: si,
+                            pre_fader: pf,
+                        });
                     }
                 }
 
-                if send_bus_types[si] == SendEffectType::None {
+                if panel.effect_types[si] == SendEffectType::None {
                     ui.label("(no effect)");
                 } else {
                     for pi in 0u32..4 {
-                        let label = param_label(send_bus_types[si], pi);
-                        if label.is_empty() { continue; }
+                        let label = param_label(panel.effect_types[si], pi);
+                        if label.is_empty() {
+                            continue;
+                        }
 
                         let param_value = &mut params[1 + pi as usize];
 
-                        if send_bus_types[si] == SendEffectType::Delay && pi == 3 {
+                        if panel.effect_types[si] == SendEffectType::Delay && pi == 3 {
                             // Tempo Sync: checkbox
                             let mut ts = *param_value > 0.5;
                             ui.checkbox(&mut ts, label);
@@ -422,11 +418,13 @@ pub fn draw_sendfx_view(
                                 *param_value = new_val;
                                 if let Some(ref mut sender) = command_sender {
                                     sender.send(AudioCommand::SetSendFxParam {
-                                        send_index: si, param: pi, value: new_val,
+                                        send_index: si,
+                                        param: pi,
+                                        value: new_val,
                                     });
                                 }
                             }
-                        } else if send_bus_types[si] == SendEffectType::Delay && pi == 0 {
+                        } else if panel.effect_types[si] == SendEffectType::Delay && pi == 0 {
                             // Delay beats: wider range
                             let mut val = *param_value;
                             ui.add(egui::Slider::new(&mut val, 0.0625..=8.0).text(label));
@@ -434,11 +432,13 @@ pub fn draw_sendfx_view(
                                 *param_value = val;
                                 if let Some(ref mut sender) = command_sender {
                                     sender.send(AudioCommand::SetSendFxParam {
-                                        send_index: si, param: pi, value: val,
+                                        send_index: si,
+                                        param: pi,
+                                        value: val,
                                     });
                                 }
                             }
-                        } else if send_bus_types[si] == SendEffectType::Phaser && pi == 3 {
+                        } else if panel.effect_types[si] == SendEffectType::Phaser && pi == 3 {
                             // Stages: integer range
                             let mut val = *param_value;
                             ui.add(egui::Slider::new(&mut val, 2.0..=12.0).text(label));
@@ -446,7 +446,9 @@ pub fn draw_sendfx_view(
                                 *param_value = val;
                                 if let Some(ref mut sender) = command_sender {
                                     sender.send(AudioCommand::SetSendFxParam {
-                                        send_index: si, param: pi, value: val,
+                                        send_index: si,
+                                        param: pi,
+                                        value: val,
                                     });
                                 }
                             }
@@ -458,7 +460,9 @@ pub fn draw_sendfx_view(
                                 *param_value = val;
                                 if let Some(ref mut sender) = command_sender {
                                     sender.send(AudioCommand::SetSendFxParam {
-                                        send_index: si, param: pi, value: val,
+                                        send_index: si,
+                                        param: pi,
+                                        value: val,
                                     });
                                 }
                             }

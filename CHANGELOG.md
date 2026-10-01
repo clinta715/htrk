@@ -4,6 +4,33 @@ All notable changes to htrk will be documented in this file.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-01
+
+Structural UI overhaul (UI_BUG_AUDIT P1-P6) plus audio-engine hang fixes.
+All input handling, dialog gating, and panel state are now typed, tested,
+and documented in AGENTS.md (sections 11, 18, 24).
+
+### Fixed
+
+- **Arpeggio froze the audio engine (100% CPU, forever).** `get_arp_tab()` (`src/sequencer/period.rs`) built its 256-entry table with a `u8` counter and `wrapping_add(1)`, which wraps 255 -> 0 and never reaches 256 — hanging inside `OnceLock::get_or_init` on the first arpeggio tick. Any module using arpeggio (including the `golden_render` XM cases, which could never complete) froze playback. Rewrote with a `usize` range loop and added a regression test asserting all 256 cycling entries.
+- **Negative fine-tune mis-indexed period tables.** `get_note_period` cast the `(fine_tune >> 3)` offset (negative for fine-tune < 0) directly `as usize`, wrapping to `usize::MAX` and panicking on `+ 16` in debug builds. Reworked in `i32` (matching `relocate_ton`) with a bounds check returning the 0-period sentinel out of range. Covered by a unit test.
+- **Smoketest fixture leaked state between tests.** `empty_project` reset only the module and view, so `edit_mode=false`, an armed `menu_nav`, and open dialogs leaked into later tests sharing one app instance (30/31/32 failed in full-suite runs, passed isolated). Fixture-applied new songs now reset `edit_mode`, `menu_nav`, and drain open dialogs (`src/app/preamble.rs`).
+- **Smoketests 01/04 used key names the runner rejects** (`alt`, `control_left`, `alt_left` — egui models modifiers, not modifier keys). 04 now injects via modifiers-only raw events; 01's bare-Alt-tap section is a guarded skip with the reason logged (Alt-tap needs frame-level modifiers script injection cannot set).
+
+### Changed
+
+- **P1: single-pass input routing** (`src/actions/input.rs`). `handle_keyboard_input` snapshots egui input ONCE, routes every event to a typed `IntentOwner` via pure `route_intents` (Text, Menu, Tab-steal, Widget, App), dispatches from intents, and strips consumed keys in ONE `retain`. Deleted all 4 event-queue surgeries. Alt-menu state folded into `MenuNavState`. Per-event (not frame-level) modifiers drive dispatch. 11 routing unit tests; `smoketest/31_input_routing.luau` acceptance suite.
+- **P2: dialog registry completed.** Found 3 open windows missing from the registry (automation generator, envelope generator, sample selector — edits leaked underneath them); all 15 dialogs registered with open/close roundtrip + priority unit tests.
+- **P3: typed UI state (92 temp-storage sites to zero).** Generator params, browser/filter strings, drag payloads, and waveform interaction state moved onto owning panel structs (`AutomationGenParams`, `EnvelopeGenParams`, `PhraseGenState`, per-caller filter fields, `SampleEditor` drag fields). `draw_sendfx_view` takes `&mut SendFxPanel` and `draw_waveform` takes `&mut SampleEditor` (both were over the 10-arg clippy threshold).
+- **P4 verified clean** (no bare `.unwrap()` in UI; RwLock sites poison-tolerant). **P5 added the layout-stability rule** to AGENTS.md section 18. **P6 added `smoketest/32_dialog_and_focus.luau`** (dialog key gating, widget text delivery, calibrated focus-gate test). Full suite: 16/16 smoke, 434 lib tests.
+- **`it_nna` golden case now exercises NNA.** Its retrigger keys weren't sample-mapped (sample 0 returns before `handle_nna`), hashing identically to `legacy_htk`. Mapped keys 62/64; recorded all four pending golden hashes (`xm_linear`, `xm_amiga`, `it_nna`, `s3m_extrafine`).
+
+### Notes
+
+- Episode: `smoketest/01` bare-Alt and focused-Escape delivery are runner-side gaps (documented in-test); the focus gate itself is proven by F2/F3/F5 parking tests plus unit tests.
+- Silent-note retriggers still skip `handle_nna` (sample 0 early-return); whether real trackers apply NNA there needs reference-file verification before any engine change.
+
+
 ## [0.27.0] - 2026-07-09
 
 ### Added

@@ -1,9 +1,9 @@
-use std::sync::Arc;
-use eframe::egui;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::module::Module;
-use crate::ui::theme::TrackerTheme;
 use crate::ui::sample_editor::SampleEditEvent;
+use crate::ui::theme::TrackerTheme;
+use eframe::egui;
+use std::sync::Arc;
 
 pub struct SampleEditor {
     pub selection: Option<(usize, usize)>,
@@ -17,6 +17,10 @@ pub struct SampleEditor {
     pub scroll_offset: f32,
     pub last_sample_index: usize,
     pub selected_samples: Vec<usize>,
+    /// Loop-marker drag in progress (typed UI state, P3).
+    pub dragging_marker: Option<usize>,
+    /// Region-selection drag in progress (typed UI state, P3).
+    pub selecting: bool,
 }
 
 impl Default for SampleEditor {
@@ -33,6 +37,8 @@ impl Default for SampleEditor {
             scroll_offset: 0.0,
             last_sample_index: 0,
             selected_samples: Vec::new(),
+            dragging_marker: None,
+            selecting: false,
         }
     }
 }

@@ -5,8 +5,8 @@ use std::time::Duration;
 
 /// Helper: send a JSON-RPC request line and read the response line.
 fn jsonrpc(port: u16, request: &str) -> String {
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{port}"))
-        .expect("connect to MCP server");
+    let mut stream =
+        TcpStream::connect(format!("127.0.0.1:{port}")).expect("connect to MCP server");
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
     writeln!(stream, "{request}").expect("write request");
     let mut reader = BufReader::new(stream);
@@ -55,8 +55,14 @@ fn test_mcp_resources_list() {
     assert!(server.join_handle.is_some());
     let port = server.port;
 
-    let resp = jsonrpc(port, r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#);
-    assert!(resp.contains(r#""resources""#), "resources/list response: {resp}");
+    let resp = jsonrpc(
+        port,
+        r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#,
+    );
+    assert!(
+        resp.contains(r#""resources""#),
+        "resources/list response: {resp}"
+    );
     assert!(resp.contains("htrk://state"), "expected htrk://state");
 
     server.stop();
@@ -99,7 +105,10 @@ fn test_mcp_unknown_method() {
     let port = server.port;
 
     let resp = jsonrpc(port, r#"{"jsonrpc":"2.0","id":1,"method":"bogus"}"#);
-    assert!(resp.contains("-32601"), "expected Method not found error: {resp}");
+    assert!(
+        resp.contains("-32601"),
+        "expected Method not found error: {resp}"
+    );
 
     server.stop();
 }

@@ -136,7 +136,9 @@ pub fn generate_values(
             let mut points = Vec::with_capacity(num_pts);
             let mut cur = offset;
             let half_depth = depth / 2.0;
-            let mut seed: u32 = (length as u32) ^ (cycles as u32).wrapping_mul(12345) ^ ((depth * 100.0) as u32) * 6789;
+            let mut seed: u32 = (length as u32)
+                ^ (cycles as u32).wrapping_mul(12345)
+                ^ (((depth * 100.0) as u32) * 6789);
             for i in 0..num_pts {
                 let t = ((i as f32 / (num_pts - 1) as f32) * length_f).round() as u16;
                 points.push((t, clamp_val(cur)));

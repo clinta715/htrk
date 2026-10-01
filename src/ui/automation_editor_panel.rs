@@ -1,20 +1,13 @@
-use eframe::egui;
 use crate::audio::plugins::ParamInfo;
 use crate::sequencer::module::Module;
 use crate::ui::automation_editor::AutomationEditorResponse;
 use crate::ui::automation_editor::AutomationEditorState;
 use crate::ui::theme::TrackerTheme;
+use eframe::egui;
 
+#[derive(Default)]
 pub struct AutomationEditor {
     pub state: AutomationEditorState,
-}
-
-impl Default for AutomationEditor {
-    fn default() -> Self {
-        AutomationEditor {
-            state: AutomationEditorState::default(),
-        }
-    }
 }
 
 impl AutomationEditor {

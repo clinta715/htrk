@@ -30,8 +30,12 @@ impl StateVariableFilter {
         self.band += f * self.high;
         self.low += f * self.band;
         // Flush denormals to prevent CPU slowdown on silent decay
-        if self.low.abs() < 1e-15 { self.low = 0.0; }
-        if self.band.abs() < 1e-15 { self.band = 0.0; }
+        if self.low.abs() < 1e-15 {
+            self.low = 0.0;
+        }
+        if self.band.abs() < 1e-15 {
+            self.band = 0.0;
+        }
         match self.filter_type {
             FilterType::LowPass => self.low,
             FilterType::HighPass => self.high,

@@ -15,18 +15,10 @@ pub struct ChannelHeadersResponse {
     pub automation_target_changed: Option<(usize, Option<AutomationTarget>)>,
 }
 
+#[derive(Default)]
 pub struct ChannelRenameState {
     pub editing_channel: Option<usize>,
     pub edit_buffer: String,
-}
-
-impl Default for ChannelRenameState {
-    fn default() -> Self {
-        ChannelRenameState {
-            editing_channel: None,
-            edit_buffer: String::new(),
-        }
-    }
 }
 
 pub fn draw_channel_headers(
@@ -63,20 +55,20 @@ pub fn draw_channel_headers(
     let button_h = metrics.font_size * 1.2;
     let btn_area_h = button_h + 4.0;
     let send_area_h = (NUM_SEND_BUSES.min(4) as f32) * (send_bar_h + send_bar_gap);
-    let header_height = btn_area_h + vu_bar_height + pan_bar_height + send_area_h + auto_row_h + 6.0;
+    let header_height =
+        btn_area_h + vu_bar_height + pan_bar_height + send_area_h + auto_row_h + 6.0;
 
     let total_width = metrics.row_num_width + visible_channels as f32 * metrics.channel_width;
-    let (full_rect, _) = ui.allocate_exact_size(
-        egui::vec2(total_width, header_height),
-        egui::Sense::hover(),
-    );
+    let (full_rect, _) =
+        ui.allocate_exact_size(egui::vec2(total_width, header_height), egui::Sense::hover());
     let painter = ui.painter_at(full_rect);
 
     let last_ch = (scroll_channel + visible_channels).min(num_channels);
 
     for ch in scroll_channel..last_ch {
         let display_ch = ch - scroll_channel;
-        let ch_x = full_rect.left() + metrics.row_num_width + display_ch as f32 * metrics.channel_width;
+        let ch_x =
+            full_rect.left() + metrics.row_num_width + display_ch as f32 * metrics.channel_width;
         let ch_w = metrics.channel_width - 2.0;
         let ch_rect = egui::Rect::from_min_size(
             egui::pos2(ch_x, full_rect.top()),
@@ -94,7 +86,11 @@ pub fn draw_channel_headers(
                     egui::vec2(ch_rect.width(), 2.0),
                 );
                 let flash_alpha = (flash_val * 220.0) as u8;
-                painter.rect_filled(flash_rect, 0.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, flash_alpha));
+                painter.rect_filled(
+                    flash_rect,
+                    0.0,
+                    egui::Color32::from_rgba_premultiplied(255, 255, 255, flash_alpha),
+                );
             }
         } else {
             let flash_id = ui.id().with("note_flash").with(ch);
@@ -107,7 +103,11 @@ pub fn draw_channel_headers(
         let mut y = ch_rect.top() + 2.0;
 
         let btn_font = egui::FontId::monospace(metrics.font_size * 0.8);
-        let mute_color = if muted { theme.channel_muted } else { theme.channel_header_fg };
+        let mute_color = if muted {
+            theme.channel_muted
+        } else {
+            theme.channel_header_fg
+        };
         let mute_label = if muted { "M" } else { "m" };
         let mute_rect = egui::Rect::from_min_size(
             egui::pos2(ch_x + 2.0, y),
@@ -133,7 +133,11 @@ pub fn draw_channel_headers(
             resp.toggle_mute = Some(ch);
         }
 
-        let solo_color = if solo { theme.channel_solo } else { theme.channel_header_fg };
+        let solo_color = if solo {
+            theme.channel_solo
+        } else {
+            theme.channel_header_fg
+        };
         let solo_label = if solo { "S" } else { "s" };
         let solo_rect = egui::Rect::from_min_size(
             egui::pos2(mute_rect.right() + 2.0, y),
@@ -160,15 +164,16 @@ pub fn draw_channel_headers(
         }
 
         let is_editing = rename_state.editing_channel == Some(ch);
-        let ch_name = channel_names.get(ch).cloned().unwrap_or_else(|| format!("Ch{}", ch + 1));
+        let ch_name = channel_names
+            .get(ch)
+            .cloned()
+            .unwrap_or_else(|| format!("Ch{}", ch + 1));
 
         if is_editing {
             let name_x = solo_rect.right() + 2.0;
             let name_w = (ch_rect.right() - name_x).max(10.0);
-            let name_rect = egui::Rect::from_min_size(
-                egui::pos2(name_x, y),
-                egui::vec2(name_w, button_h),
-            );
+            let name_rect =
+                egui::Rect::from_min_size(egui::pos2(name_x, y), egui::vec2(name_w, button_h));
             let edit_id = ui.id().with("rename").with(ch);
             let mut edit_buf = rename_state.edit_buffer.clone();
             let text_edit = egui::TextEdit::singleline(&mut edit_buf)
@@ -192,10 +197,8 @@ pub fn draw_channel_headers(
         } else {
             let name_x = solo_rect.right() + 2.0;
             let name_w = (ch_rect.right() - name_x).max(10.0);
-            let name_rect = egui::Rect::from_min_size(
-                egui::pos2(name_x, y),
-                egui::vec2(name_w, button_h),
-            );
+            let name_rect =
+                egui::Rect::from_min_size(egui::pos2(name_x, y), egui::vec2(name_w, button_h));
             painter.text(
                 egui::pos2(name_rect.left() + 1.0, name_rect.center().y),
                 egui::Align2::LEFT_CENTER,
@@ -215,10 +218,8 @@ pub fn draw_channel_headers(
 
         let vu_x = ch_x + 2.0;
         let vu_w = ch_w - 4.0;
-        let vu_rect = egui::Rect::from_min_size(
-            egui::pos2(vu_x, y),
-            egui::vec2(vu_w, vu_bar_height),
-        );
+        let vu_rect =
+            egui::Rect::from_min_size(egui::pos2(vu_x, y), egui::vec2(vu_w, vu_bar_height));
         painter.rect_filled(vu_rect, 0.0, theme.meter_bg);
         let peak = playback_state.channel_peak(ch);
         let fill_w = (peak.clamp(0.0, 1.0) * vu_w).min(vu_w);
@@ -239,16 +240,17 @@ pub fn draw_channel_headers(
         y += vu_bar_height;
 
         let pan_val = channel_panning.get(ch).copied().unwrap_or(32);
-        let pan_rect = egui::Rect::from_min_size(
-            egui::pos2(vu_x, y),
-            egui::vec2(vu_w, pan_bar_height),
-        );
+        let pan_rect =
+            egui::Rect::from_min_size(egui::pos2(vu_x, y), egui::vec2(vu_w, pan_bar_height));
         painter.rect_filled(pan_rect, 0.0, theme.meter_bg);
         let center_x = pan_rect.center().x;
         let dot_x = pan_rect.left() + (pan_val as f32 / 64.0) * pan_rect.width();
         painter.line_segment(
-            [egui::pos2(center_x, pan_rect.top()), egui::pos2(center_x, pan_rect.bottom())],
-            egui::Stroke::new(0.5, theme.grid_line),
+            [
+                egui::pos2(center_x, pan_rect.top()),
+                egui::pos2(center_x, pan_rect.bottom()),
+            ],
+            egui::Stroke::new(0.5_f32, theme.grid_line),
         );
         let dot_r = 2.0;
         let dot_color = if pan_val < 20 {
@@ -263,10 +265,8 @@ pub fn draw_channel_headers(
 
         let bar_colors = theme.send_bus_colors;
         for si in 0..NUM_SEND_BUSES.min(4) {
-            let bar_rect = egui::Rect::from_min_size(
-                egui::pos2(vu_x, y),
-                egui::vec2(vu_w, send_bar_h),
-            );
+            let bar_rect =
+                egui::Rect::from_min_size(egui::pos2(vu_x, y), egui::vec2(vu_w, send_bar_h));
             painter.rect_filled(bar_rect, 0.0, theme.meter_bg);
 
             if let Some(lvl) = send_levels.get(ch).map(|sl| sl[si]) {
@@ -299,17 +299,15 @@ pub fn draw_channel_headers(
             Some(t) => t.label(),
             None => "fx",
         };
-        let auto_rect = egui::Rect::from_min_size(
-            egui::pos2(vu_x, y),
-            egui::vec2(vu_w, auto_row_h),
-        );
+        let auto_rect =
+            egui::Rect::from_min_size(egui::pos2(vu_x, y), egui::vec2(vu_w, auto_row_h));
         let auto_id = ui.id().with("auto").with(ch);
         let auto_resp = ui.interact(auto_rect, auto_id, egui::Sense::click());
         let auto_fill = if current_auto.is_some() {
             let ai = theme.fg_instrument;
             egui::Color32::from_rgba_premultiplied(ai.r(), ai.g(), ai.b(), 30)
         } else if auto_resp.hovered() {
-            theme.status_bg
+            theme.bg_highlight
         } else {
             theme.status_bg
         };

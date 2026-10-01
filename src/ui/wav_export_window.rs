@@ -173,10 +173,16 @@ impl WavExportState {
         }
     }
 
-    pub fn open(&mut self, default_name: &str, module_loaded: bool, total_samples: Option<u64>, sample_rate: u32) {
+    pub fn open(
+        &mut self,
+        default_name: &str,
+        module_loaded: bool,
+        total_samples: Option<u64>,
+        sample_rate: u32,
+    ) {
         self.open = true;
         self.module_loaded = module_loaded;
-        
+
         let filename = format!("{}.{}", default_name, self.settings.format.extension());
         self.settings.file_path = Some(PathBuf::from(filename));
         self.settings.sample_rate = sample_rate;
@@ -247,10 +253,7 @@ impl WavExportState {
     }
 }
 
-pub fn draw_wav_export(
-    ctx: &egui::Context,
-    state: &mut WavExportState,
-) -> bool {
+pub fn draw_wav_export(ctx: &egui::Context, state: &mut WavExportState) -> bool {
     if !state.open {
         return false;
     }
@@ -280,7 +283,11 @@ pub fn draw_wav_export(
                 .show(ui, |ui| {
                     ui.label("File:");
                     if let Some(ref path) = state.settings.file_path {
-                        ui.label(path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default());
+                        ui.label(
+                            path.file_name()
+                                .map(|s| s.to_string_lossy().to_string())
+                                .unwrap_or_default(),
+                        );
                     } else {
                         ui.label("(no file selected)");
                     }
@@ -290,7 +297,16 @@ pub fn draw_wav_export(
                     if ui.button("Browse...").clicked() {
                         let mut dialog = rfd::FileDialog::new()
                             .set_title("Save Audio File")
-                            .set_file_name(state.settings.file_path.as_ref().and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string())).unwrap_or_default())
+                            .set_file_name(
+                                state
+                                    .settings
+                                    .file_path
+                                    .as_ref()
+                                    .and_then(|p| {
+                                        p.file_name().map(|s| s.to_string_lossy().to_string())
+                                    })
+                                    .unwrap_or_default(),
+                            )
                             .add_filter("WAV Files", &["wav"])
                             .add_filter("AIFF Files", &["aiff", "aif"])
                             .add_filter("FLAC Files", &["flac"]);
@@ -318,9 +334,17 @@ pub fn draw_wav_export(
                         .selected_text(format!("{} Hz", state.settings.sample_rate))
                         .show_ui(ui, |ui| {
                             for rate in &state.sample_rate_options {
-                                ui.selectable_value(&mut state.settings.sample_rate, *rate, format!("{} Hz", rate));
+                                ui.selectable_value(
+                                    &mut state.settings.sample_rate,
+                                    *rate,
+                                    format!("{} Hz", rate),
+                                );
                             }
-                            ui.selectable_value(&mut state.settings.sample_rate, 0, "Use device rate");
+                            ui.selectable_value(
+                                &mut state.settings.sample_rate,
+                                0,
+                                "Use device rate",
+                            );
                         });
                     ui.end_row();
 
@@ -329,7 +353,11 @@ pub fn draw_wav_export(
                         .selected_text(state.settings.bit_depth.label())
                         .show_ui(ui, |ui| {
                             for depth in BitDepth::all() {
-                                ui.selectable_value(&mut state.settings.bit_depth, depth, depth.label());
+                                ui.selectable_value(
+                                    &mut state.settings.bit_depth,
+                                    depth,
+                                    depth.label(),
+                                );
                             }
                         });
                     ui.end_row();
@@ -338,8 +366,16 @@ pub fn draw_wav_export(
                     egui::ComboBox::new("channels", "")
                         .selected_text(state.settings.channel_mode.label())
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut state.settings.channel_mode, ChannelMode::Mono, "Mono");
-                            ui.selectable_value(&mut state.settings.channel_mode, ChannelMode::Stereo, "Stereo");
+                            ui.selectable_value(
+                                &mut state.settings.channel_mode,
+                                ChannelMode::Mono,
+                                "Mono",
+                            );
+                            ui.selectable_value(
+                                &mut state.settings.channel_mode,
+                                ChannelMode::Stereo,
+                                "Stereo",
+                            );
                         });
                     ui.end_row();
 
@@ -367,8 +403,8 @@ pub fn draw_wav_export(
                 ui.separator();
                 ui.label(&state.export_status);
                 if state.is_exporting {
-                    let progress_bar = egui::ProgressBar::new(state.export_progress)
-                        .show_percentage();
+                    let progress_bar =
+                        egui::ProgressBar::new(state.export_progress).show_percentage();
                     ui.add(progress_bar);
                 }
                 if let Some(ref error) = state.export_error {
@@ -384,7 +420,9 @@ pub fn draw_wav_export(
 
                 if state.is_exporting {
                     if ui.button("Cancel Export").clicked() {
-                        state.export_cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+                        state
+                            .export_cancelled
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                     if ui.button("Close").clicked() {
                         state.open = false;
@@ -395,7 +433,10 @@ pub fn draw_wav_export(
                     }
 
                     if ui
-                        .add_enabled(state.settings.file_path.is_some() && !state.is_exporting, egui::Button::new("Export"))
+                        .add_enabled(
+                            state.settings.file_path.is_some() && !state.is_exporting,
+                            egui::Button::new("Export"),
+                        )
                         .clicked()
                     {
                         exported = true;

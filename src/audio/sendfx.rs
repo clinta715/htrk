@@ -1,7 +1,10 @@
 use crate::audio::filter::StateVariableFilter;
 use crate::sequencer::effect::SendEffectType;
 
-pub fn create_send_effect(effect_type: SendEffectType, sample_rate: f32) -> Option<Box<dyn SendEffect>> {
+pub fn create_send_effect(
+    effect_type: SendEffectType,
+    sample_rate: f32,
+) -> Option<Box<dyn SendEffect>> {
     match effect_type {
         SendEffectType::None => None,
         SendEffectType::Delay => Some(Box::new(DelayEffect::new(sample_rate))),
@@ -57,7 +60,8 @@ impl DelayEffect {
 
     fn update_delay_samples(&mut self) {
         if self.tempo_sync && self.bpm > 0 {
-            self.delay_samples = (60.0 / self.bpm as f64) * self.delay_beats as f64 * self.sample_rate as f64;
+            self.delay_samples =
+                (60.0 / self.bpm as f64) * self.delay_beats as f64 * self.sample_rate as f64;
         }
     }
 }
@@ -86,17 +90,33 @@ impl SendEffect for DelayEffect {
             0 => self.delay_beats,
             1 => self.feedback,
             2 => self.damping,
-            3 => if self.tempo_sync { 1.0 } else { 0.0 },
+            3 => {
+                if self.tempo_sync {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             _ => 0.0,
         }
     }
 
     fn set_param(&mut self, index: u32, value: f32) {
         match index {
-            0 => { self.delay_beats = value.clamp(0.0625, 8.0); self.update_delay_samples(); }
-            1 => { self.feedback = value.clamp(0.0, 1.0); }
-            2 => { self.damping = value.clamp(0.0, 1.0); }
-            3 => { self.tempo_sync = value > 0.5; self.update_delay_samples(); }
+            0 => {
+                self.delay_beats = value.clamp(0.0625, 8.0);
+                self.update_delay_samples();
+            }
+            1 => {
+                self.feedback = value.clamp(0.0, 1.0);
+            }
+            2 => {
+                self.damping = value.clamp(0.0, 1.0);
+            }
+            3 => {
+                self.tempo_sync = value > 0.5;
+                self.update_delay_samples();
+            }
             _ => {}
         }
     }
@@ -124,8 +144,12 @@ impl SendEffect for DelayEffect {
             let wet_l = self.buffer_left[read_pos];
             let wet_r = self.buffer_right[read_pos];
 
-            let filtered_l = self.svf_left.process(wet_l, damp_cutoff, 0.707, sample_rate);
-            let filtered_r = self.svf_right.process(wet_r, damp_cutoff, 0.707, sample_rate);
+            let filtered_l = self
+                .svf_left
+                .process(wet_l, damp_cutoff, 0.707, sample_rate);
+            let filtered_r = self
+                .svf_right
+                .process(wet_r, damp_cutoff, 0.707, sample_rate);
 
             self.buffer_left[self.write_pos] = left[i] + filtered_l * feedback;
             self.buffer_right[self.write_pos] = right[i] + filtered_r * feedback;
@@ -162,8 +186,18 @@ impl ReverbEffect {
     pub fn new(sample_rate: f32) -> Self {
         let sr = sample_rate.max(1.0);
         ReverbEffect {
-            comb_buf_l: [vec![0.0; 8192], vec![0.0; 8192], vec![0.0; 8192], vec![0.0; 8192]],
-            comb_buf_r: [vec![0.0; 8192], vec![0.0; 8192], vec![0.0; 8192], vec![0.0; 8192]],
+            comb_buf_l: [
+                vec![0.0; 8192],
+                vec![0.0; 8192],
+                vec![0.0; 8192],
+                vec![0.0; 8192],
+            ],
+            comb_buf_r: [
+                vec![0.0; 8192],
+                vec![0.0; 8192],
+                vec![0.0; 8192],
+                vec![0.0; 8192],
+            ],
             comb_pos_l: [0; 4],
             comb_pos_r: [0; 4],
             comb_len: [1323, 1632, 1808, 2205],
@@ -182,7 +216,15 @@ impl ReverbEffect {
         }
     }
 
-    fn comb_process(buf: &mut [f32], pos: &mut usize, raw_len: usize, input: f32, feedback: f32, damp: f32, prev: &mut f32) -> f32 {
+    fn comb_process(
+        buf: &mut [f32],
+        pos: &mut usize,
+        raw_len: usize,
+        input: f32,
+        feedback: f32,
+        damp: f32,
+        prev: &mut f32,
+    ) -> f32 {
         let len = raw_len.min(buf.len()).max(1);
         let read = buf[*pos];
         let filtered = read * (1.0 - damp) + *prev * damp;
@@ -192,7 +234,13 @@ impl ReverbEffect {
         filtered
     }
 
-    fn allpass_process(buf: &mut [f32], pos: &mut usize, raw_len: usize, input: f32, feedback: f32) -> f32 {
+    fn allpass_process(
+        buf: &mut [f32],
+        pos: &mut usize,
+        raw_len: usize,
+        input: f32,
+        feedback: f32,
+    ) -> f32 {
         let len = raw_len.min(buf.len()).max(1);
         let read = buf[*pos];
         buf[*pos] = input + read * feedback;
@@ -250,10 +298,18 @@ impl SendEffect for ReverbEffect {
 
         // Precompute comb/allpass lengths (constant for entire buffer)
         let cl: [usize; 4] = [
-            (((self.comb_len[0] as f32) * scale) as usize + 0).min(max_comb).max(1),
-            (((self.comb_len[1] as f32) * scale) as usize + 100).min(max_comb).max(1),
-            (((self.comb_len[2] as f32) * scale) as usize + 0).min(max_comb).max(1),
-            (((self.comb_len[3] as f32) * scale) as usize + 100).min(max_comb).max(1),
+            (((self.comb_len[0] as f32) * scale) as usize)
+                .min(max_comb)
+                .max(1),
+            (((self.comb_len[1] as f32) * scale) as usize + 100)
+                .min(max_comb)
+                .max(1),
+            (((self.comb_len[2] as f32) * scale) as usize)
+                .min(max_comb)
+                .max(1),
+            (((self.comb_len[3] as f32) * scale) as usize + 100)
+                .min(max_comb)
+                .max(1),
         ];
         let cr_off = (width * 200.0) as usize;
         let cr: [usize; 4] = [
@@ -276,20 +332,42 @@ impl SendEffect for ReverbEffect {
 
             for c in 0..4 {
                 out_l += Self::comb_process(
-                    &mut self.comb_buf_l[c], &mut self.comb_pos_l[c], cl[c],
-                    input_l, feedback, damp, &mut self.prev_l[c],
+                    &mut self.comb_buf_l[c],
+                    &mut self.comb_pos_l[c],
+                    cl[c],
+                    input_l,
+                    feedback,
+                    damp,
+                    &mut self.prev_l[c],
                 );
                 out_r += Self::comb_process(
-                    &mut self.comb_buf_r[c], &mut self.comb_pos_r[c], cr[c],
-                    input_r, feedback, damp, &mut self.prev_r[c],
+                    &mut self.comb_buf_r[c],
+                    &mut self.comb_pos_r[c],
+                    cr[c],
+                    input_r,
+                    feedback,
+                    damp,
+                    &mut self.prev_r[c],
                 );
             }
             out_l *= 0.25;
             out_r *= 0.25;
 
             for a in 0..2 {
-                out_l = Self::allpass_process(&mut self.allpass_buf_l[a], &mut self.allpass_pos_l[a], al[a], out_l, 0.5);
-                out_r = Self::allpass_process(&mut self.allpass_buf_r[a], &mut self.allpass_pos_r[a], al[a], out_r, 0.5);
+                out_l = Self::allpass_process(
+                    &mut self.allpass_buf_l[a],
+                    &mut self.allpass_pos_l[a],
+                    al[a],
+                    out_l,
+                    0.5,
+                );
+                out_r = Self::allpass_process(
+                    &mut self.allpass_buf_r[a],
+                    &mut self.allpass_pos_r[a],
+                    al[a],
+                    out_r,
+                    0.5,
+                );
             }
 
             left[i] = out_l;
@@ -308,7 +386,11 @@ struct Lfo {
 
 impl Lfo {
     fn new(sample_rate: f32) -> Self {
-        Lfo { phase: 0.0, rate: 1.0, sample_rate }
+        Lfo {
+            phase: 0.0,
+            rate: 1.0,
+            sample_rate,
+        }
     }
 
     fn set_rate(&mut self, rate_hz: f32) {
@@ -357,7 +439,9 @@ impl ChorusEffect {
 
     fn read_delay(&self, buf: &[f32], delay: usize) -> f32 {
         let len = buf.len();
-        if delay >= len { return 0.0; }
+        if delay >= len {
+            return 0.0;
+        }
         let pos = if delay <= self.write_pos {
             self.write_pos - delay
         } else {
@@ -368,9 +452,13 @@ impl ChorusEffect {
 }
 
 impl SendEffect for ChorusEffect {
-    fn name(&self) -> &str { "Chorus" }
+    fn name(&self) -> &str {
+        "Chorus"
+    }
 
-    fn param_count(&self) -> u32 { 4 }
+    fn param_count(&self) -> u32 {
+        4
+    }
 
     fn param_label(&self, index: u32) -> &str {
         match index {
@@ -394,7 +482,10 @@ impl SendEffect for ChorusEffect {
 
     fn set_param(&mut self, index: u32, value: f32) {
         match index {
-            0 => { self.rate = (value * 10.0).clamp(0.1, 10.0); self.lfo.set_rate(self.rate); }
+            0 => {
+                self.rate = (value * 10.0).clamp(0.1, 10.0);
+                self.lfo.set_rate(self.rate);
+            }
             1 => self.depth = value.clamp(0.0, 1.0),
             2 => self.feedback = value.clamp(0.0, 0.9),
             3 => self.delay_ms = (value * 30.0).clamp(1.0, 30.0),
@@ -414,8 +505,10 @@ impl SendEffect for ChorusEffect {
             // 3 taps with staggered LFO phases
             let tap_delays = [
                 center_delay.saturating_add((lfo_val * depth_samples as f32) as usize),
-                center_delay.saturating_add(((lfo_val * 0.7).sin() * depth_samples as f32) as usize),
-                center_delay.saturating_add(((lfo_val * 0.3 + 1.0).sin() * depth_samples as f32) as usize),
+                center_delay
+                    .saturating_add(((lfo_val * 0.7).sin() * depth_samples as f32) as usize),
+                center_delay
+                    .saturating_add(((lfo_val * 0.3 + 1.0).sin() * depth_samples as f32) as usize),
             ];
 
             let mut wet_l = 0.0;
@@ -470,7 +563,9 @@ impl FlangerEffect {
 
     fn read_delay(&self, buf: &[f32], delay: usize) -> f32 {
         let len = buf.len();
-        if delay >= len { return 0.0; }
+        if delay >= len {
+            return 0.0;
+        }
         let pos = if delay <= self.write_pos {
             self.write_pos - delay
         } else {
@@ -481,9 +576,13 @@ impl FlangerEffect {
 }
 
 impl SendEffect for FlangerEffect {
-    fn name(&self) -> &str { "Flanger" }
+    fn name(&self) -> &str {
+        "Flanger"
+    }
 
-    fn param_count(&self) -> u32 { 4 }
+    fn param_count(&self) -> u32 {
+        4
+    }
 
     fn param_label(&self, index: u32) -> &str {
         match index {
@@ -507,7 +606,10 @@ impl SendEffect for FlangerEffect {
 
     fn set_param(&mut self, index: u32, value: f32) {
         match index {
-            0 => { self.rate = (value * 5.0).clamp(0.05, 5.0); self.lfo.set_rate(self.rate); }
+            0 => {
+                self.rate = (value * 5.0).clamp(0.05, 5.0);
+                self.lfo.set_rate(self.rate);
+            }
             1 => self.depth = value.clamp(0.0, 1.0),
             2 => self.feedback = (value * 2.0 - 1.0).clamp(-0.95, 0.95),
             3 => self.delay_ms = (value * 5.0).clamp(0.1, 5.0),
@@ -549,7 +651,9 @@ struct AllpassStage {
 }
 
 impl AllpassStage {
-    fn new() -> Self { AllpassStage { x1: 0.0, y1: 0.0 } }
+    fn new() -> Self {
+        AllpassStage { x1: 0.0, y1: 0.0 }
+    }
 
     fn process(&mut self, input: f32, a: f32) -> f32 {
         let output = -a * input + self.x1 + a * self.y1;
@@ -591,9 +695,13 @@ impl PhaserEffect {
 }
 
 impl SendEffect for PhaserEffect {
-    fn name(&self) -> &str { "Phaser" }
+    fn name(&self) -> &str {
+        "Phaser"
+    }
 
-    fn param_count(&self) -> u32 { 4 }
+    fn param_count(&self) -> u32 {
+        4
+    }
 
     fn param_label(&self, index: u32) -> &str {
         match index {
@@ -617,7 +725,10 @@ impl SendEffect for PhaserEffect {
 
     fn set_param(&mut self, index: u32, value: f32) {
         match index {
-            0 => { self.rate = (value * 10.0).clamp(0.05, 10.0); self.lfo.set_rate(self.rate); }
+            0 => {
+                self.rate = (value * 10.0).clamp(0.05, 10.0);
+                self.lfo.set_rate(self.rate);
+            }
             1 => self.depth = value.clamp(0.0, 1.0),
             2 => self.feedback = value.clamp(0.0, 0.95),
             3 => {
@@ -641,7 +752,11 @@ impl SendEffect for PhaserEffect {
         fn calc_a(freq: f32, sr: f32) -> f32 {
             let w = 2.0 * std::f32::consts::PI * freq / sr;
             let tan_half = (w / 2.0).tan();
-            if tan_half == 0.0 { -1.0 } else { (1.0 - tan_half) / (1.0 + tan_half) }
+            if tan_half == 0.0 {
+                -1.0
+            } else {
+                (1.0 - tan_half) / (1.0 + tan_half)
+            }
         }
 
         for i in 0..left.len().min(right.len()) {
@@ -669,7 +784,9 @@ impl SendEffect for PhaserEffect {
             right[i] = sig_r;
 
             self.lfo.phase += self.rate / sample_rate;
-            if self.lfo.phase >= 1.0 { self.lfo.phase -= 1.0; }
+            if self.lfo.phase >= 1.0 {
+                self.lfo.phase -= 1.0;
+            }
         }
     }
 }

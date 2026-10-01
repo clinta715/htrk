@@ -11,21 +11,30 @@ pub fn slices_by_time(
     division: u8,
 ) -> Vec<SliceRegion> {
     if sample_len == 0 || sample_rate == 0 || bpm <= 0.0 || division == 0 {
-        return vec![SliceRegion { start_sample: 0, end_sample: sample_len }];
+        return vec![SliceRegion {
+            start_sample: 0,
+            end_sample: sample_len,
+        }];
     }
     let samples_per_beat = (60.0 / bpm) * sample_rate as f32;
     let beat_divisor = 4.0 / division as f32;
     let slice_len = (samples_per_beat / beat_divisor).round() as usize;
 
     if slice_len == 0 {
-        return vec![SliceRegion { start_sample: 0, end_sample: sample_len }];
+        return vec![SliceRegion {
+            start_sample: 0,
+            end_sample: sample_len,
+        }];
     }
 
     let mut regions = Vec::new();
     let mut pos = 0;
     while pos < sample_len {
         let end = (pos + slice_len).min(sample_len);
-        regions.push(SliceRegion { start_sample: pos, end_sample: end });
+        regions.push(SliceRegion {
+            start_sample: pos,
+            end_sample: end,
+        });
         pos = end;
     }
     regions
@@ -38,7 +47,10 @@ pub fn slices_by_onset(
     min_spacing_ms: f32,
 ) -> Vec<SliceRegion> {
     if data.is_empty() || sample_rate == 0 {
-        return vec![SliceRegion { start_sample: 0, end_sample: data.len() }];
+        return vec![SliceRegion {
+            start_sample: 0,
+            end_sample: data.len(),
+        }];
     }
 
     let sensitivity = sensitivity.clamp(0.01, 1.0);
@@ -65,7 +77,10 @@ pub fn slices_by_onset(
     }
 
     if frame_energies.is_empty() {
-        return vec![SliceRegion { start_sample: 0, end_sample: data.len() }];
+        return vec![SliceRegion {
+            start_sample: 0,
+            end_sample: data.len(),
+        }];
     }
 
     // Compute threshold: local average * sensitivity
@@ -82,7 +97,7 @@ pub fn slices_by_onset(
         }
 
         // Local average of the previous `window` frames (excluding current)
-        let start = if i >= window { i - window } else { 0 };
+        let start = i.saturating_sub(window);
         let mut avg = 0.0f32;
         let mut count = 0usize;
         let mut j = start;
@@ -109,7 +124,10 @@ pub fn slices_by_onset(
     }
 
     if filtered.is_empty() {
-        return vec![SliceRegion { start_sample: 0, end_sample: data.len() }];
+        return vec![SliceRegion {
+            start_sample: 0,
+            end_sample: data.len(),
+        }];
     }
 
     // Convert frame indices to sample positions, build regions
@@ -133,10 +151,13 @@ pub fn slices_by_onset(
 
     // Extend first region start to 0 if the first onset isn't at 0
     if regions[0].start_sample > 0 {
-        regions.insert(0, SliceRegion {
-            start_sample: 0,
-            end_sample: regions[0].start_sample,
-        });
+        regions.insert(
+            0,
+            SliceRegion {
+                start_sample: 0,
+                end_sample: regions[0].start_sample,
+            },
+        );
     }
 
     regions

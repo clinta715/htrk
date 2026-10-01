@@ -1,11 +1,11 @@
 use eframe::egui;
 
+use super::theme::TrackerTheme;
 use crate::audio::plugins::ParamInfo;
 use crate::sequencer::automation::{
     AutomationPoint, AutomationTarget, AutomationTrack, InterpolationMode,
 };
 use crate::sequencer::Module;
-use super::theme::TrackerTheme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaneDragState {
@@ -20,6 +20,33 @@ pub struct AutomationEditorState {
     pub selected_order: u16,
     pub add_channel: usize,
     pub generator_open: bool,
+    /// Waveshape generator dialog parameters (typed UI state, P3).
+    pub generator_params: AutomationGenParams,
+}
+
+/// Waveshape generator dialog parameters for automation lanes.
+/// Replaces untyped `ui.data()` temp storage (P3).
+#[derive(Clone, Debug)]
+pub struct AutomationGenParams {
+    pub shape_idx: usize,
+    pub length: u16,
+    pub cycles: f32,
+    pub depth: f32,
+    pub offset: f32,
+    pub duty: f32,
+}
+
+impl Default for AutomationGenParams {
+    fn default() -> Self {
+        AutomationGenParams {
+            shape_idx: 0,
+            length: 64,
+            cycles: 1.0,
+            depth: 0.75,
+            offset: 0.5,
+            duty: 50.0,
+        }
+    }
 }
 
 impl Default for AutomationEditorState {
@@ -31,6 +58,7 @@ impl Default for AutomationEditorState {
             selected_order: 0,
             add_channel: 0,
             generator_open: false,
+            generator_params: AutomationGenParams::default(),
         }
     }
 }
@@ -101,7 +129,11 @@ pub fn draw_automation_editor(
                             egui::Sense::click(),
                         );
                         let cb_icon = if enabled { "\u{2713}" } else { " " };
-                        let cb_color = if enabled { theme.vu_green } else { theme.fg_dim };
+                        let cb_color = if enabled {
+                            theme.vu_green
+                        } else {
+                            theme.fg_dim
+                        };
                         ui.painter().text(
                             cb_rect.center(),
                             egui::Align2::CENTER_CENTER,
@@ -150,14 +182,30 @@ pub fn draw_automation_editor(
                 }
 
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new("+ Add Track").size(super::style::FONT_BODY).color(theme.fg_instrument));
+                ui.label(
+                    egui::RichText::new("+ Add Track")
+                        .size(super::style::FONT_BODY)
+                        .color(theme.fg_instrument),
+                );
 
                 ui.add_space(4.0);
-                ui.label(egui::RichText::new("Per-Channel:").size(super::style::FONT_CAPTION).color(theme.fg_dim));
+                ui.label(
+                    egui::RichText::new("Per-Channel:")
+                        .size(super::style::FONT_CAPTION)
+                        .color(theme.fg_dim),
+                );
                 ui.horizontal(|ui| {
                     ui.label("Ch:");
-                    let max_ch = if module.channel_volume.is_empty() { 0 } else { module.channel_volume.len().saturating_sub(1) };
-                    ui.add(egui::DragValue::new(&mut state.add_channel).range(0..=max_ch).speed(1.0));
+                    let max_ch = if module.channel_volume.is_empty() {
+                        0
+                    } else {
+                        module.channel_volume.len().saturating_sub(1)
+                    };
+                    ui.add(
+                        egui::DragValue::new(&mut state.add_channel)
+                            .range(0..=max_ch)
+                            .speed(1.0),
+                    );
                 });
                 for target in AutomationTarget::all_per_channel() {
                     if ui.small_button(target.label()).clicked() {
@@ -165,14 +213,22 @@ pub fn draw_automation_editor(
                     }
                 }
                 ui.add_space(4.0);
-                ui.label(egui::RichText::new("Global:").size(super::style::FONT_CAPTION).color(theme.fg_dim));
+                ui.label(
+                    egui::RichText::new("Global:")
+                        .size(super::style::FONT_CAPTION)
+                        .color(theme.fg_dim),
+                );
                 for target in AutomationTarget::all_global() {
                     if ui.small_button(target.label()).clicked() {
                         resp.track_added = Some((target, None));
                     }
                 }
                 ui.add_space(4.0);
-                ui.label(egui::RichText::new("Plugin Params:").size(super::style::FONT_CAPTION).color(theme.fg_dim));
+                ui.label(
+                    egui::RichText::new("Plugin Params:")
+                        .size(super::style::FONT_CAPTION)
+                        .color(theme.fg_dim),
+                );
 
                 // Send-bus plugin params.
                 for si in 0..4 {
@@ -191,8 +247,7 @@ pub fn draw_automation_editor(
                                 }
                                 let host_index = host_index as u32;
                                 let btn = egui::Button::new(
-                                    egui::RichText::new(&p.name)
-                                        .color(theme.fg_instrument),
+                                    egui::RichText::new(&p.name).color(theme.fg_instrument),
                                 );
                                 if ui.add(btn).clicked() {
                                     resp.track_added = Some((
@@ -229,8 +284,7 @@ pub fn draw_automation_editor(
                                 }
                                 let host_index = host_index as u32;
                                 let btn = egui::Button::new(
-                                    egui::RichText::new(&p.name)
-                                        .color(theme.fg_instrument),
+                                    egui::RichText::new(&p.name).color(theme.fg_instrument),
                                 );
                                 if ui.add(btn).clicked() {
                                     resp.track_added = Some((
@@ -252,9 +306,9 @@ pub fn draw_automation_editor(
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_min_size(egui::vec2(400.0, 300.0));
             ui.vertical(|ui| {
-                let selected_track = state.selected_track_id.and_then(|tid| {
-                    module.automation_tracks.iter().position(|t| t.id == tid)
-                });
+                let selected_track = state
+                    .selected_track_id
+                    .and_then(|tid| module.automation_tracks.iter().position(|t| t.id == tid));
 
                 match selected_track {
                     Some(idx) => {
@@ -264,8 +318,16 @@ pub fn draw_automation_editor(
                     None => {
                         ui.vertical_centered(|ui| {
                             ui.add_space(80.0);
-                            ui.label(egui::RichText::new("Select a track from the sidebar").size(14.0).color(theme.fg_dim));
-                            ui.label(egui::RichText::new("or click '+ Add Track' to create one").size(12.0).color(theme.fg_dimmer));
+                            ui.label(
+                                egui::RichText::new("Select a track from the sidebar")
+                                    .size(14.0)
+                                    .color(theme.fg_dim),
+                            );
+                            ui.label(
+                                egui::RichText::new("or click '+ Add Track' to create one")
+                                    .size(12.0)
+                                    .color(theme.fg_dimmer),
+                            );
                         });
                     }
                 }
@@ -289,14 +351,22 @@ fn draw_lane_editor(
 
     ui.horizontal(|ui| {
         ui.label("Interp:");
-        for mode in [InterpolationMode::Hold, InterpolationMode::Linear, InterpolationMode::Smooth, InterpolationMode::Exponential] {
+        for mode in [
+            InterpolationMode::Hold,
+            InterpolationMode::Linear,
+            InterpolationMode::Smooth,
+            InterpolationMode::Exponential,
+        ] {
             let name = match mode {
                 InterpolationMode::Hold => "Hold",
                 InterpolationMode::Linear => "Lin",
                 InterpolationMode::Smooth => "Smooth",
                 InterpolationMode::Exponential => "Exp",
             };
-            if ui.selectable_label(track.default_interp == mode, name).clicked() {
+            if ui
+                .selectable_label(track.default_interp == mode, name)
+                .clicked()
+            {
                 resp.interp_changed = Some((track.id, mode));
             }
         }
@@ -309,26 +379,30 @@ fn draw_lane_editor(
     let num_rows = module.patterns.first().map_or(64, |p| p.num_rows);
     let lane_width = ui.available_width().max(200.0);
 
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(lane_width, 300.0),
-        egui::Sense::click_and_drag(),
-    );
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(lane_width, 300.0), egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
 
     painter.rect_filled(rect, 0.0, theme.bg_default);
 
     // Vertical grid lines for row alignment (X axis = rows)
-    let row_step = if num_rows <= 64 { 1 } else if num_rows <= 128 { 2 } else { 4 };
+    let row_step = if num_rows <= 64 {
+        1
+    } else if num_rows <= 128 {
+        2
+    } else {
+        4
+    };
     for row_idx in (0..num_rows).step_by(row_step) {
         let x = rect.left() + (row_idx as f32 / num_rows as f32) * rect.width();
         let is_beat_divider = row_idx % 16 == 0;
         let is_beat = row_idx % 4 == 0;
         let stroke = if is_beat_divider {
-            egui::Stroke::new(0.8, theme.grid_line)
+            egui::Stroke::new(0.8_f32, theme.grid_line)
         } else if is_beat {
-            egui::Stroke::new(0.5, theme.grid_line)
+            egui::Stroke::new(0.5_f32, theme.grid_line)
         } else {
-            egui::Stroke::new(0.15, theme.grid_line_minor)
+            egui::Stroke::new(0.15_f32, theme.grid_line_minor)
         };
         painter.line_segment(
             [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
@@ -353,7 +427,7 @@ fn draw_lane_editor(
         let y = rect.bottom() - val_pct * rect.height();
         painter.line_segment(
             [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-            egui::Stroke::new(0.3, theme.grid_line_minor),
+            egui::Stroke::new(0.3_f32, theme.grid_line_minor),
         );
         // Hex value label on left
         let hex_val = (val_pct * 255.0).round() as u8;
@@ -395,17 +469,17 @@ fn draw_lane_editor(
                     InterpolationMode::Hold => {
                         painter.line_segment(
                             [egui::pos2(px, py), egui::pos2(next_px, py)],
-                            egui::Stroke::new(1.5, dim_color),
+                            egui::Stroke::new(1.5_f32, dim_color),
                         );
                         painter.line_segment(
                             [egui::pos2(next_px, py), egui::pos2(next_px, next_py)],
-                            egui::Stroke::new(1.5, dim_color),
+                            egui::Stroke::new(1.5_f32, dim_color),
                         );
                     }
                     InterpolationMode::Linear => {
                         painter.line_segment(
                             [egui::pos2(px, py), egui::pos2(next_px, next_py)],
-                            egui::Stroke::new(1.5, curve_color),
+                            egui::Stroke::new(1.5_f32, curve_color),
                         );
                     }
                     InterpolationMode::Smooth | InterpolationMode::Exponential => {
@@ -415,7 +489,10 @@ fn draw_lane_editor(
                             let t = s as f32 / steps as f32;
                             let v = match pt.interp_to_next {
                                 InterpolationMode::Smooth => {
-                                    pt.value + (next.value - pt.value) * (1.0 - (t * std::f32::consts::PI).cos()) / 2.0
+                                    pt.value
+                                        + (next.value - pt.value)
+                                            * (1.0 - (t * std::f32::consts::PI).cos())
+                                            / 2.0
                                 }
                                 InterpolationMode::Exponential => {
                                     if pt.value.abs() < 1e-6 {
@@ -429,15 +506,20 @@ fn draw_lane_editor(
                             let sx = px + (next_px - px) * t;
                             let sy = rect.bottom() - v * rect.height();
                             let cur = egui::pos2(sx, sy);
-                            painter.line_segment([prev, cur], egui::Stroke::new(1.5, curve_color));
+                            painter
+                                .line_segment([prev, cur], egui::Stroke::new(1.5_f32, curve_color));
                             prev = cur;
                         }
                     }
                 }
             }
 
-                        painter.circle_filled(egui::pos2(px, py), point_radius, theme.automation_point);
-                        painter.circle_stroke(egui::pos2(px, py), point_radius, egui::Stroke::new(1.0, theme.panel_border));
+            painter.circle_filled(egui::pos2(px, py), point_radius, theme.automation_point);
+            painter.circle_stroke(
+                egui::pos2(px, py),
+                point_radius,
+                egui::Stroke::new(1.0_f32, theme.panel_border),
+            );
 
             let hex_val = (pt.value * 255.0).round() as u8;
             painter.text(
@@ -458,34 +540,50 @@ fn draw_lane_editor(
             let value = (rel_y / rect.height()).clamp(0.0, 1.0);
 
             let clicked_existing = track.points.iter().position(|p| {
-                (p.row as f32 - row as f32).abs() < 2.0
-                && (p.value - value).abs() < 0.05
+                (p.row as f32 - row as f32).abs() < 2.0 && (p.value - value).abs() < 0.05
             });
 
             if response.secondary_clicked() {
-                if track.points.iter().any(|p| p.order == order && p.row == row) {
+                if track
+                    .points
+                    .iter()
+                    .any(|p| p.order == order && p.row == row)
+                {
                     resp.point_removed = Some((track.id, order, row));
                 }
             } else if response.dragged() {
-                if let LaneDragState::Moving { track_id, point_idx: _ } = state.drag {
+                if let LaneDragState::Moving {
+                    track_id,
+                    point_idx: _,
+                } = state.drag
+                {
                     if track_id == track.id {
-                        resp.point_changed = Some((track.id, AutomationPoint {
-                            order,
-                            row,
-                            value,
-                            interp_to_next: track.default_interp,
-                        }));
+                        resp.point_changed = Some((
+                            track.id,
+                            AutomationPoint {
+                                order,
+                                row,
+                                value,
+                                interp_to_next: track.default_interp,
+                            },
+                        ));
                     }
                 } else if let Some(idx) = clicked_existing {
-                    state.drag = LaneDragState::Moving { track_id: track.id, point_idx: idx };
+                    state.drag = LaneDragState::Moving {
+                        track_id: track.id,
+                        point_idx: idx,
+                    };
                 }
             } else {
-                resp.point_changed = Some((track.id, AutomationPoint {
-                    order,
-                    row,
-                    value,
-                    interp_to_next: track.default_interp,
-                }));
+                resp.point_changed = Some((
+                    track.id,
+                    AutomationPoint {
+                        order,
+                        row,
+                        value,
+                        interp_to_next: track.default_interp,
+                    },
+                ));
             }
         }
     } else if response.hovered() && response.secondary_clicked() {
@@ -508,6 +606,7 @@ fn draw_lane_editor(
             num_rows,
             track.default_interp,
             &mut state.generator_open,
+            &mut state.generator_params,
             theme,
         ) {
             resp.generator_points = Some((track.id, points));
@@ -521,6 +620,7 @@ fn draw_automation_generator_popup(
     num_rows: u16,
     default_interp: InterpolationMode,
     open: &mut bool,
+    params: &mut AutomationGenParams,
     theme: &TrackerTheme,
 ) -> Option<Vec<AutomationPoint>> {
     let mut result = None;
@@ -539,21 +639,17 @@ fn draw_automation_generator_popup(
 
             ui.add_space(4.0);
 
-            let shape_id = ui.make_persistent_id("auto_gen_shape");
-            let mut shape_idx = ui.data(|d| d.get_temp::<usize>(shape_id).unwrap_or(0));
-            let length_id = ui.make_persistent_id("auto_gen_length");
-            let mut length = ui.data(|d| d.get_temp::<u16>(length_id).unwrap_or(64));
-            let cycles_id = ui.make_persistent_id("auto_gen_cycles");
-            let mut cycles = ui.data(|d| d.get_temp::<f32>(cycles_id).unwrap_or(1.0));
-            let depth_id = ui.make_persistent_id("auto_gen_depth");
-            let mut depth = ui.data(|d| d.get_temp::<f32>(depth_id).unwrap_or(0.75));
-            let offset_id = ui.make_persistent_id("auto_gen_offset");
-            let mut offset = ui.data(|d| d.get_temp::<f32>(offset_id).unwrap_or(0.5));
-            let duty_id = ui.make_persistent_id("auto_gen_duty");
-            let mut duty = ui.data(|d| d.get_temp::<f32>(duty_id).unwrap_or(50.0));
+            let mut shape_idx = params.shape_idx;
+            let mut length = params.length;
+            let mut cycles = params.cycles;
+            let mut depth = params.depth;
+            let mut offset = params.offset;
+            let mut duty = params.duty;
 
             super::style::section_header(ui, "Shape", theme);
-            let shapes = ["Sine", "Square", "Triangle", "Saw Up", "Saw Down", "Pulse", "Random"];
+            let shapes = [
+                "Sine", "Square", "Triangle", "Saw Up", "Saw Down", "Pulse", "Random",
+            ];
             egui::ComboBox::from_id_salt("auto_gen_shape_combo")
                 .selected_text(shapes[shape_idx])
                 .show_ui(ui, |ui| {
@@ -609,7 +705,9 @@ fn draw_automation_generator_popup(
                 _ => crate::sequencer::envelope_generator::GeneratorShape::Random,
             };
 
-            let raw = crate::sequencer::envelope_generator::generate_values(shape, length, cycles, depth, offset, duty);
+            let raw = crate::sequencer::envelope_generator::generate_values(
+                shape, length, cycles, depth, offset, duty,
+            );
 
             // preview
             ui.add_space(4.0);
@@ -640,7 +738,10 @@ fn draw_automation_generator_popup(
                 ));
                 if raw.len() > 1 {
                     let line_pts: Vec<egui::Pos2> = raw.iter().map(to_screen).collect();
-                    painter.add(egui::Shape::line(line_pts, egui::Stroke::new(1.5, theme.fg_instrument)));
+                    painter.add(egui::Shape::line(
+                        line_pts,
+                        egui::Stroke::new(1.5_f32, theme.fg_instrument),
+                    ));
                 }
                 for p in &raw {
                     painter.circle_filled(to_screen(p), 2.0, theme.fg_instrument);
@@ -650,14 +751,15 @@ fn draw_automation_generator_popup(
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 if ui.button("Apply").clicked() {
-                    let points: Vec<AutomationPoint> = raw.into_iter().map(|(pos, val)| {
-                        AutomationPoint {
+                    let points: Vec<AutomationPoint> = raw
+                        .into_iter()
+                        .map(|(pos, val)| AutomationPoint {
                             order: 0,
                             row: pos.min(num_rows.saturating_sub(1)),
                             value: val,
                             interp_to_next: default_interp,
-                        }
-                    }).collect();
+                        })
+                        .collect();
                     if !points.is_empty() {
                         result = Some(points);
                     }
@@ -668,14 +770,12 @@ fn draw_automation_generator_popup(
                 }
             });
 
-            ui.data_mut(|d| {
-                d.insert_temp(shape_id, shape_idx);
-                d.insert_temp(length_id, length);
-                d.insert_temp(cycles_id, cycles);
-                d.insert_temp(depth_id, depth);
-                d.insert_temp(offset_id, offset);
-                d.insert_temp(duty_id, duty);
-            });
+            params.shape_idx = shape_idx;
+            params.length = length;
+            params.cycles = cycles;
+            params.depth = depth;
+            params.offset = offset;
+            params.duty = duty;
         });
 
     if should_close {

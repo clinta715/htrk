@@ -6,8 +6,8 @@ use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
-use crate::mcp::library::SampleLibrary;
 use crate::audio::plugins::{PluginLibrary, PresetLibrary};
+use crate::mcp::library::SampleLibrary;
 use crate::mcp::protocol::*;
 
 pub struct HttpServer {
@@ -47,7 +47,10 @@ impl HttpServer {
             Ok(l) => l,
             Err(e) => {
                 eprintln!("[mcph] Failed to bind HTTP to {addr}: {e}");
-                return HttpServer { port, join_handle: None };
+                return HttpServer {
+                    port,
+                    join_handle: None,
+                };
             }
         };
         let actual_port = listener.local_addr().unwrap().port();
@@ -118,7 +121,7 @@ impl HttpServer {
 
                     // Periodic session cleanup (every ~500 connections)
                     clean_counter += 1;
-                    if clean_counter % 500 == 0 {
+                    if clean_counter.is_multiple_of(500) {
                         if let Ok(mut sessions) = shared.sessions.lock() {
                             sessions.retain(|_, tx| tx.send(String::new()).is_ok());
                             drop(sessions);
@@ -129,7 +132,10 @@ impl HttpServer {
             })
             .ok();
 
-        HttpServer { port: actual_port, join_handle }
+        HttpServer {
+            port: actual_port,
+            join_handle,
+        }
     }
 
     pub fn stop(&mut self) {
@@ -139,11 +145,7 @@ impl HttpServer {
     }
 }
 
-fn handle_http_connection(
-    stream: TcpStream,
-    shared: Arc<Shared>,
-    conn_id: u64,
-) {
+fn handle_http_connection(stream: TcpStream, shared: Arc<Shared>, conn_id: u64) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
     let (read_stream, mut write_stream) = match stream.try_clone() {
         Ok(c) => (c, stream),
@@ -189,7 +191,14 @@ fn handle_http_connection(
     if request_line.starts_with("GET ") {
         handle_sse_get(&mut write_stream, &request_line, &headers, shared, conn_id);
     } else if request_line.starts_with("POST ") {
-        handle_post(&mut write_stream, &request_line, &headers, content_length, &mut reader, shared);
+        handle_post(
+            &mut write_stream,
+            &request_line,
+            &headers,
+            content_length,
+            &mut reader,
+            shared,
+        );
     }
 }
 
@@ -252,7 +261,10 @@ fn handle_post(
     // Read body
     let mut body = vec![0u8; content_length];
     if reader.read_exact(&mut body).is_err() {
-        let _ = write!(stream, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+        let _ = write!(
+            stream,
+            "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"
+        );
         return;
     }
     let body_str = String::from_utf8_lossy(&body).to_string();
@@ -261,21 +273,30 @@ fn handle_post(
     let snapshot = match shared.snapshot.read() {
         Ok(s) => s,
         Err(_) => {
-            let _ = write!(stream, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+            let _ = write!(
+                stream,
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"
+            );
             return;
         }
     };
     let pb = match shared.playback_snapshot.read() {
         Ok(p) => p,
         Err(_) => {
-            let _ = write!(stream, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+            let _ = write!(
+                stream,
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"
+            );
             return;
         }
     };
     let ch = match shared.channels_snapshot.read() {
         Ok(c) => c,
         Err(_) => {
-            let _ = write!(stream, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+            let _ = write!(
+                stream,
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"
+            );
             return;
         }
     };

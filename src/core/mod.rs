@@ -1,6 +1,6 @@
-mod editing;
 mod automation;
 mod channels;
+mod editing;
 
 use std::sync::Arc;
 
@@ -198,9 +198,7 @@ impl HtrkCore {
 
     pub(crate) fn ensure_module_ownership(&mut self) {
         let new_module = match &self.module {
-            Some(arc) if Arc::strong_count(arc) > 1 => {
-                Some(Arc::new((**arc).clone()))
-            }
+            Some(arc) if Arc::strong_count(arc) > 1 => Some(Arc::new((**arc).clone())),
             _ => None,
         };
         if let Some(new_arc) = new_module {
@@ -227,7 +225,8 @@ impl HtrkCore {
         self.ensure_module_ownership();
         let mut dummy = Some(Arc::new(Module::default()));
         std::mem::swap(&mut self.module, &mut dummy);
-        let result = dummy.as_mut()
+        let result = dummy
+            .as_mut()
             .and_then(|a| Arc::get_mut(a))
             .map(|arc_module| f(arc_module, self));
         std::mem::swap(&mut self.module, &mut dummy);
@@ -236,7 +235,9 @@ impl HtrkCore {
     }
 
     pub(crate) fn sync_channel_fields(&mut self) {
-        let count = self.module.as_ref()
+        let count = self
+            .module
+            .as_ref()
             .map(|m| m.channel_panning.len())
             .unwrap_or(DEFAULT_CHANNELS);
         self.send_levels.resize(count, [0.0; NUM_SEND_BUSES]);
@@ -253,7 +254,8 @@ impl HtrkCore {
 
     pub(crate) fn current_pattern_or_default(&self) -> &crate::sequencer::Pattern {
         static DEFAULT: std::sync::OnceLock<crate::sequencer::Pattern> = std::sync::OnceLock::new();
-        self.current_pattern().unwrap_or_else(|| DEFAULT.get_or_init(|| crate::sequencer::Pattern::new(64)))
+        self.current_pattern()
+            .unwrap_or_else(|| DEFAULT.get_or_init(|| crate::sequencer::Pattern::new(64)))
     }
 
     pub(crate) fn ensure_pattern_exists(&mut self) {
@@ -265,7 +267,9 @@ impl HtrkCore {
                     None => return,
                 };
                 if pat_idx >= arc_module.patterns.len() {
-                    arc_module.patterns.resize_with(pat_idx + 1, || crate::sequencer::Pattern::new(64));
+                    arc_module
+                        .patterns
+                        .resize_with(pat_idx + 1, || crate::sequencer::Pattern::new(64));
                 }
             }
         }
@@ -279,14 +283,19 @@ impl HtrkCore {
     }
 
     pub(crate) fn num_channels(&self) -> usize {
-        self.module.as_ref()
+        self.module
+            .as_ref()
             .map(|m| m.channel_panning.len())
             .unwrap_or(DEFAULT_CHANNELS)
     }
 
     pub(crate) fn num_channels_checked(&self) -> usize {
         let n = self.num_channels();
-        if n == 0 { 1 } else { n }
+        if n == 0 {
+            1
+        } else {
+            n
+        }
     }
 
     pub fn load_module(&mut self, module: Module, name: String, path: Option<String>) {
@@ -354,7 +363,8 @@ impl HtrkCore {
         if let Some(ref mut module_arc) = self.module {
             if let Some(m) = Arc::get_mut(module_arc) {
                 if sample_idx >= m.samples.len() {
-                    m.samples.resize(sample_idx + 1, crate::sequencer::Sample::default());
+                    m.samples
+                        .resize(sample_idx + 1, crate::sequencer::Sample::default());
                 }
                 m.samples[sample_idx] = sample;
             }
@@ -396,7 +406,7 @@ mod tests {
             volume_effect: None,
             effect: crate::sequencer::effect::Effect::None,
         };
-        core.set_cell_at_cursor(cell.clone(), &[], false);
+        core.set_cell_at_cursor(cell, &[], false);
         let retrieved = core.get_cell_at_cursor();
         assert_eq!(retrieved.note, crate::sequencer::note::Note::On(60));
         assert_eq!(retrieved.instrument, Some(1));
@@ -436,8 +446,16 @@ mod tests {
         };
         core.set_cell_at_cursor(cell, &[], false);
 
-        let anchor = CursorPosition { row: 0, channel: 0, sub_column: crate::ui::pattern_grid::SubColumn::Note };
-        let end = CursorPosition { row: 0, channel: 0, sub_column: crate::ui::pattern_grid::SubColumn::Note };
+        let anchor = CursorPosition {
+            row: 0,
+            channel: 0,
+            sub_column: crate::ui::pattern_grid::SubColumn::Note,
+        };
+        let end = CursorPosition {
+            row: 0,
+            channel: 0,
+            sub_column: crate::ui::pattern_grid::SubColumn::Note,
+        };
         core.selection = Some(Selection { start: anchor, end });
         core.copy_selection();
         assert!(core.clipboard.is_some());
@@ -456,6 +474,10 @@ mod tests {
         };
         core.set_cell_at_cursor(cell, &[], false);
         let retrieved = core.get_cell_at_cursor();
-        assert_eq!(retrieved.volume, Some(40), "volume column must round-trip through set_cell_at_cursor");
+        assert_eq!(
+            retrieved.volume,
+            Some(40),
+            "volume column must round-trip through set_cell_at_cursor"
+        );
     }
 }

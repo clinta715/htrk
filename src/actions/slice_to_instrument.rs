@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use crate::sequencer::module::Module;
 use crate::sequencer::Sample;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SliceMode {
@@ -48,29 +48,27 @@ pub fn compute_slices(
     module: &Module,
     config: &SliceConfig,
 ) -> Result<(Vec<Sample>, SliceResult), String> {
-    let src = module.samples.get(config.source_sample)
+    let src = module
+        .samples
+        .get(config.source_sample)
         .ok_or_else(|| format!("Sample index {} out of range", config.source_sample))?;
     if src.data.is_empty() {
         return Err("Source sample has no data".into());
     }
 
     let regions = match config.mode {
-        SliceMode::TimeDivisions => {
-            crate::sequencer::slice_detector::slices_by_time(
-                src.data.len(),
-                src.sample_rate,
-                config.bpm,
-                config.division,
-            )
-        }
-        SliceMode::Onsets => {
-            crate::sequencer::slice_detector::slices_by_onset(
-                &src.data,
-                src.sample_rate,
-                config.sensitivity,
-                config.min_spacing_ms,
-            )
-        }
+        SliceMode::TimeDivisions => crate::sequencer::slice_detector::slices_by_time(
+            src.data.len(),
+            src.sample_rate,
+            config.bpm,
+            config.division,
+        ),
+        SliceMode::Onsets => crate::sequencer::slice_detector::slices_by_onset(
+            &src.data,
+            src.sample_rate,
+            config.sensitivity,
+            config.min_spacing_ms,
+        ),
     };
 
     if regions.is_empty() {
@@ -106,8 +104,8 @@ pub fn compute_slices(
             vibrato_speed: src.vibrato_speed,
             vibrato_depth: src.vibrato_depth,
             vibrato_rate: src.vibrato_rate,
-            vibrato_waveform: src.vibrato_waveform.clone(),
-            _flags: src._flags.clone(),
+            vibrato_waveform: src.vibrato_waveform,
+            _flags: src._flags,
         };
 
         slice_samples.push(slice_sample);
@@ -129,13 +127,14 @@ pub fn compute_slices(
     });
 
     let slice_count = slice_samples.len();
-    let sample_indices: Vec<usize> = (0..slice_count)
-        .map(|i| module.samples.len() + i)
-        .collect();
+    let sample_indices: Vec<usize> = (0..slice_count).map(|i| module.samples.len() + i).collect();
 
-    Ok((slice_samples, SliceResult {
-        slice_count,
-        sample_indices,
-        target_instrument,
-    }))
+    Ok((
+        slice_samples,
+        SliceResult {
+            slice_count,
+            sample_indices,
+            target_instrument,
+        },
+    ))
 }

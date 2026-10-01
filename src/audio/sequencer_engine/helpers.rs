@@ -8,7 +8,11 @@ use crate::sequencer::sample::Sample;
 
 // ─── Standalone helper functions ─────────────────────────────
 
-pub(crate) fn compute_channel_volume(state: &SequencerState, channel: usize, use_xm_model: bool) -> f32 {
+pub(crate) fn compute_channel_volume(
+    state: &SequencerState,
+    channel: usize,
+    use_xm_model: bool,
+) -> f32 {
     if channel >= state.channels.len() {
         return 0.0;
     }
@@ -29,7 +33,12 @@ pub(crate) fn compute_channel_panning(state: &SequencerState, channel: usize) ->
     state.channels[channel].channel_panning as f32 / 255.0
 }
 
-pub(crate) fn calculate_sample_offset(state: &SequencerState, channel: usize, cell: &Cell, sample: &Sample) -> usize {
+pub(crate) fn calculate_sample_offset(
+    state: &SequencerState,
+    channel: usize,
+    cell: &Cell,
+    sample: &Sample,
+) -> usize {
     let ch = &state.channels[channel];
     let offset = match &cell.effect {
         Effect::SetSampleOffset { offset } => {
@@ -78,7 +87,8 @@ pub(crate) fn compute_portamento_target(
     } else {
         match sample {
             Some(s) => {
-                let pf = compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
+                let pf =
+                    compute_playback_frequency(freq, s.sample_rate, s.relative_note, s.fine_tune);
                 (s, pf)
             }
             None => return ((8363.0 * 428.0 / freq) as u16, freq),

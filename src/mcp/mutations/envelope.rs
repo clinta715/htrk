@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use crate::core::HtrkCore;
-use crate::edit::{AddEnvelopePointCommand, RemoveEnvelopePointCommand, SetEnvelopePointsCommand, EnvelopeType};
+use crate::edit::{
+    AddEnvelopePointCommand, EnvelopeType, RemoveEnvelopePointCommand, SetEnvelopePointsCommand,
+};
 use crate::mcp::protocol::CmdResult;
 use crate::sequencer::instrument::EnvelopePoint;
 
@@ -23,12 +25,21 @@ pub(super) fn cmd_envelope_set(core: &mut HtrkCore, params: &serde_json::Value) 
     let inst_idx = get_i64!(params, "instrument").ok_or("Missing 'instrument'")? as usize;
     let type_str = get_str!(params, "type").ok_or("Missing 'type'")?;
     let et = parse_envelope_type(&type_str)?;
-    let points_val = params.get("points").and_then(|v| v.as_array()).ok_or("Missing 'points'")?;
+    let points_val = params
+        .get("points")
+        .and_then(|v| v.as_array())
+        .ok_or("Missing 'points'")?;
 
     let mut points = Vec::with_capacity(points_val.len());
     for p in points_val {
-        let tick = p.get("tick").and_then(|v| v.as_i64()).ok_or("Each point needs 'tick'")? as u16;
-        let value = p.get("value").and_then(|v| v.as_i64()).ok_or("Each point needs 'value'")? as u8;
+        let tick = p
+            .get("tick")
+            .and_then(|v| v.as_i64())
+            .ok_or("Each point needs 'tick'")? as u16;
+        let value = p
+            .get("value")
+            .and_then(|v| v.as_i64())
+            .ok_or("Each point needs 'value'")? as u8;
         points.push(EnvelopePoint { tick, value });
     }
     let num_points = points.len();
@@ -102,7 +113,11 @@ pub(super) fn cmd_envelope_add_point(core: &mut HtrkCore, params: &serde_json::V
             if inst_idx >= arc_module.instruments.len() {
                 return Err(format!("Instrument {inst_idx} out of range"));
             }
-            let cmd = Box::new(AddEnvelopePointCommand { instrument_index: inst_idx, envelope_type: et, point });
+            let cmd = Box::new(AddEnvelopePointCommand {
+                instrument_index: inst_idx,
+                envelope_type: et,
+                point,
+            });
             let _ = core.undo_manager.execute(cmd, arc_module);
             core.sync_module_to_audio();
             return Ok(serde_json::json!({"ok": true}));
@@ -111,7 +126,10 @@ pub(super) fn cmd_envelope_add_point(core: &mut HtrkCore, params: &serde_json::V
     Err("No module loaded".into())
 }
 
-pub(super) fn cmd_envelope_remove_point(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResult {
+pub(super) fn cmd_envelope_remove_point(
+    core: &mut HtrkCore,
+    params: &serde_json::Value,
+) -> CmdResult {
     let inst_idx = get_i64!(params, "instrument").ok_or("Missing 'instrument'")? as usize;
     let type_str = get_str!(params, "type").ok_or("Missing 'type'")?;
     let et = parse_envelope_type(&type_str)?;
@@ -183,10 +201,16 @@ pub(super) fn cmd_envelope_generate(core: &mut HtrkCore, params: &serde_json::Va
     }
 
     let generated = crate::sequencer::envelope_generator::generate_values(
-        shape, tick_span, num_points as f32, amplitude, offset, 50.0,
+        shape,
+        tick_span,
+        num_points as f32,
+        amplitude,
+        offset,
+        50.0,
     );
 
-    let mut points: Vec<EnvelopePoint> = generated.into_iter()
+    let mut points: Vec<EnvelopePoint> = generated
+        .into_iter()
         .map(|(tick, val)| {
             let v = (val * 64.0).round().clamp(0.0, 64.0) as u8;
             EnvelopePoint { tick, value: v }

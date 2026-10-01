@@ -48,11 +48,13 @@ pub fn draw_playback_view(
         let avail_h = ui.available_height();
         let grid_h = (avail_h * *split).max(80.0).min(avail_h - 60.0);
 
-        let grid_rect = egui::Rect::from_min_size(
-            ui.cursor().min,
-            egui::vec2(ui.available_width(), grid_h),
+        let grid_rect =
+            egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), grid_h));
+        let mut grid_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(grid_rect)
+                .layout(*ui.layout()),
         );
-        let mut grid_ui = ui.new_child(egui::UiBuilder::new().max_rect(grid_rect).layout(*ui.layout()));
 
         let dummy_cursor = CursorPosition {
             row: usize::MAX,
@@ -101,23 +103,24 @@ pub fn draw_playback_view(
         let x = start_pos.x + col as f32 * (block_w + BLOCK_SPACING_X);
         let y = start_pos.y + row as f32 * (block_h + BLOCK_SPACING_Y);
 
-        let block_rect = egui::Rect::from_min_size(
-            egui::pos2(x, y),
-            egui::vec2(block_w, block_h),
-        );
+        let block_rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(block_w, block_h));
 
         let painter = ui.painter_at(block_rect);
         painter.rect_filled(block_rect, BLOCK_CORNER_RADIUS, theme.panel_bg);
-        painter.rect_stroke(block_rect, BLOCK_CORNER_RADIUS, egui::Stroke::new(0.5, theme.panel_border), egui::StrokeKind::Outside);
-
-        let mut block_ui = ui.new_child(
-            egui::UiBuilder::new().max_rect(block_rect.shrink2(egui::vec2(3.0, 2.0))),
+        painter.rect_stroke(
+            block_rect,
+            BLOCK_CORNER_RADIUS,
+            egui::Stroke::new(0.5_f32, theme.panel_border),
+            egui::StrokeKind::Outside,
         );
+
+        let mut block_ui =
+            ui.new_child(egui::UiBuilder::new().max_rect(block_rect.shrink2(egui::vec2(3.0, 2.0))));
 
         block_ui.label(
             egui::RichText::new(format!("Ch {:02}", ch + 1))
-            .size(FONT_CAPTION)
-            .color(theme.bg_highlight),
+                .size(FONT_CAPTION)
+                .color(theme.bg_highlight),
         );
         let note_str = playback_state.channel_note_str(ch);
         let instr_str = playback_state.channel_instrument_str(ch);
@@ -155,23 +158,38 @@ pub fn draw_playback_view(
         block_ui.allocate_space(egui::vec2(meter_w, METER_H));
     }
 
-    let total_rows = (num_channels + cols - 1) / cols;
+    let total_rows = num_channels.div_ceil(cols);
     let used_h = total_rows as f32 * (block_h + BLOCK_SPACING_Y) - BLOCK_SPACING_Y;
     ui.allocate_space(egui::vec2(0.0, used_h));
 
     ui.separator();
 
-    draw_info_footer(ui, playback_state, theme, num_channels, module, cols, block_w);
+    draw_info_footer(
+        ui,
+        playback_state,
+        theme,
+        num_channels,
+        module,
+        cols,
+        block_w,
+    );
 
     visible_rows
 }
 
 fn draw_zoom_toolbar(ui: &mut egui::Ui, theme: &TrackerTheme, zoom: &mut u8) {
     ui.horizontal(|ui| {
-        if ui.add_sized(
-            egui::vec2(20.0, 16.0),
-            egui::Button::new(egui::RichText::new("–").size(FONT_CAPTION).color(theme.transport_fg)),
-        ).clicked() {
+        if ui
+            .add_sized(
+                egui::vec2(20.0, 16.0),
+                egui::Button::new(
+                    egui::RichText::new("–")
+                        .size(FONT_CAPTION)
+                        .color(theme.transport_fg),
+                ),
+            )
+            .clicked()
+        {
             *zoom = zoom.saturating_sub(2).max(8);
         }
         ui.label(
@@ -180,10 +198,17 @@ fn draw_zoom_toolbar(ui: &mut egui::Ui, theme: &TrackerTheme, zoom: &mut u8) {
                 .monospace()
                 .color(theme.transport_fg),
         );
-        if ui.add_sized(
-            egui::vec2(20.0, 16.0),
-            egui::Button::new(egui::RichText::new("+").size(FONT_CAPTION).color(theme.transport_fg)),
-        ).clicked() {
+        if ui
+            .add_sized(
+                egui::vec2(20.0, 16.0),
+                egui::Button::new(
+                    egui::RichText::new("+")
+                        .size(FONT_CAPTION)
+                        .color(theme.transport_fg),
+                ),
+            )
+            .clicked()
+        {
             *zoom = (*zoom + 2).min(24);
         }
     });
@@ -198,7 +223,12 @@ fn draw_splitter(ui: &mut egui::Ui, avail_h: f32, split: &mut f32, theme: &Track
     let response = ui.allocate_rect(separator_rect, egui::Sense::click_and_drag());
     let painter = ui.painter_at(separator_rect);
     painter.rect_filled(separator_rect, 2.0, theme.splitter_bg);
-    painter.rect_stroke(separator_rect, 2.0, egui::Stroke::new(0.5, theme.splitter_border), egui::StrokeKind::Outside);
+    painter.rect_stroke(
+        separator_rect,
+        2.0,
+        egui::Stroke::new(0.5_f32, theme.splitter_border),
+        egui::StrokeKind::Outside,
+    );
 
     if response.dragged_by(egui::PointerButton::Primary) {
         let dy = response.drag_delta().y;
@@ -232,14 +262,17 @@ fn draw_info_footer(
         let x = start_pos.x + col as f32 * (block_w + BLOCK_SPACING_X);
         let y = start_pos.y + row as f32 * (INFO_FOOTER_H + BLOCK_SPACING_Y);
 
-        let cell_rect = egui::Rect::from_min_size(
-            egui::pos2(x, y),
-            egui::vec2(block_w, INFO_FOOTER_H),
-        );
+        let cell_rect =
+            egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(block_w, INFO_FOOTER_H));
 
         let painter = ui.painter_at(cell_rect);
         painter.rect_filled(cell_rect, 2.0, theme.panel_bg);
-        painter.rect_stroke(cell_rect, 2.0, egui::Stroke::new(0.5, theme.panel_border), egui::StrokeKind::Outside);
+        painter.rect_stroke(
+            cell_rect,
+            2.0,
+            egui::Stroke::new(0.5_f32, theme.panel_border),
+            egui::StrokeKind::Outside,
+        );
 
         let inner = cell_rect.shrink2(egui::vec2(3.0, 2.0));
 
@@ -305,7 +338,7 @@ fn draw_info_footer(
         }
     }
 
-    let total_rows = (num_channels + cols - 1) / cols;
+    let total_rows = num_channels.div_ceil(cols);
     let used_h = total_rows as f32 * (INFO_FOOTER_H + BLOCK_SPACING_Y) - BLOCK_SPACING_Y;
     ui.allocate_space(egui::vec2(0.0, used_h));
 }
@@ -316,7 +349,11 @@ fn peak_color(peak: f32) -> (u8, u8, u8) {
         ((t * 255.0) as u8, (255.0 * (1.0 - t * 0.3)) as u8, 40)
     } else if peak < 0.8 {
         let t = (peak - 0.5) / 0.3;
-        (255, (255.0 * (1.0 - t * 0.7)) as u8, (40.0 * (1.0 - t)) as u8)
+        (
+            255,
+            (255.0 * (1.0 - t * 0.7)) as u8,
+            (40.0 * (1.0 - t)) as u8,
+        )
     } else {
         (255, (255.0 * (1.0 - (peak - 0.8) / 0.2)) as u8, 0)
     }

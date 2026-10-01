@@ -1,18 +1,26 @@
-
-use crate::sequencer::player::{ActiveEffects, PlayMode};
-use crate::debug_log;
 use crate::audio::sequencer_engine::SequencerEngine;
+use crate::debug_log;
+use crate::sequencer::player::{ActiveEffects, PlayMode};
 
 impl SequencerEngine {
     pub(crate) fn advance_envelopes(&mut self) {
-        let is_xm = self.module.as_ref().map_or(false, |m| m.flags.xm_envelope_model);
-        self.voice_pool.advance_envelopes(is_xm, &self.state, self.output_sample_rate, self.module.as_ref());
+        let is_xm = self
+            .module
+            .as_ref()
+            .is_some_and(|m| m.flags.xm_envelope_model);
+        self.voice_pool.advance_envelopes(
+            is_xm,
+            &self.state,
+            self.output_sample_rate,
+            self.module.as_ref(),
+        );
     }
 
     pub(crate) fn advance_row(&mut self) {
         self.state.clock.current_tick = 0;
 
-        self.voice_pool.advance_row_voice_reset(self.use_xm_model, &self.state);
+        self.voice_pool
+            .advance_row_voice_reset(self.use_xm_model, &self.state);
 
         for ch in &mut self.state.channels {
             ch.delayed_cell = None;

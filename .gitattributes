@@ -1,0 +1,20 @@
+# Normalize all text files to LF in the repository so Windows and WSL
+# checkouts produce identical content and diffs stay meaningful.
+* text=auto eol=lf
+
+# Windows-only scripts must keep CRLF to run in cmd/powershell.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets: never normalize line endings.
+*.mod binary
+*.MOD binary
+*.it binary
+*.xm binary
+*.s3m binary
+*.wav binary
+*.png binary
+*.jpg binary
+*.ttf binary
+*.zip binary

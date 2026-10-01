@@ -5,10 +5,9 @@ use crate::formats::common::*;
 use crate::formats::FormatHandler;
 use crate::sequencer::{
     effect::{FormatEffect, XmEffect},
-    Cell, DuplicateCheckAction, DuplicateCheckType, Effect, Envelope, EnvelopeFlags,
-    EnvelopePoint, Instrument, LoopType, Module, ModuleFlags, ModuleFormat,
-    NewNoteAction, Note, Pattern, Sample, SampleFlags, VibratoWaveform,
-    MAX_CHANNELS,
+    Cell, DuplicateCheckAction, DuplicateCheckType, Effect, Envelope, EnvelopeFlags, EnvelopePoint,
+    Instrument, LoopType, Module, ModuleFlags, ModuleFormat, NewNoteAction, Note, Pattern, Sample,
+    SampleFlags, VibratoWaveform, MAX_CHANNELS,
 };
 
 const XM_HEADER_MAGIC: &[u8; 17] = b"Extended Module: ";
@@ -32,13 +31,15 @@ impl FormatHandler for XmHandler {
         data.len() >= 17 && &data[0..17] == b"Extended Module: "
     }
 
-fn load(&self, data: &[u8]) -> FormatResult<Module> {
+    fn load(&self, data: &[u8]) -> FormatResult<Module> {
         if data.len() < 17 || &data[0..17] != XM_HEADER_MAGIC {
             return Err(FormatError::InvalidHeader {
                 expected: "Extended Module: ".to_string(),
                 found: {
                     let mut arr = [0u8; 4];
-                    if data.len() >= 4 { arr.copy_from_slice(&data[0..4]); }
+                    if data.len() >= 4 {
+                        arr.copy_from_slice(&data[0..4]);
+                    }
                     arr
                 },
             });
@@ -46,7 +47,7 @@ fn load(&self, data: &[u8]) -> FormatResult<Module> {
 
         let mut offset = 17;
         let name = read_string(data, &mut offset, 20)?;
-let file_type = read_u8(data, &mut offset)?;
+        let file_type = read_u8(data, &mut offset)?;
         if file_type != XM_FILE_TYPE_MARKER {
             return Err(FormatError::InvalidHeader {
                 expected: "0x1A".to_string(),
@@ -78,15 +79,16 @@ let file_type = read_u8(data, &mut offset)?;
         let patterns_base = 60 + header_size;
         let _patterns: Vec<Pattern> = (0..num_patterns)
             .map(|i| {
-                let pat_offset = if i == 0 {
-                    patterns_base
-                } else {
-                    0
-                };
+                let pat_offset = if i == 0 { patterns_base } else { 0 };
                 if pat_offset == 0 && i > 0 {
                     Ok(Pattern::new(64))
                 } else {
-                    parse_xm_pattern(data, if i == 0 { patterns_base } else { 0 }, i, num_channels)
+                    parse_xm_pattern(
+                        data,
+                        if i == 0 { patterns_base } else { 0 },
+                        i,
+                        num_channels,
+                    )
                 }
             })
             .collect::<FormatResult<Vec<_>>>()?;
@@ -98,7 +100,9 @@ let file_type = read_u8(data, &mut offset)?;
                 break;
             }
             let tmp = pos;
-            let ph_len = u32::from_le_bytes([data[tmp], data[tmp + 1], data[tmp + 2], data[tmp + 3]]) as usize;
+            let ph_len =
+                u32::from_le_bytes([data[tmp], data[tmp + 1], data[tmp + 2], data[tmp + 3]])
+                    as usize;
             let _packing = data[tmp + 4];
             let _rows = u16::from_le_bytes([data[tmp + 5], data[tmp + 6]]);
             let packed_size = u16::from_le_bytes([data[tmp + 7], data[tmp + 8]]) as usize;
@@ -135,13 +139,11 @@ let file_type = read_u8(data, &mut offset)?;
                     continue;
                 }
                 let key_map = read_bytes(data, &mut pos, 96)?;
-                for i in 0..96.min(120) {
-                    sample_map[i] = key_map[i];
-                }
+                sample_map[..96].copy_from_slice(&key_map[..96]);
                 let _global_vol_inst = all_samples.len() as u8;
-                for i in 0..96.min(120) {
+                for i in 0..96 {
                     if sample_map[i] as usize >= num_samples {
-                        sample_map[i] = if num_samples > 0 { 0 } else { 0 };
+                        sample_map[i] = 0;
                     }
                 }
 
@@ -149,14 +151,20 @@ let file_type = read_u8(data, &mut offset)?;
                 for _ in 0..12 {
                     let tick = read_u16_le(data, &mut pos)?;
                     let value = read_u16_le(data, &mut pos)?;
-                    vol_points_raw.push(EnvelopePoint { tick, value: (value & 0xFF) as u8 });
+                    vol_points_raw.push(EnvelopePoint {
+                        tick,
+                        value: (value & 0xFF) as u8,
+                    });
                 }
 
                 let mut pan_points_raw = Vec::with_capacity(12);
                 for _ in 0..12 {
                     let tick = read_u16_le(data, &mut pos)?;
                     let value = read_u16_le(data, &mut pos)?;
-                    pan_points_raw.push(EnvelopePoint { tick, value: (value & 0xFF) as u8 });
+                    pan_points_raw.push(EnvelopePoint {
+                        tick,
+                        value: (value & 0xFF) as u8,
+                    });
                 }
 
                 let num_vol_points = read_u8(data, &mut pos)?;
@@ -186,9 +194,27 @@ let file_type = read_u8(data, &mut offset)?;
                 } else {
                     Some(Envelope {
                         points: vol_points_raw,
-                        sustain_point: if (vol_env_type & 0x02) != 0 && (vol_sustain as usize) < vol_points { Some(vol_sustain as usize) } else { None },
-                        loop_start: if (vol_env_type & 0x04) != 0 && (vol_loop_start as usize) < vol_points { Some(vol_loop_start as usize) } else { None },
-                        loop_end: if (vol_env_type & 0x04) != 0 && (vol_loop_end as usize) < vol_points { Some(vol_loop_end as usize) } else { None },
+                        sustain_point: if (vol_env_type & 0x02) != 0
+                            && (vol_sustain as usize) < vol_points
+                        {
+                            Some(vol_sustain as usize)
+                        } else {
+                            None
+                        },
+                        loop_start: if (vol_env_type & 0x04) != 0
+                            && (vol_loop_start as usize) < vol_points
+                        {
+                            Some(vol_loop_start as usize)
+                        } else {
+                            None
+                        },
+                        loop_end: if (vol_env_type & 0x04) != 0
+                            && (vol_loop_end as usize) < vol_points
+                        {
+                            Some(vol_loop_end as usize)
+                        } else {
+                            None
+                        },
                         flags: EnvelopeFlags {
                             enabled: (vol_env_type & 0x01) != 0,
                             sustain: (vol_env_type & 0x02) != 0,
@@ -203,9 +229,27 @@ let file_type = read_u8(data, &mut offset)?;
                 } else {
                     Some(Envelope {
                         points: pan_points_raw,
-                        sustain_point: if (pan_env_type & 0x02) != 0 && (pan_sustain as usize) < pan_points { Some(pan_sustain as usize) } else { None },
-                        loop_start: if (pan_env_type & 0x04) != 0 && (pan_loop_start as usize) < pan_points { Some(pan_loop_start as usize) } else { None },
-                        loop_end: if (pan_env_type & 0x04) != 0 && (pan_loop_end as usize) < pan_points { Some(pan_loop_end as usize) } else { None },
+                        sustain_point: if (pan_env_type & 0x02) != 0
+                            && (pan_sustain as usize) < pan_points
+                        {
+                            Some(pan_sustain as usize)
+                        } else {
+                            None
+                        },
+                        loop_start: if (pan_env_type & 0x04) != 0
+                            && (pan_loop_start as usize) < pan_points
+                        {
+                            Some(pan_loop_start as usize)
+                        } else {
+                            None
+                        },
+                        loop_end: if (pan_env_type & 0x04) != 0
+                            && (pan_loop_end as usize) < pan_points
+                        {
+                            Some(pan_loop_end as usize)
+                        } else {
+                            None
+                        },
                         flags: EnvelopeFlags {
                             enabled: (pan_env_type & 0x01) != 0,
                             sustain: (pan_env_type & 0x02) != 0,
@@ -256,12 +300,12 @@ let file_type = read_u8(data, &mut offset)?;
                 }
 
                 let sample_base_offset = all_samples.len();
-                for (_si, sh) in sample_headers.iter().enumerate() {
+                for sh in sample_headers.iter() {
                     let sample = decode_xm_sample(data, &mut pos, sh)?;
                     all_samples.push(sample);
                 }
 
-                for i in 0..96.min(120) {
+                for i in 0..96 {
                     sample_map[i] = (sample_base_offset + sample_map[i] as usize).min(255) as u8;
                 }
 
@@ -306,7 +350,7 @@ let file_type = read_u8(data, &mut offset)?;
 
         if instruments.len() == 1 && all_samples.len() > 1 {
             let mut inst = Instrument::default();
-            for i in 0..96.min(120) {
+            for i in 0..96 {
                 if i + 1 < all_samples.len() {
                     inst.sample_map[i] = (i + 1) as u8;
                 }
@@ -314,7 +358,7 @@ let file_type = read_u8(data, &mut offset)?;
             instruments.push(inst);
         }
 
-        let count = num_channels.min(MAX_CHANNELS).max(1);
+        let count = num_channels.clamp(1, MAX_CHANNELS);
         let mut channel_panning = vec![32u8; count];
         let channel_volume = vec![64u8; count];
         for i in 0..count {
@@ -530,12 +574,26 @@ fn parse_xm_envelope(
     let _reserved2 = read_u16_le(data, pos)?;
 
     let (env_type_byte, num_points, sustain, loop_start, loop_end) = if is_volume {
-        (vol_env_type, num_vol_points, vol_sustain, vol_loop_start, vol_loop_end)
+        (
+            vol_env_type,
+            num_vol_points,
+            vol_sustain,
+            vol_loop_start,
+            vol_loop_end,
+        )
     } else {
-        (pan_env_type, num_pan_points, pan_sustain, pan_loop_start, pan_loop_end)
+        (
+            pan_env_type,
+            num_pan_points,
+            pan_sustain,
+            pan_loop_start,
+            pan_loop_end,
+        )
     };
 
-    let actual_points = (num_points as usize).min(XM_MAX_ENVELOPE_POINTS).min(points.len());
+    let actual_points = (num_points as usize)
+        .min(XM_MAX_ENVELOPE_POINTS)
+        .min(points.len());
     points.truncate(actual_points);
 
     if env_type_byte == 0 && points.is_empty() {
@@ -580,7 +638,11 @@ fn parse_xm_pattern_at(data: &[u8], offset: usize, num_channels: usize) -> Forma
     let num_rows = read_u16_le(data, &mut pos)? as usize;
     let packed_data_size = read_u16_le(data, &mut pos)? as usize;
 
-    let num_rows = if num_rows == 0 { 64 } else { num_rows.min(1024) };
+    let num_rows = if num_rows == 0 {
+        64
+    } else {
+        num_rows.min(1024)
+    };
 
     let mut pattern = Pattern::new(num_rows);
 
@@ -603,11 +665,21 @@ fn parse_xm_pattern_at(data: &[u8], offset: usize, num_channels: usize) -> Forma
                 let b = data[pos];
                 if b & 0x80 != 0 {
                     pos += 1;
-                    if b & 0x01 != 0 { pos += 1; }
-                    if b & 0x02 != 0 { pos += 1; }
-                    if b & 0x04 != 0 { pos += 1; }
-                    if b & 0x08 != 0 { pos += 1; }
-                    if b & 0x10 != 0 { pos += 1; }
+                    if b & 0x01 != 0 {
+                        pos += 1;
+                    }
+                    if b & 0x02 != 0 {
+                        pos += 1;
+                    }
+                    if b & 0x04 != 0 {
+                        pos += 1;
+                    }
+                    if b & 0x08 != 0 {
+                        pos += 1;
+                    }
+                    if b & 0x10 != 0 {
+                        pos += 1;
+                    }
                 } else {
                     pos += 5;
                 }
@@ -651,31 +723,41 @@ fn decode_xm_cell(data: &[u8], pos: &mut usize, end: usize) -> Cell {
     if first & 0x80 != 0 {
         *pos += 1;
         if first & 0x01 != 0 {
-            if *pos >= end { return Cell::default(); }
+            if *pos >= end {
+                return Cell::default();
+            }
             note = data[*pos];
             *pos += 1;
             has_note = true;
         }
         if first & 0x02 != 0 {
-            if *pos >= end { return Cell::default(); }
+            if *pos >= end {
+                return Cell::default();
+            }
             instrument = data[*pos];
             *pos += 1;
             has_inst = true;
         }
         if first & 0x04 != 0 {
-            if *pos >= end { return Cell::default(); }
+            if *pos >= end {
+                return Cell::default();
+            }
             volume = data[*pos];
             *pos += 1;
             has_vol = true;
         }
         if first & 0x08 != 0 {
-            if *pos >= end { return Cell::default(); }
+            if *pos >= end {
+                return Cell::default();
+            }
             effect_type = data[*pos];
             *pos += 1;
             has_fx = true;
         }
         if first & 0x10 != 0 {
-            if *pos >= end { return Cell::default(); }
+            if *pos >= end {
+                return Cell::default();
+            }
             effect_param = data[*pos];
             *pos += 1;
             has_fx_param = true;
@@ -684,10 +766,26 @@ fn decode_xm_cell(data: &[u8], pos: &mut usize, end: usize) -> Cell {
         note = first;
         *pos += 1;
         has_note = true;
-        if *pos < end { instrument = data[*pos]; *pos += 1; has_inst = true; }
-        if *pos < end { volume = data[*pos]; *pos += 1; has_vol = true; }
-        if *pos < end { effect_type = data[*pos]; *pos += 1; has_fx = true; }
-        if *pos < end { effect_param = data[*pos]; *pos += 1; has_fx_param = true; }
+        if *pos < end {
+            instrument = data[*pos];
+            *pos += 1;
+            has_inst = true;
+        }
+        if *pos < end {
+            volume = data[*pos];
+            *pos += 1;
+            has_vol = true;
+        }
+        if *pos < end {
+            effect_type = data[*pos];
+            *pos += 1;
+            has_fx = true;
+        }
+        if *pos < end {
+            effect_param = data[*pos];
+            *pos += 1;
+            has_fx_param = true;
+        }
     }
 
     let decoded_note = if has_note {
@@ -703,13 +801,16 @@ fn decode_xm_cell(data: &[u8], pos: &mut usize, end: usize) -> Cell {
     };
 
     let (decoded_vol, vol_column_effect) = if has_vol {
-        if volume >= 0x10 && volume <= 0x50 {
+        if (0x10..=0x50).contains(&volume) {
             (Some(volume - 0x10), None)
         } else if volume > 0 {
             let eff = decode_xm_volume_column(volume);
             // Store raw byte in volume (for vol_kol backward compat in XM path)
             // and decoded effect in volume_effect (for unified sequencer)
-            (Some(volume), if eff != Effect::None { Some(eff) } else { None })
+            (
+                Some(volume),
+                if eff != Effect::None { Some(eff) } else { None },
+            )
         } else {
             (None, None)
         }
@@ -736,7 +837,7 @@ fn decode_xm_note(raw: u8) -> Note {
     match raw {
         0 => Note::None,
         97 => Note::Off,
-        n if n >= 1 && n <= 96 => Note::On(n - 1),
+        n if (1..=96).contains(&n) => Note::On(n - 1),
         _ => Note::None,
     }
 }
@@ -746,35 +847,45 @@ fn decode_xm_volume_column(vol: u8) -> Effect {
         return Effect::None;
     }
 
-    if vol >= 0x10 && vol <= 0x50 {
+    if (0x10..=0x50).contains(&vol) {
         return Effect::VolSetVolume { vol: vol - 0x10 };
     }
-    if vol >= 0x60 && vol <= 0x6F {
+    if (0x60..=0x6F).contains(&vol) {
         return Effect::VolSlideDown { amount: vol - 0x60 };
     }
-    if vol >= 0x70 && vol <= 0x7F {
+    if (0x70..=0x7F).contains(&vol) {
         return Effect::VolSlideUp { amount: vol - 0x70 };
     }
-    if vol >= 0x80 && vol <= 0x8F {
+    if (0x80..=0x8F).contains(&vol) {
         return Effect::VolFineSlideDown { amount: vol - 0x80 };
     }
-    if vol >= 0x90 && vol <= 0x9F {
+    if (0x90..=0x9F).contains(&vol) {
         return Effect::VolFineSlideUp { amount: vol - 0x90 };
     }
-    if vol >= 0xA0 && vol <= 0xAF {
-        return Effect::Vibrato { speed: vol - 0xA0, depth: 0 };
+    if (0xA0..=0xAF).contains(&vol) {
+        return Effect::Vibrato {
+            speed: vol - 0xA0,
+            depth: 0,
+        };
     }
-    if vol >= 0xB0 && vol <= 0xBF {
-        return Effect::Vibrato { speed: 0, depth: vol - 0xB0 };
+    if (0xB0..=0xBF).contains(&vol) {
+        return Effect::Vibrato {
+            speed: 0,
+            depth: vol - 0xB0,
+        };
     }
-    if vol >= 0xC0 && vol <= 0xCF {
+    if (0xC0..=0xCF).contains(&vol) {
         let pan_val = ((vol - 0xC0) as u16 * 255 / 15) as u8;
         return Effect::SetPanning { pan: pan_val };
     }
-    if vol >= 0xD0 && vol <= 0xDF {
-        return Effect::PanningSlide { speed: -((vol - 0xD0) as i8) };
-    } else if vol >= 0xE0 && vol <= 0xEF {
-        return Effect::PanningSlide { speed: (vol - 0xE0) as i8 };
+    if (0xD0..=0xDF).contains(&vol) {
+        return Effect::PanningSlide {
+            speed: -((vol - 0xD0) as i8),
+        };
+    } else if (0xE0..=0xEF).contains(&vol) {
+        return Effect::PanningSlide {
+            speed: (vol - 0xE0) as i8,
+        };
     } else if vol >= 0xF0 {
         return Effect::TonePortamento { speed: vol - 0xF0 };
     }
@@ -816,7 +927,9 @@ fn decode_xm_effect(fx: u8, param: u8, has_param: bool) -> Effect {
             up: param >> 4,
             down: param & 0x0F,
         },
-        0xB => Effect::PositionJump { order: param as u16 },
+        0xB => Effect::PositionJump {
+            order: param as u16,
+        },
         0xC => Effect::SetVolume {
             volume: param.min(64),
         },
@@ -848,7 +961,9 @@ fn decode_xm_effect(fx: u8, param: u8, has_param: bool) -> Effect {
             ontime: param >> 4,
             offtime: param & 0x0F,
         },
-        _ if fx > 0 => Effect::FormatSpecific(FormatEffect::Xm(XmEffect::Raw { effect: fx, param })),
+        _ if fx > 0 => {
+            Effect::FormatSpecific(FormatEffect::Xm(XmEffect::Raw { effect: fx, param }))
+        }
         _ => Effect::None,
     }
 }
@@ -872,7 +987,10 @@ fn decode_xm_extended_effect(param: u8) -> Effect {
         0xD => Effect::NoteDelay { ticks: val },
         0xE => Effect::PatternDelay { ticks: val },
         0xF => Effect::ExtendedEffect { param },
-        _ if sub > 0 => Effect::FormatSpecific(FormatEffect::Xm(XmEffect::Raw { effect: 0xE0 | sub, param: val })),
+        _ if sub > 0 => Effect::FormatSpecific(FormatEffect::Xm(XmEffect::Raw {
+            effect: 0xE0 | sub,
+            param: val,
+        })),
         _ => Effect::None,
     }
 }
@@ -881,17 +999,22 @@ pub fn save_module(module: &Module) -> Vec<u8> {
     let mut out = Vec::new();
 
     let num_channels = XM_MAX_CHANNELS.min(
-        module.patterns.iter().map(|p| {
-            let mut max_ch = 1;
-            for row in &p.data {
-                for (ch, cell) in row.iter().enumerate() {
-                    if !cell.is_empty() && ch + 1 > max_ch {
-                        max_ch = ch + 1;
+        module
+            .patterns
+            .iter()
+            .map(|p| {
+                let mut max_ch = 1;
+                for row in &p.data {
+                    for (ch, cell) in row.iter().enumerate() {
+                        if !cell.is_empty() && ch + 1 > max_ch {
+                            max_ch = ch + 1;
+                        }
                     }
                 }
-            }
-            max_ch
-        }).max().unwrap_or(1)
+                max_ch
+            })
+            .max()
+            .unwrap_or(1),
     );
 
     let name_bytes = pad_string(&module.name, 20);
@@ -921,7 +1044,11 @@ pub fn save_module(module: &Module) -> Vec<u8> {
     out.extend_from_slice(&num_patterns.to_le_bytes());
     out.extend_from_slice(&num_instruments.to_le_bytes());
 
-    let flags: u16 = if module.flags.linear_slides { 0x01 } else { 0x00 };
+    let flags: u16 = if module.flags.linear_slides {
+        0x01
+    } else {
+        0x00
+    };
     out.extend_from_slice(&flags.to_le_bytes());
     out.extend_from_slice(&(module.initial_speed as u16).to_le_bytes());
     out.extend_from_slice(&module.initial_bpm.to_le_bytes());
@@ -958,7 +1085,7 @@ fn build_xm_instruments(module: &Module) -> Vec<XmInstrumentInfo> {
         }
         return vec![XmInstrumentInfo {
             instrument_index: 0,
-            sample_indices: sample_indices,
+            sample_indices,
         }];
     }
 
@@ -1033,15 +1160,29 @@ fn encode_xm_cell(out: &mut Vec<u8>, cell: &Cell) {
     }
 
     let mut mask = 0x80u8;
-    if need_note { mask |= 0x01; }
-    if need_inst { mask |= 0x02; }
-    if need_vol { mask |= 0x04; }
-    if need_fx { mask |= 0x08 | 0x10; }
+    if need_note {
+        mask |= 0x01;
+    }
+    if need_inst {
+        mask |= 0x02;
+    }
+    if need_vol {
+        mask |= 0x04;
+    }
+    if need_fx {
+        mask |= 0x08 | 0x10;
+    }
 
     out.push(mask);
-    if need_note { out.push(note); }
-    if need_inst { out.push(inst); }
-    if need_vol { out.push(vol); }
+    if need_note {
+        out.push(note);
+    }
+    if need_inst {
+        out.push(inst);
+    }
+    if need_vol {
+        out.push(vol);
+    }
     if need_fx {
         out.push(fx);
         out.push(fx_param);
@@ -1066,26 +1207,50 @@ fn encode_xm_note(note: Note) -> u8 {
 
 fn encode_xm_volume_column(effect: &Effect) -> u8 {
     match effect {
-        Effect::VolSetVolume { vol } => (*vol).min(64).saturating_add(0x10) as u8,
+        Effect::VolSetVolume { vol } => (*vol).min(64).saturating_add(0x10),
         Effect::VolSlideUp { amount } => {
-            if *amount <= 15 { 0x70 + *amount } else { 0 }
+            if *amount <= 15 {
+                0x70 + *amount
+            } else {
+                0
+            }
         }
         Effect::VolSlideDown { amount } => {
-            if *amount <= 15 { 0x60 + *amount } else { 0 }
+            if *amount <= 15 {
+                0x60 + *amount
+            } else {
+                0
+            }
         }
         Effect::VolFineSlideUp { amount } => {
-            if *amount <= 15 { 0x90 + *amount } else { 0 }
+            if *amount <= 15 {
+                0x90 + *amount
+            } else {
+                0
+            }
         }
         Effect::VolFineSlideDown { amount } => {
-            if *amount <= 15 { 0x80 + *amount } else { 0 }
+            if *amount <= 15 {
+                0x80 + *amount
+            } else {
+                0
+            }
         }
         Effect::TonePortamento { speed } => {
-            if *speed <= 15 { 0xD0 + *speed } else { 0 }
+            if *speed <= 15 {
+                0xD0 + *speed
+            } else {
+                0
+            }
         }
         Effect::Vibrato { speed, depth } => {
-            if *speed > 0 && *depth == 0 { 0xA0 + *speed.min(&15) }
-            else if *depth > 0 && *speed == 0 { 0xB0 + *depth.min(&15) }
-            else { 0 }
+            if *speed > 0 && *depth == 0 {
+                0xA0 + *speed.min(&15)
+            } else if *depth > 0 && *speed == 0 {
+                0xB0 + *depth.min(&15)
+            } else {
+                0
+            }
         }
         Effect::SetPanning { pan } => {
             let v = (*pan as u16 * 15 / 255) as u8;
@@ -1130,7 +1295,7 @@ fn encode_xm_effect(effect: &Effect) -> (u8, u8) {
         Effect::SetGlobalVolume { volume } => (0x10, *volume),
         Effect::GlobalVolumeSlide { up, down } => {
             let u = (*up).max(0) as u8;
-            let d = (*down).unsigned_abs().min(15) as u8;
+            let d = (*down).unsigned_abs().min(15);
             (0x11, (u << 4) | d)
         }
         Effect::NoteCutAfter { ticks } => (0x14, *ticks),
@@ -1146,8 +1311,8 @@ fn encode_xm_effect(effect: &Effect) -> (u8, u8) {
                 (0, 0)
             }
         }
-        Effect::FinePortamentoUp { speed } => (0xE, 0x10 | (speed >> 4).min(0x0F) as u8),
-        Effect::FinePortamentoDown { speed } => (0xE, 0x20 | (speed >> 4).min(0x0F) as u8),
+        Effect::FinePortamentoUp { speed } => (0xE, 0x10 | (speed >> 4).min(0x0F)),
+        Effect::FinePortamentoDown { speed } => (0xE, 0x20 | (speed >> 4).min(0x0F)),
         Effect::GlissandoControl { on } => (0xE, if *on { 0x31 } else { 0x30 }),
         Effect::VibratoWaveform { waveform } => (0xE, 0x40 | (waveform & 0x03)),
         Effect::SetFineTune { tune } => (0xE, 0x50 | (tune & 0x0F)),
@@ -1169,13 +1334,17 @@ fn encode_xm_effect(effect: &Effect) -> (u8, u8) {
         Effect::Tremor { ontime, offtime } => (0x1D, (ontime << 4) | (offtime & 0x0F)),
         Effect::FormatSpecific(FormatEffect::Xm(XmEffect::Raw { effect, param })) => {
             if *effect >= 0xE0 {
-                (0x0E, (*effect << 4) as u8 | (param & 0x0F))
+                (0x0E, (*effect << 4) | (param & 0x0F))
             } else {
                 (*effect, *param)
             }
         }
-        Effect::FormatSpecific(FormatEffect::Xm(XmEffect::KeyOff { fade_rate })) => (0x12, *fade_rate),
-        Effect::FormatSpecific(FormatEffect::Xm(XmEffect::SetSampleOffset(offset))) => (9, (offset >> 8) as u8),
+        Effect::FormatSpecific(FormatEffect::Xm(XmEffect::KeyOff { fade_rate })) => {
+            (0x12, *fade_rate)
+        }
+        Effect::FormatSpecific(FormatEffect::Xm(XmEffect::SetSampleOffset(offset))) => {
+            (9, (offset >> 8) as u8)
+        }
         Effect::FormatSpecific(_) => (0, 0),
         _ => (0, 0),
     }
@@ -1188,12 +1357,23 @@ fn write_xm_instrument(out: &mut Vec<u8>, xm_inst: &XmInstrumentInfo, module: &M
         &Instrument::default()
     };
 
-    let num_samples = if xm_inst.sample_indices.is_empty() { 0 } else { xm_inst.sample_indices.len() } as u16;
+    let num_samples = if xm_inst.sample_indices.is_empty() {
+        0
+    } else {
+        xm_inst.sample_indices.len()
+    } as u16;
 
     let name_bytes = pad_string(&inst.name, 22);
 
-    let header_data_size = 4 + 22 + 1 + 2 +
-        if num_samples > 0 { 96 + 48 + 48 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2 + 2 } else { 0 };
+    let header_data_size = 4
+        + 22
+        + 1
+        + 2
+        + if num_samples > 0 {
+            96 + 48 + 48 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2 + 2
+        } else {
+            0
+        };
     let header_size = header_data_size as u32;
 
     out.extend_from_slice(&header_size.to_le_bytes());
@@ -1216,14 +1396,46 @@ fn write_xm_instrument(out: &mut Vec<u8>, xm_inst: &XmInstrumentInfo, module: &M
         write_xm_envelope_points(out, &inst.volume_envelope);
         write_xm_envelope_points(out, &inst.panning_envelope);
 
-        let vol_points = inst.volume_envelope.as_ref().map(|e| e.points.len()).unwrap_or(0);
-        let pan_points = inst.panning_envelope.as_ref().map(|e| e.points.len()).unwrap_or(0);
-        let vol_sustain = inst.volume_envelope.as_ref().and_then(|e| e.sustain_point).unwrap_or(0);
-        let vol_loop_start = inst.volume_envelope.as_ref().and_then(|e| e.loop_start).unwrap_or(0);
-        let vol_loop_end = inst.volume_envelope.as_ref().and_then(|e| e.loop_end).unwrap_or(0);
-        let pan_sustain = inst.panning_envelope.as_ref().and_then(|e| e.sustain_point).unwrap_or(0);
-        let pan_loop_start = inst.panning_envelope.as_ref().and_then(|e| e.loop_start).unwrap_or(0);
-        let pan_loop_end = inst.panning_envelope.as_ref().and_then(|e| e.loop_end).unwrap_or(0);
+        let vol_points = inst
+            .volume_envelope
+            .as_ref()
+            .map(|e| e.points.len())
+            .unwrap_or(0);
+        let pan_points = inst
+            .panning_envelope
+            .as_ref()
+            .map(|e| e.points.len())
+            .unwrap_or(0);
+        let vol_sustain = inst
+            .volume_envelope
+            .as_ref()
+            .and_then(|e| e.sustain_point)
+            .unwrap_or(0);
+        let vol_loop_start = inst
+            .volume_envelope
+            .as_ref()
+            .and_then(|e| e.loop_start)
+            .unwrap_or(0);
+        let vol_loop_end = inst
+            .volume_envelope
+            .as_ref()
+            .and_then(|e| e.loop_end)
+            .unwrap_or(0);
+        let pan_sustain = inst
+            .panning_envelope
+            .as_ref()
+            .and_then(|e| e.sustain_point)
+            .unwrap_or(0);
+        let pan_loop_start = inst
+            .panning_envelope
+            .as_ref()
+            .and_then(|e| e.loop_start)
+            .unwrap_or(0);
+        let pan_loop_end = inst
+            .panning_envelope
+            .as_ref()
+            .and_then(|e| e.loop_end)
+            .unwrap_or(0);
 
         let vol_env_type = encode_envelope_flags(&inst.volume_envelope);
         let pan_env_type = encode_envelope_flags(&inst.panning_envelope);
@@ -1287,9 +1499,15 @@ fn write_xm_envelope_points(out: &mut Vec<u8>, envelope: &Option<Envelope>) {
 fn encode_envelope_flags(envelope: &Option<Envelope>) -> u8 {
     if let Some(env) = envelope {
         let mut flags = 0u8;
-        if env.flags.enabled { flags |= 0x01; }
-        if env.flags.sustain { flags |= 0x02; }
-        if env.flags.loop_ { flags |= 0x04; }
+        if env.flags.enabled {
+            flags |= 0x01;
+        }
+        if env.flags.sustain {
+            flags |= 0x02;
+        }
+        if env.flags.loop_ {
+            flags |= 0x04;
+        }
         flags
     } else {
         0
@@ -1404,80 +1622,170 @@ mod tests {
 
     #[test]
     fn decode_xm_volume_column_set_volume() {
-        assert_eq!(decode_xm_volume_column(0x10), Effect::VolSetVolume { vol: 0 });
-        assert_eq!(decode_xm_volume_column(0x50), Effect::VolSetVolume { vol: 64 });
-        assert_eq!(decode_xm_volume_column(0x30), Effect::VolSetVolume { vol: 32 });
+        assert_eq!(
+            decode_xm_volume_column(0x10),
+            Effect::VolSetVolume { vol: 0 }
+        );
+        assert_eq!(
+            decode_xm_volume_column(0x50),
+            Effect::VolSetVolume { vol: 64 }
+        );
+        assert_eq!(
+            decode_xm_volume_column(0x30),
+            Effect::VolSetVolume { vol: 32 }
+        );
     }
 
     #[test]
     fn decode_xm_volume_column_slide() {
-        assert_eq!(decode_xm_volume_column(0x75), Effect::VolSlideUp { amount: 5 });
-        assert_eq!(decode_xm_volume_column(0x63), Effect::VolSlideDown { amount: 3 });
+        assert_eq!(
+            decode_xm_volume_column(0x75),
+            Effect::VolSlideUp { amount: 5 }
+        );
+        assert_eq!(
+            decode_xm_volume_column(0x63),
+            Effect::VolSlideDown { amount: 3 }
+        );
     }
 
     #[test]
     fn decode_xm_volume_column_fine() {
-        assert_eq!(decode_xm_volume_column(0x93), Effect::VolFineSlideUp { amount: 3 });
-        assert_eq!(decode_xm_volume_column(0x87), Effect::VolFineSlideDown { amount: 7 });
+        assert_eq!(
+            decode_xm_volume_column(0x93),
+            Effect::VolFineSlideUp { amount: 3 }
+        );
+        assert_eq!(
+            decode_xm_volume_column(0x87),
+            Effect::VolFineSlideDown { amount: 7 }
+        );
     }
 
     #[test]
     fn decode_xm_volume_column_portamento() {
-        assert_eq!(decode_xm_volume_column(0xF5), Effect::TonePortamento { speed: 5 });
+        assert_eq!(
+            decode_xm_volume_column(0xF5),
+            Effect::TonePortamento { speed: 5 }
+        );
     }
 
     #[test]
     fn decode_xm_volume_column_pan_slide() {
-        assert_eq!(decode_xm_volume_column(0xD0), Effect::PanningSlide { speed: 0 });
-        assert_eq!(decode_xm_volume_column(0xD5), Effect::PanningSlide { speed: -5 });
-        assert_eq!(decode_xm_volume_column(0xDF), Effect::PanningSlide { speed: -15 });
-        assert_eq!(decode_xm_volume_column(0xE0), Effect::PanningSlide { speed: 0 });
-        assert_eq!(decode_xm_volume_column(0xE5), Effect::PanningSlide { speed: 5 });
-        assert_eq!(decode_xm_volume_column(0xEF), Effect::PanningSlide { speed: 15 });
+        assert_eq!(
+            decode_xm_volume_column(0xD0),
+            Effect::PanningSlide { speed: 0 }
+        );
+        assert_eq!(
+            decode_xm_volume_column(0xD5),
+            Effect::PanningSlide { speed: -5 }
+        );
+        assert_eq!(
+            decode_xm_volume_column(0xDF),
+            Effect::PanningSlide { speed: -15 }
+        );
+        assert_eq!(
+            decode_xm_volume_column(0xE0),
+            Effect::PanningSlide { speed: 0 }
+        );
+        assert_eq!(
+            decode_xm_volume_column(0xE5),
+            Effect::PanningSlide { speed: 5 }
+        );
+        assert_eq!(
+            decode_xm_volume_column(0xEF),
+            Effect::PanningSlide { speed: 15 }
+        );
     }
 
     #[test]
     fn decode_xm_effect_arpeggio() {
-        assert_eq!(decode_xm_effect(0, 0x35, true), Effect::Arpeggio { note1: 3, note2: 5 });
+        assert_eq!(
+            decode_xm_effect(0, 0x35, true),
+            Effect::Arpeggio { note1: 3, note2: 5 }
+        );
     }
 
     #[test]
     fn decode_xm_effect_speed_tempo() {
-        assert_eq!(decode_xm_effect(0xF, 6, true), Effect::SetSpeed { speed: 6 });
-        assert_eq!(decode_xm_effect(0xF, 125, true), Effect::SetTempo { bpm: 125 });
+        assert_eq!(
+            decode_xm_effect(0xF, 6, true),
+            Effect::SetSpeed { speed: 6 }
+        );
+        assert_eq!(
+            decode_xm_effect(0xF, 125, true),
+            Effect::SetTempo { bpm: 125 }
+        );
     }
 
     #[test]
     fn decode_xm_effect_volume_slide() {
-        assert_eq!(decode_xm_effect(0xA, 0x52, true), Effect::VolumeSlide { up: 5, down: 2 });
+        assert_eq!(
+            decode_xm_effect(0xA, 0x52, true),
+            Effect::VolumeSlide { up: 5, down: 2 }
+        );
     }
 
     #[test]
     fn decode_xm_effect_position_jump() {
-        assert_eq!(decode_xm_effect(0xB, 3, true), Effect::PositionJump { order: 3 });
+        assert_eq!(
+            decode_xm_effect(0xB, 3, true),
+            Effect::PositionJump { order: 3 }
+        );
     }
 
     #[test]
     fn decode_xm_effect_pattern_break() {
-        assert_eq!(decode_xm_effect(0xD, 0x23, true), Effect::PatternBreak { row: 23 });
+        assert_eq!(
+            decode_xm_effect(0xD, 0x23, true),
+            Effect::PatternBreak { row: 23 }
+        );
     }
 
     #[test]
     fn decode_xm_effect_envelope_position() {
-        assert_eq!(decode_xm_effect(0x13, 0x20, true), Effect::SetEnvelopePosition { tick: 0x20 });
+        assert_eq!(
+            decode_xm_effect(0x13, 0x20, true),
+            Effect::SetEnvelopePosition { tick: 0x20 }
+        );
     }
 
     #[test]
     fn decode_xm_ext_effect() {
-        assert_eq!(super::decode_xm_extended_effect(0x15), Effect::PortamentoUp { speed: 0x50 });
-        assert_eq!(super::decode_xm_extended_effect(0x25), Effect::PortamentoDown { speed: 0x50 });
-        assert_eq!(super::decode_xm_extended_effect(0x90), Effect::Retrigger { interval: 0 });
-        assert_eq!(super::decode_xm_extended_effect(0x95), Effect::Retrigger { interval: 5 });
-        assert_eq!(super::decode_xm_extended_effect(0xA3), Effect::FineVolumeSlideUp { amount: 3 });
-        assert_eq!(super::decode_xm_extended_effect(0xB7), Effect::FineVolumeSlideDown { amount: 7 });
-        assert_eq!(super::decode_xm_extended_effect(0xC5), Effect::NoteCutAfter { ticks: 5 });
-        assert_eq!(super::decode_xm_extended_effect(0xD2), Effect::NoteDelay { ticks: 2 });
-        assert_eq!(super::decode_xm_extended_effect(0xE1), Effect::PatternDelay { ticks: 1 });
+        assert_eq!(
+            super::decode_xm_extended_effect(0x15),
+            Effect::PortamentoUp { speed: 0x50 }
+        );
+        assert_eq!(
+            super::decode_xm_extended_effect(0x25),
+            Effect::PortamentoDown { speed: 0x50 }
+        );
+        assert_eq!(
+            super::decode_xm_extended_effect(0x90),
+            Effect::Retrigger { interval: 0 }
+        );
+        assert_eq!(
+            super::decode_xm_extended_effect(0x95),
+            Effect::Retrigger { interval: 5 }
+        );
+        assert_eq!(
+            super::decode_xm_extended_effect(0xA3),
+            Effect::FineVolumeSlideUp { amount: 3 }
+        );
+        assert_eq!(
+            super::decode_xm_extended_effect(0xB7),
+            Effect::FineVolumeSlideDown { amount: 7 }
+        );
+        assert_eq!(
+            super::decode_xm_extended_effect(0xC5),
+            Effect::NoteCutAfter { ticks: 5 }
+        );
+        assert_eq!(
+            super::decode_xm_extended_effect(0xD2),
+            Effect::NoteDelay { ticks: 2 }
+        );
+        assert_eq!(
+            super::decode_xm_extended_effect(0xE1),
+            Effect::PatternDelay { ticks: 1 }
+        );
     }
 
     #[test]
@@ -1548,7 +1856,10 @@ mod tests {
     fn encode_decode_effect_volume_column() {
         let vol = encode_xm_volume_column(&Effect::VolSetVolume { vol: 64 });
         assert_eq!(vol, 0x50);
-        assert_eq!(decode_xm_volume_column(vol), Effect::VolSetVolume { vol: 64 });
+        assert_eq!(
+            decode_xm_volume_column(vol),
+            Effect::VolSetVolume { vol: 64 }
+        );
     }
 
     #[test]
@@ -1556,11 +1867,17 @@ mod tests {
         let (fx, param) = encode_xm_effect(&Effect::PanningSlide { speed: -5 });
         assert_eq!(fx, 0);
         assert_eq!(param, 0xD5);
-        assert_eq!(decode_xm_volume_column(0xD5), Effect::PanningSlide { speed: -5 });
+        assert_eq!(
+            decode_xm_volume_column(0xD5),
+            Effect::PanningSlide { speed: -5 }
+        );
 
         let vol = encode_xm_volume_column(&Effect::PanningSlide { speed: 5 });
         assert_eq!(vol, 0xE5);
-        assert_eq!(decode_xm_volume_column(0xE5), Effect::PanningSlide { speed: 5 });
+        assert_eq!(
+            decode_xm_volume_column(0xE5),
+            Effect::PanningSlide { speed: 5 }
+        );
     }
 
     #[test]
@@ -1570,4 +1887,3 @@ mod tests {
         assert_eq!(param, 32);
     }
 }
-

@@ -6,8 +6,12 @@ use crate::sequencer::sample::{LoopType, Sample, SampleFlags, VibratoWaveform};
 
 pub fn import_wav(data: &[u8]) -> FormatResult<Sample> {
     let cursor = Cursor::new(data);
-    let mut reader = hound::WavReader::new(cursor)
-        .map_err(|e| FormatError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())))?;
+    let mut reader = hound::WavReader::new(cursor).map_err(|e| {
+        FormatError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            e.to_string(),
+        ))
+    })?;
 
     let spec = reader.spec();
     let bits = spec.bits_per_sample;
@@ -23,8 +27,8 @@ pub fn import_wav(data: &[u8]) -> FormatResult<Sample> {
                     .collect();
                 raw.chunks(channels as usize)
                     .map(|ch| {
-                        let avg = ch.iter().map(|&s| f32::from(s) / 128.0).sum::<f32>()
-                            / ch.len() as f32;
+                        let avg =
+                            ch.iter().map(|&s| f32::from(s) / 128.0).sum::<f32>() / ch.len() as f32;
                         avg
                     })
                     .collect()
@@ -47,8 +51,8 @@ pub fn import_wav(data: &[u8]) -> FormatResult<Sample> {
                     .collect();
                 raw.chunks(channels as usize)
                     .map(|ch| {
-                        let avg = ch.iter().map(|&s| s as f32 / 8388608.0).sum::<f32>()
-                            / ch.len() as f32;
+                        let avg =
+                            ch.iter().map(|&s| s as f32 / 8388608.0).sum::<f32>() / ch.len() as f32;
                         avg
                     })
                     .collect()
@@ -111,7 +115,8 @@ pub fn sanitize_filename(name: &str, fallback: &str) -> String {
     if name.is_empty() {
         return fallback.to_string();
     }
-    let result: String = name.chars()
+    let result: String = name
+        .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
                 c
@@ -155,18 +160,18 @@ pub fn export_wav(sample: &Sample, bits_per_sample: u8) -> Vec<u8> {
                 8 => {
                     let val = (clamped * 128.0) as i8;
                     writer.write_sample(val).unwrap();
-                },
+                }
                 16 => {
                     let val = (clamped * 32768.0) as i16;
                     writer.write_sample(val).unwrap();
-                },
+                }
                 24 => {
                     let val = (clamped * 8388608.0) as i32;
                     writer.write_sample(val).unwrap();
-                },
+                }
                 32 => {
                     writer.write_sample(clamped).unwrap();
-                },
+                }
                 _ => {
                     let val = (clamped * 32768.0) as i16;
                     writer.write_sample(val).unwrap();
@@ -224,7 +229,13 @@ mod tests {
             let original_i16 = (data[i].clamp(-1.0, 1.0) * 32767.0) as i16;
             let roundtrip_f32 = f32::from(original_i16) / 32768.0;
             let diff = (imported.data[i] - roundtrip_f32).abs();
-            assert!(diff < 0.001, "Mismatch at sample {}: {} vs {}", i, imported.data[i], roundtrip_f32);
+            assert!(
+                diff < 0.001,
+                "Mismatch at sample {}: {} vs {}",
+                i,
+                imported.data[i],
+                roundtrip_f32
+            );
         }
     }
 

@@ -6,18 +6,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::ui::file_browser::BrowserMode;
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SpacingMode {
     Compact,
+    #[default]
     Normal,
     Wide,
     ExtraWide,
-}
-
-impl Default for SpacingMode {
-    fn default() -> Self {
-        SpacingMode::Normal
-    }
 }
 
 impl SpacingMode {
@@ -204,28 +199,66 @@ pub struct AppConfig {
     pub log_file_path: Option<String>,
 }
 
-fn default_col_vis() -> bool { true }
+fn default_col_vis() -> bool {
+    true
+}
 
-fn default_row_highlight_minor() -> u8 { 4 }
-fn default_row_highlight_major() -> u8 { 16 }
+fn default_row_highlight_minor() -> u8 {
+    4
+}
+fn default_row_highlight_major() -> u8 {
+    16
+}
 
-fn default_font_size() -> u32 { 12 }
-fn default_zoom() -> f32 { 1.0 }
-fn default_scroll_speed() -> f32 { 1.0 }
-fn default_visible_channels() -> usize { 16 }
-fn default_true() -> bool { true }
-fn default_amplify() -> f32 { 2.0 }
-fn default_theme() -> String { "DarkModern".to_string() }
-fn default_spacing_mode() -> String { "normal".to_string() }
-fn default_file_browser_view_mode() -> String { "details".to_string() }
-fn default_file_browser_sort_by() -> String { "name".to_string() }
-fn default_interpolation() -> String { "Linear".to_string() }
-fn default_limiter() -> String { "HardClip".to_string() }
-fn default_sample_length_bg() -> bool { false }
+fn default_font_size() -> u32 {
+    12
+}
+fn default_zoom() -> f32 {
+    1.0
+}
+fn default_scroll_speed() -> f32 {
+    1.0
+}
+fn default_visible_channels() -> usize {
+    16
+}
+fn default_true() -> bool {
+    true
+}
+fn default_amplify() -> f32 {
+    2.0
+}
+fn default_theme() -> String {
+    "DarkModern".to_string()
+}
+fn default_spacing_mode() -> String {
+    "normal".to_string()
+}
+fn default_file_browser_view_mode() -> String {
+    "details".to_string()
+}
+fn default_file_browser_sort_by() -> String {
+    "name".to_string()
+}
+fn default_interpolation() -> String {
+    "Linear".to_string()
+}
+fn default_limiter() -> String {
+    "HardClip".to_string()
+}
+fn default_sample_length_bg() -> bool {
+    false
+}
 
-fn default_grid_cell_size() -> f32 { 28.0 }
-fn default_mcp_port() -> u16 { 18763 }
-fn default_mcp_http_port() -> u16 { 18764 }
+fn default_grid_cell_size() -> f32 {
+    28.0
+}
+fn default_mcp_port() -> u16 {
+    18763
+}
+fn default_mcp_http_port() -> u16 {
+    18764
+}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -323,10 +356,7 @@ impl AppConfig {
             Ok(d) => d,
             Err(_) => return Self::default(),
         };
-        match toml::from_str(&data) {
-            Ok(cfg) => cfg,
-            Err(_) => Self::default(),
-        }
+        toml::from_str(&data).unwrap_or_default()
     }
 
     pub fn save(&self) {
@@ -343,23 +373,37 @@ impl AppConfig {
         let key = mode_key(mode);
         self.last_dirs.get(&key).and_then(|s| {
             let p = PathBuf::from(s);
-            if p.is_dir() { Some(p) } else { None }
+            if p.is_dir() {
+                Some(p)
+            } else {
+                None
+            }
         })
     }
 
     pub fn set_last_dir(&mut self, mode: BrowserMode, path: PathBuf) {
         let key = mode_key(mode);
-        self.last_dirs.insert(key, path.to_string_lossy().into_owned());
+        self.last_dirs
+            .insert(key, path.to_string_lossy().into_owned());
     }
 
     pub fn get_last_selection(&self, mode: BrowserMode, path: &Path) -> Option<(usize, usize)> {
         let key = format!("{}:{}", mode_key(mode), path.to_string_lossy());
-        self.last_selections.get(&key).map(|(s, p)| (*s as usize, *p as usize))
+        self.last_selections
+            .get(&key)
+            .map(|(s, p)| (*s as usize, *p as usize))
     }
 
-    pub fn set_last_selection(&mut self, mode: BrowserMode, path: &Path, selected_index: usize, page: usize) {
+    pub fn set_last_selection(
+        &mut self,
+        mode: BrowserMode,
+        path: &Path,
+        selected_index: usize,
+        page: usize,
+    ) {
         let key = format!("{}:{}", mode_key(mode), path.to_string_lossy());
-        self.last_selections.insert(key, (selected_index as u32, page as u32));
+        self.last_selections
+            .insert(key, (selected_index as u32, page as u32));
     }
 
     pub fn get_backup_dir(&self) -> PathBuf {
@@ -387,15 +431,27 @@ impl AppConfig {
             }
             BrowserMode::Modules => self.default_mod_path.as_ref().and_then(|s| {
                 let p = PathBuf::from(s);
-                if p.is_dir() { Some(p) } else { None }
+                if p.is_dir() {
+                    Some(p)
+                } else {
+                    None
+                }
             }),
             BrowserMode::Instruments => self.default_instrument_path.as_ref().and_then(|s| {
                 let p = PathBuf::from(s);
-                if p.is_dir() { Some(p) } else { None }
+                if p.is_dir() {
+                    Some(p)
+                } else {
+                    None
+                }
             }),
             BrowserMode::Projects => self.default_project_path.as_ref().and_then(|s| {
                 let p = PathBuf::from(s);
-                if p.is_dir() { Some(p) } else { None }
+                if p.is_dir() {
+                    Some(p)
+                } else {
+                    None
+                }
             }),
         }
     }

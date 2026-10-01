@@ -43,7 +43,7 @@ impl FormatHandler for UltHandler {
         if magic_str != b"MAS_UTrack_V" {
             return Err(FormatError::InvalidHeader {
                 expected: "MAS_UTrack_V".to_string(),
-                found: [b'M', b'A', b'S', b'_'],
+                found: *b"MAS_",
             });
         }
 
@@ -95,10 +95,10 @@ impl FormatHandler for UltHandler {
 
             let inst_name = read_string(&data[offset..], 0, 32)?;
             let _dos_name = read_string(&data[offset..], 32, 12)?;
-            let loop_start = u32_at(&data, offset + 44) as usize;
-            let loop_end = u32_at(&data, offset + 48) as usize;
-            let sample_size_start = u32_at(&data, offset + 52) as usize;
-            let sample_size_end = u32_at(&data, offset + 56) as usize;
+            let loop_start = u32_at(data, offset + 44) as usize;
+            let loop_end = u32_at(data, offset + 48) as usize;
+            let sample_size_start = u32_at(data, offset + 52) as usize;
+            let sample_size_end = u32_at(data, offset + 56) as usize;
             let volume = data[offset + 60].min(64);
             let _bidi_flags = data[offset + 61];
 
@@ -110,24 +110,25 @@ impl FormatHandler for UltHandler {
 
             offset += 64;
 
-            let sample_length = if sample_size_end > sample_size_start {
-                sample_size_end - sample_size_start
-            } else {
-                0
-            };
+            let sample_length = sample_size_end.saturating_sub(sample_size_start);
 
             let sample_data_offset = sample_size_start;
-            let sample_data = if sample_length > 0 && sample_data_offset + sample_length <= data.len() {
-                data[sample_data_offset..sample_data_offset + sample_length]
-                    .iter()
-                    .map(|&b| (b as i8 as f32) / 128.0)
-                    .collect()
-            } else {
-                Vec::new()
-            };
+            let sample_data =
+                if sample_length > 0 && sample_data_offset + sample_length <= data.len() {
+                    data[sample_data_offset..sample_data_offset + sample_length]
+                        .iter()
+                        .map(|&b| (b as i8 as f32) / 128.0)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
 
             let has_loop = loop_end > loop_start && loop_end <= sample_length;
-            let loop_type = if has_loop { LoopType::Forward } else { LoopType::None };
+            let loop_type = if has_loop {
+                LoopType::Forward
+            } else {
+                LoopType::None
+            };
 
             let sample = Sample {
                 name: inst_name.clone(),
@@ -159,7 +160,11 @@ impl FormatHandler for UltHandler {
 
         let orders_end = offset + 256;
         let orders_data = &data[offset..orders_end.min(data.len())];
-        let order_list: Vec<u8> = orders_data.iter().take_while(|&&o| o != 0xFF).copied().collect();
+        let order_list: Vec<u8> = orders_data
+            .iter()
+            .take_while(|&&o| o != 0xFF)
+            .copied()
+            .collect();
         offset = orders_end;
 
         if offset >= data.len() {
@@ -220,7 +225,8 @@ impl FormatHandler for UltHandler {
                             if pattern_idx < patterns.len() && ch < ULT_MAX_CHANNELS {
                                 patterns[pattern_idx].data[row][ch].note = Note::None;
                                 patterns[pattern_idx].data[row][ch].instrument = None;
-                                patterns[pattern_idx].data[row][ch].volume = Some(repeat_byte.min(64));
+                                patterns[pattern_idx].data[row][ch].volume =
+                                    Some(repeat_byte.min(64));
                                 patterns[pattern_idx].data[row][ch].effect = Effect::None;
                             }
                             row += 1;
@@ -239,7 +245,8 @@ impl FormatHandler for UltHandler {
                             }
 
                             if inst_val > 0 {
-                                patterns[pattern_idx].data[row][ch].instrument = Some((inst_val * 16) as u8);
+                                patterns[pattern_idx].data[row][ch].instrument =
+                                    Some(inst_val * 16);
                             }
                         }
 
@@ -247,7 +254,11 @@ impl FormatHandler for UltHandler {
                         offset += 1;
 
                         let vol_val = second_byte & 0x3F;
-                        if vol_val > 0 && vol_val <= 64 && pattern_idx < patterns.len() && ch < ULT_MAX_CHANNELS {
+                        if vol_val > 0
+                            && vol_val <= 64
+                            && pattern_idx < patterns.len()
+                            && ch < ULT_MAX_CHANNELS
+                        {
                             patterns[pattern_idx].data[row][ch].volume = Some(vol_val);
                         }
 
@@ -302,7 +313,9 @@ impl FormatHandler for UltHandler {
 fn convert_ult_effect(effect_code: u8, param: u8, high_nybble: u8) -> Effect {
     match effect_code {
         0x03 => Effect::TonePortamento { speed: param },
-        0x09 => Effect::SetSampleOffset { offset: param as u16 },
+        0x09 => Effect::SetSampleOffset {
+            offset: param as u16,
+        },
         0x0B => Effect::SetPanning {
             pan: (param << 4) | param,
         },
@@ -339,7 +352,12 @@ fn u32_at(data: &[u8], offset: usize) -> u32 {
     if offset + 4 > data.len() {
         return 0;
     }
-    u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+    u32::from_le_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ])
 }
 
 #[cfg(test)]

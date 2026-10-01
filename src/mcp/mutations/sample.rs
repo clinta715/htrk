@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use crate::core::HtrkCore;
-use crate::edit::{SetSamplePropertyCommand, SampleProperty};
+use crate::edit::{SampleProperty, SetSamplePropertyCommand};
 use crate::mcp::protocol::CmdResult;
 use crate::sequencer::sample::LoopType;
 
@@ -19,7 +19,10 @@ pub(super) fn cmd_sample_load(core: &mut HtrkCore, params: &serde_json::Value) -
     if let Some(n) = name {
         sample.name = n;
     } else {
-        if let Some(stem) = std::path::Path::new(&path).file_stem().and_then(|s| s.to_str()) {
+        if let Some(stem) = std::path::Path::new(&path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+        {
             sample.name = stem.to_string();
         }
     }
@@ -53,7 +56,10 @@ pub(super) fn cmd_sample_remove(core: &mut HtrkCore, params: &serde_json::Value)
     Err("No module loaded".into())
 }
 
-pub(super) fn cmd_sample_set_property(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResult {
+pub(super) fn cmd_sample_set_property(
+    core: &mut HtrkCore,
+    params: &serde_json::Value,
+) -> CmdResult {
     let idx = get_i64!(params, "index").ok_or("Missing 'index'")? as usize;
     let prop_name = get_str!(params, "property").ok_or("Missing 'property'")?;
     let value = params.get("value").ok_or("Missing 'value'")?;
@@ -65,53 +71,88 @@ pub(super) fn cmd_sample_set_property(core: &mut HtrkCore, params: &serde_json::
                 return Err(format!("Sample {idx} out of range"));
             }
             let sample = &arc_module.samples[idx];
-            let (property, old_property): (SampleProperty, SampleProperty) = match prop_name.as_str() {
-                "name" => {
-                    let v = value.as_str().ok_or("'value' must be a string")?.to_string();
-                    (SampleProperty::Name(v.clone()), SampleProperty::Name(sample.name.clone()))
-                }
-                "default_volume" => {
-                    let v = value.as_i64().ok_or("'value' must be an integer")? as u8;
-                    (SampleProperty::DefaultVolume(v), SampleProperty::DefaultVolume(sample.default_volume))
-                }
-                "default_panning" => {
-                    let v = value.as_i64().ok_or("'value' must be an integer")? as u8;
-                    (SampleProperty::DefaultPanning(v), SampleProperty::DefaultPanning(sample.default_panning))
-                }
-                "global_volume" => {
-                    let v = value.as_i64().ok_or("'value' must be an integer")? as u8;
-                    (SampleProperty::GlobalVolume(v), SampleProperty::GlobalVolume(sample.global_volume))
-                }
-                "loop_type" => {
-                    let s = value.as_str().ok_or("'value' must be a string")?;
-                    let v = match s {
-                        "none" | "off" => LoopType::None,
-                        "forward" | "fw" => LoopType::Forward,
-                        "pingpong" | "pp" => LoopType::PingPong,
-                        "backward" | "bw" => LoopType::Backward,
-                        _ => return Err(format!("Unknown loop type: '{s}'")),
-                    };
-                    (SampleProperty::LoopType(v), SampleProperty::LoopType(sample.loop_type))
-                }
-                "loop_start" => {
-                    let v = value.as_i64().ok_or("'value' must be an integer")? as usize;
-                    (SampleProperty::LoopStart(v), SampleProperty::LoopStart(sample.loop_start))
-                }
-                "loop_end" => {
-                    let v = value.as_i64().ok_or("'value' must be an integer")? as usize;
-                    (SampleProperty::LoopEnd(v), SampleProperty::LoopEnd(sample.loop_end))
-                }
-                "relative_note" => {
-                    let v = value.as_i64().ok_or("'value' must be an integer")? as i8;
-                    (SampleProperty::RelativeNote(v), SampleProperty::RelativeNote(sample.relative_note))
-                }
-                "fine_tune" => {
-                    let v = value.as_i64().ok_or("'value' must be an integer")? as i8;
-                    (SampleProperty::FineTune(v), SampleProperty::FineTune(sample.fine_tune))
-                }
-                _ => return Err(format!("Unknown sample property: '{prop_name}'")),
-            };
-            let cmd = Box::new(SetSamplePropertyCommand { sample_index: idx, property, old_property });
+            let (property, old_property): (SampleProperty, SampleProperty) =
+                match prop_name.as_str() {
+                    "name" => {
+                        let v = value
+                            .as_str()
+                            .ok_or("'value' must be a string")?
+                            .to_string();
+                        (
+                            SampleProperty::Name(v.clone()),
+                            SampleProperty::Name(sample.name.clone()),
+                        )
+                    }
+                    "default_volume" => {
+                        let v = value.as_i64().ok_or("'value' must be an integer")? as u8;
+                        (
+                            SampleProperty::DefaultVolume(v),
+                            SampleProperty::DefaultVolume(sample.default_volume),
+                        )
+                    }
+                    "default_panning" => {
+                        let v = value.as_i64().ok_or("'value' must be an integer")? as u8;
+                        (
+                            SampleProperty::DefaultPanning(v),
+                            SampleProperty::DefaultPanning(sample.default_panning),
+                        )
+                    }
+                    "global_volume" => {
+                        let v = value.as_i64().ok_or("'value' must be an integer")? as u8;
+                        (
+                            SampleProperty::GlobalVolume(v),
+                            SampleProperty::GlobalVolume(sample.global_volume),
+                        )
+                    }
+                    "loop_type" => {
+                        let s = value.as_str().ok_or("'value' must be a string")?;
+                        let v = match s {
+                            "none" | "off" => LoopType::None,
+                            "forward" | "fw" => LoopType::Forward,
+                            "pingpong" | "pp" => LoopType::PingPong,
+                            "backward" | "bw" => LoopType::Backward,
+                            _ => return Err(format!("Unknown loop type: '{s}'")),
+                        };
+                        (
+                            SampleProperty::LoopType(v),
+                            SampleProperty::LoopType(sample.loop_type),
+                        )
+                    }
+                    "loop_start" => {
+                        let v = value.as_i64().ok_or("'value' must be an integer")? as usize;
+                        (
+                            SampleProperty::LoopStart(v),
+                            SampleProperty::LoopStart(sample.loop_start),
+                        )
+                    }
+                    "loop_end" => {
+                        let v = value.as_i64().ok_or("'value' must be an integer")? as usize;
+                        (
+                            SampleProperty::LoopEnd(v),
+                            SampleProperty::LoopEnd(sample.loop_end),
+                        )
+                    }
+                    "relative_note" => {
+                        let v = value.as_i64().ok_or("'value' must be an integer")? as i8;
+                        (
+                            SampleProperty::RelativeNote(v),
+                            SampleProperty::RelativeNote(sample.relative_note),
+                        )
+                    }
+                    "fine_tune" => {
+                        let v = value.as_i64().ok_or("'value' must be an integer")? as i8;
+                        (
+                            SampleProperty::FineTune(v),
+                            SampleProperty::FineTune(sample.fine_tune),
+                        )
+                    }
+                    _ => return Err(format!("Unknown sample property: '{prop_name}'")),
+                };
+            let cmd = Box::new(SetSamplePropertyCommand {
+                sample_index: idx,
+                property,
+                old_property,
+            });
             let _ = core.undo_manager.execute(cmd, arc_module);
             core.sync_module_to_audio();
             return Ok(serde_json::json!({"ok": true}));
@@ -155,7 +196,10 @@ fn note_to_relative(note: &str) -> Result<i8, String> {
     Ok(midi_key - 60)
 }
 
-pub(super) fn cmd_sample_library_import(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResult {
+pub(super) fn cmd_sample_library_import(
+    core: &mut HtrkCore,
+    params: &serde_json::Value,
+) -> CmdResult {
     let path = get_str!(params, "path").ok_or("Missing 'path'")?;
     let name_override = get_str!(params, "name");
     let target_slot = get_i64!(params, "target_slot").map(|v| v as usize);
@@ -167,7 +211,10 @@ pub(super) fn cmd_sample_library_import(core: &mut HtrkCore, params: &serde_json
 
     if let Some(n) = name_override {
         sample.name = n;
-    } else if let Some(stem) = std::path::Path::new(&path).file_stem().and_then(|s| s.to_str()) {
+    } else if let Some(stem) = std::path::Path::new(&path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+    {
         sample.name = stem.to_string();
     }
 
@@ -186,7 +233,9 @@ pub(super) fn cmd_sample_library_import(core: &mut HtrkCore, params: &serde_json
                     slot
                 } else {
                     while arc_module.samples.len() <= slot {
-                        arc_module.samples.push(crate::sequencer::sample::Sample::default());
+                        arc_module
+                            .samples
+                            .push(crate::sequencer::sample::Sample::default());
                     }
                     arc_module.samples[slot] = sample;
                     slot

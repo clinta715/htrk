@@ -1,10 +1,10 @@
-use std::sync::Arc;
 use crate::audio::commands::{InterpolationType, LimiterMode};
 use crate::audio::mixer;
 use crate::audio::sequencer_engine::SequencerEngine;
-use crate::sequencer::Module;
 use crate::errors::FormatResult;
+use crate::sequencer::Module;
 use crate::ui::wav_export_window::{BitDepth, WavExportSettings};
+use std::sync::Arc;
 
 pub struct WavRenderer {
     sequencer: SequencerEngine,
@@ -56,15 +56,27 @@ impl WavRenderer {
         self.stereo = stereo;
     }
 
-    pub fn render_with_settings<W: std::io::Write + std::io::Seek, F>(&mut self, writer: &mut hound::WavWriter<W>, settings: &WavExportSettings, progress_cb: F) -> FormatResult<()> 
-    where F: FnMut(f32) -> bool
+    pub fn render_with_settings<W: std::io::Write + std::io::Seek, F>(
+        &mut self,
+        writer: &mut hound::WavWriter<W>,
+        settings: &WavExportSettings,
+        progress_cb: F,
+    ) -> FormatResult<()>
+    where
+        F: FnMut(f32) -> bool,
     {
         self.stereo = settings.channel_mode == crate::ui::wav_export_window::ChannelMode::Stereo;
         self.render_with_bitdepth(writer, settings.bit_depth, progress_cb)
     }
 
-    fn render_with_bitdepth<W: std::io::Write + std::io::Seek, F>(&mut self, writer: &mut hound::WavWriter<W>, bit_depth: BitDepth, mut progress_cb: F) -> FormatResult<()> 
-    where F: FnMut(f32) -> bool
+    fn render_with_bitdepth<W: std::io::Write + std::io::Seek, F>(
+        &mut self,
+        writer: &mut hound::WavWriter<W>,
+        bit_depth: BitDepth,
+        mut progress_cb: F,
+    ) -> FormatResult<()>
+    where
+        F: FnMut(f32) -> bool,
     {
         let buffer_size = 1024;
         let mut left = vec![0.0f32; buffer_size];
@@ -72,9 +84,16 @@ impl WavRenderer {
 
         // Compute max rows: 4 full passes of the order list
         let max_rows: u64 = self.sequencer.module.as_ref().map_or(256, |m| {
-            let per_pass: u64 = m.order_list.iter().map(|&o| {
-                m.patterns.get(o as usize).map(|p| p.num_rows as u64).unwrap_or(64)
-            }).sum();
+            let per_pass: u64 = m
+                .order_list
+                .iter()
+                .map(|&o| {
+                    m.patterns
+                        .get(o as usize)
+                        .map(|p| p.num_rows as u64)
+                        .unwrap_or(64)
+                })
+                .sum();
             (per_pass.max(64) * 4).max(256)
         });
 
@@ -107,8 +126,10 @@ impl WavRenderer {
             let has_solo = self.solo_cache.iter().any(|&s| s);
             self.effective_mute_cache.clear();
             self.effective_mute_cache.extend(
-                self.muted_cache.iter().zip(self.solo_cache.iter())
-                    .map(|(muted, solo)| *muted || (has_solo && !*solo))
+                self.muted_cache
+                    .iter()
+                    .zip(self.solo_cache.iter())
+                    .map(|(muted, solo)| *muted || (has_solo && !*solo)),
             );
 
             while samples_done < frame_count && self.sequencer.state.playing {
@@ -116,16 +137,21 @@ impl WavRenderer {
                 if self.sequencer.state.clock.sample_counter >= samples_per_tick {
                     self.sequencer.process_tick();
                     self.sequencer.state.clock.sample_counter -= samples_per_tick;
-                    if !self.sequencer.state.playing { break; }
+                    if !self.sequencer.state.playing {
+                        break;
+                    }
                 }
 
-                let samples_remaining_in_tick = samples_per_tick - self.sequencer.state.clock.sample_counter;
+                let samples_remaining_in_tick =
+                    samples_per_tick - self.sequencer.state.clock.sample_counter;
                 let samples_remaining_in_buffer = (frame_count - samples_done) as f64;
                 let chunk_f = samples_remaining_in_tick.min(samples_remaining_in_buffer);
                 let chunk = chunk_f.ceil() as usize;
                 let chunk = chunk.min(frame_count - samples_done);
 
-                if chunk == 0 { break; }
+                if chunk == 0 {
+                    break;
+                }
 
                 mixer::mix_voices(
                     &mut self.sequencer.voice_pool.voices,
@@ -197,8 +223,10 @@ impl WavRenderer {
                 BitDepth::Bits32 => {
                     for i in 0..frame_count {
                         if self.stereo {
-                            writer.write_sample((left[i].clamp(-1.0, 1.0) * 2147483647.0) as i32)?;
-                            writer.write_sample((right[i].clamp(-1.0, 1.0) * 2147483647.0) as i32)?;
+                            writer
+                                .write_sample((left[i].clamp(-1.0, 1.0) * 2147483647.0) as i32)?;
+                            writer
+                                .write_sample((right[i].clamp(-1.0, 1.0) * 2147483647.0) as i32)?;
                         } else {
                             let mono = (left[i] + right[i]) * 0.5;
                             writer.write_sample((mono.clamp(-1.0, 1.0) * 2147483647.0) as i32)?;
@@ -218,13 +246,18 @@ impl WavRenderer {
                 }
             }
         }
-        
+
         progress_cb(1.0);
         Ok(())
     }
 
-    pub fn render<W: std::io::Write + std::io::Seek, F>(&mut self, writer: &mut hound::WavWriter<W>, progress_cb: F) -> FormatResult<()> 
-    where F: FnMut(f32) -> bool
+    pub fn render<W: std::io::Write + std::io::Seek, F>(
+        &mut self,
+        writer: &mut hound::WavWriter<W>,
+        progress_cb: F,
+    ) -> FormatResult<()>
+    where
+        F: FnMut(f32) -> bool,
     {
         self.render_with_bitdepth(writer, BitDepth::Bits16, progress_cb)
     }

@@ -138,86 +138,145 @@ htrk/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs                        # Binary entry point
-│   │
-│   ├── app.rs                         # HtrkApp struct (eframe::App impl)
-│   │                                  #   - owns all UI state
-│   │                                  #   - creates audio device + engine
-│   │                                  #   - dispatches UI events → commands
+│   ├── lib.rs                         # Library root (module declarations)
+│   ├── app/                           # === APP SHELL (impl HtrkApp) ===
+│   │   ├── mod.rs                     # HtrkApp struct + AppView/BrowserPurpose + constructors
+│   │   ├── audio_setup.rs             # device init, rescan, channel/send sync
+│   │   ├── editing.rs                 # cursor movement, selection, block ops
+│   │   ├── preamble.rs                # per-frame state sync + MCP snapshots
+│   │   ├── dialogs.rs                 # modal dialogs (settings, export, help, about)
+│   │   ├── panels.rs                  # view tabs + menu/transport/status bars
+│   │   ├── plugins.rs                 # plugin install/unload/state persistence
+│   │   ├── lifecycle.rs               # exit-time shutdown
+│   │   └── eframe_impl.rs             # `impl eframe::App for HtrkApp`
+│   ├── app_config.rs                  # Persisted AppConfig (TOML)
+│   ├── errors.rs                      # FormatError / AudioError / EditError
 │   │
 │   ├── audio/                         # === AUDIO ENGINE ===
 │   │   ├── mod.rs                     # Public API re-exports
-│   │   ├── device.rs                  # cpal device init, stream management
-│   │   ├── engine.rs                  # AudioEngine: owns voices, mixer, callback
-│   │   ├── voice.rs                   # Voice: per-note sample playback state
-│   │   ├── resampler.rs              # Interpolation algorithms (cubic/linear/nearest)
-│   │   ├── mixer.rs                   # Mix voices → stereo output, apply master vol
-│   │   └── effects.rs                # Global DSP chain (optional reverb, limiter)
+│   │   ├── engine.rs                  # AudioEngine: cpal device/stream + callback
+│   │   ├── commands.rs                # AudioCommand enum
+│   │   ├── playback_state.rs          # AtomicPlaybackState (shared with UI)
+│   │   ├── mixer.rs                   # Mix voices -> stereo output, gain ramping
+│   │   ├── renderer.rs                # Tick chunk rendering
+│   │   ├── voice.rs / voice_pool.rs   # Per-note voice state + pool
+│   │   ├── resampler.rs               # Interpolation (cubic/linear/nearest)
+│   │   ├── filter.rs                  # Resonant filter + Amiga LED filter
+│   │   ├── sendfx.rs                  # Send-bus effect processors
+│   │   ├── effects/                   # Format-conditional effect processors
+│   │   │   ├── legacy.rs              # MOD/S3M/IT processor
+│   │   │   └── xm.rs                  # XM processor
+│   │   ├── sequencer_engine/          # Tick/row state machine
+│   │   │   ├── mod.rs
+│   │   │   ├── advance.rs             # Row advancement + per-row resets
+│   │   │   ├── cell.rs                # Cell decoding / note triggering
+│   │   │   ├── period.rs              # Portamento/vibrato math
+│   │   │   ├── helpers.rs
+│   │   │   └── tests.rs               # Sequencer regression tests
+│   │   └── plugins/                   # CLAP plugin hosting
+│   │       ├── clap_plugin/           # CLAP host + handle + processor
+│   │       │   ├── mod.rs             # shared imports + re-exports
+│   │       │   ├── host.rs            # host handler (log/GUI callbacks)
+│   │       │   ├── handle.rs          # main-thread ClapPluginHandle
+│   │       │   ├── processor.rs       # audio-thread ClapPluginProcessor
+│   │       │   └── tests.rs
+│   │       ├── discovery.rs / library.rs
+│   │       ├── preset_discovery.rs / preset_library.rs
+│   │       ├── param_ring.rs
+│   │       └── plugin_window.rs
 │   │
-│   ├── sequencer/                     # === SEQUENCER ===
-│   │   ├── mod.rs                     # Public API re-exports
-│   │   ├── player.rs                  # Sequencer: tick driver, row advancement
+│   ├── sequencer/                     # === DATA MODEL ===
 │   │   ├── module.rs                  # Module, OrderList, ModuleFlags
 │   │   ├── pattern.rs                 # Pattern, Row, Cell
 │   │   ├── instrument.rs              # Instrument, Envelope, EnvelopePoint
 │   │   ├── sample.rs                  # Sample, LoopType, SampleFlags
-│   │   ├── note.rs                    # Note enum, frequency table, period table
-│   │   └── effect.rs                  # Effect command types and processing
+│   │   ├── note.rs                    # Note enum, frequency/period tables
+│   │   ├── effect.rs                  # Universal + format-specific Effect enums
+│   │   ├── player.rs                  # ChannelState and transport state
+│   │   ├── envelope_generator.rs      # Envelope generation tools
+│   │   ├── period.rs                  # Period tables
+│   │   ├── plugin.rs                  # PluginSlot persistence
+│   │   ├── automation.rs              # AutomationTarget / curves
+│   │   └── slice_detector.rs          # Sample slice detection
 │   │
 │   ├── formats/                       # === FILE FORMAT HANDLERS ===
 │   │   ├── mod.rs                     # FormatHandler trait, format detection
-│   │   ├── it.rs                      # Impulse Tracker .it
-│   │   ├── xm.rs                      # FastTracker 2 .xm
-│   │   ├── s3m.rs                     # ScreamTracker 3 .s3m
+│   │   ├── it.rs / xm.rs / s3m.rs     # IT, XM, S3M
 │   │   ├── modfile.rs                 # Amiga ProTracker .mod
-│   │   └── common.rs                 # Shared parsing utilities (read_le_u16, etc.)
-│   │
-│   ├── ui/                            # === UI WIDGETS ===
-│   │   ├── mod.rs                     # Layout orchestration, top-level panel setup
-│   │   ├── pattern_grid.rs            # Pattern editor grid widget
-│   │   ├── order_list.rs              # Song order list widget
-│   │   ├── sample_editor.rs           # Waveform display and editing
-│   │   ├── instrument_editor.rs       # Envelope editor, sample mapping
-│   │   ├── transport.rs               # Play/stop/record controls
-│   │   ├── hex_input.rs              # Reusable hex digit input widget
-│   │   ├── waveform.rs               # Waveform rendering (egui Painter)
-│   │   └── theme.rs                  # Color schemes, font setup
+│   │   ├── c669.rs / mmd.rs / stm.rs / ult.rs
+│   │   ├── htk.rs / hti.rs            # Native HTRK song / instrument
+│   │   ├── wav.rs                     # WAV import/export
+│   │   ├── midi.rs                    # Standard MIDI File import
+│   │   └── common.rs                  # Shared parsing utilities
 │   │
 │   ├── edit/                          # === EDITING SYSTEM ===
-│   │   ├── mod.rs                     # Public API
 │   │   ├── history.rs                 # UndoManager: command stack
-│   │   └── commands.rs               # EditCommand trait + all command types
+│   │   ├── commands.rs                # EditCommand trait + command types
+│   │   └── block_ops.rs               # Block selection operations
 │   │
-│   └── midi/                          # === MIDI SUPPORT ===
-│       ├── mod.rs                     # Public API
-│       └── handler.rs                 # midir integration, MIDI→Note mapping
-│
-├── assets/
-│   └── fonts/
-│       └──PxPlus_IBM_VGA8.ttf        # Optional retro monospace font
+│   ├── core/                          # === UI-AGNOSTIC APP CORE ===
+│   │   ├── mod.rs                     # HtrkCore: Module + history + sync helpers
+│   │   ├── editing.rs                 # Edit dispatch wrappers
+│   │   ├── channels.rs                # Channel volume/panning helpers
+│   │   └── automation.rs              # Automation edit helpers
+│   │
+│   ├── mcp/                           # === MCP SERVER ===
+│   │   ├── server.rs                  # JSON-RPC over TCP
+│   │   ├── http.rs                    # HTTP/SSE transport
+│   │   ├── protocol.rs                # JSON-RPC types
+│   │   ├── tools.rs / resources.rs    # Read-only tools + resources
+│   │   ├── library.rs                 # Sample library + filename heuristics
+│   │   ├── plugin_tools.rs / preset_tools.rs
+│   │   └── mutations/                 # Main-thread mutation handlers
+│   │
+│   ├── tools/                         # === COMPOSITION TOOLS ===
+│   │   ├── phrase_generator.rs        # Melodic/Euclidean/Drum/Chord generators
+│   │   └── scale.rs                   # Scale + Euclidean helpers
+│   │
+│   ├── actions/                       # === UI ACTIONS ===
+│   │   ├── keyboard.rs                # Key dispatch, focus gate, Alt-menu nav
+│   │   ├── file_io.rs                 # Load/save/import/export coordination
+│   │   ├── instrument_edit.rs
+│   │   ├── sample_edit.rs
+│   │   └── slice_to_instrument.rs
+│   │
+│   ├── ui/                            # === UI WIDGETS ===
+│   │   ├── mod.rs                     # Layout orchestration
+│   │   ├── pattern_grid.rs / pattern_view.rs
+│   │   ├── order_list.rs / channel_headers.rs
+│   │   ├── sample_editor.rs / waveform.rs
+│   │   ├── instrument_editor.rs / envelope_editor.rs
+│   │   ├── mixer_view.rs / sendfx_editor.rs
+│   │   ├── playback_view.rs / oscilloscope.rs / transport.rs
+│   │   ├── automation_editor.rs
+│   │   ├── file_browser.rs / sample_library.rs / plugin_browser.rs
+│   │   ├── phrase_generator_dialog.rs / settings_window.rs
+│   │   ├── wav_export_window.rs / sample_export_dialog.rs
+│   │   ├── menu_bar.rs / status_bar.rs / help_screen.rs
+│   │   └── style.rs / theme.rs
+│   │
+│   └── bin/
+│       └── analyze_mod.rs             # Developer diagnostic binary
 │
 └── tests/
-    ├── integration/
-    │   ├── test_it_roundtrip.rs
-    │   ├── test_xm_load.rs
-    │   ├── test_s3m_load.rs
-    │   └── test_mod_load.rs
-    └── resources/
-        └── (test .it/.xm/.s3m/.mod files)
+    ├── format_conversions.rs          # HTK roundtrip + automation persistence
+    └── mcp_integration.rs             # MCP protocol smoke tests
+```
 ```
 
 ### Module Dependency Graph
 
 ```
 main.rs
-  └── app.rs
-        ├── audio::device       (cpal init)
-        ├── audio::engine       (AudioEngine::new)
-        ├── sequencer::module   (Module data)
-        ├── sequencer::player   (Sequencer processing)
-        ├── ui::*               (all UI widgets)
-        ├── edit::history       (UndoManager)
-        ├── formats::*          (load/save)
-        └── midi::handler       (optional MIDI)
+  └── app/                             (HtrkApp)
+        ├── core::HtrkCore           (Module + UndoManager)
+        ├── audio::engine            (cpal init + AudioEngine)
+        ├── audio::commands          (AudioCommand -> ring buffer)
+        ├── ui::*                    (all UI widgets)
+        ├── actions::*               (keyboard + file I/O + edits)
+        ├── formats::*               (load/save/import/export)
+        └── mcp::server              (optional automation surface)
+```
 ```
 
 ## Error Handling Strategy

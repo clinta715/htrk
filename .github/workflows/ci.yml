@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-test-lint:
+    # The project depends on windows-sys and loads CLAP DLLs, so the Windows
+    # runner is the only platform CI can currently exercise.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --all-targets
+
+      - name: Test
+        run: cargo test --all-targets
+
+      # Correctness lints (bugs, logic errors, unused results) must never
+      # regress. The remaining stylistic lints are reported below but are
+      # allowed to exist while the backlog is worked down.
+      - name: Clippy (correctness)
+        run: cargo clippy --all-targets -- -D clippy::correctness
+
+      - name: Clippy (full report)
+        continue-on-error: true
+        run: cargo clippy --all-targets
+
+      # The tree is rustfmt-clean; formatting is now enforced.
+      - name: Format check
+        run: cargo fmt --all -- --check

@@ -18,12 +18,16 @@ pub(super) fn cmd_pattern_ensure(core: &mut HtrkCore, params: &serde_json::Value
     core.ensure_module_ownership();
     if let Some(ref mut module) = core.module {
         if let Some(arc_module) = Arc::get_mut(module) {
-            let rows = num_rows.max(1).min(crate::sequencer::module::MAX_PATTERN_ROWS);
+            let rows = num_rows.clamp(1, crate::sequencer::module::MAX_PATTERN_ROWS);
             if idx >= arc_module.patterns.len() {
-                arc_module.patterns.resize_with(idx + 1, || crate::sequencer::pattern::Pattern::new(rows));
+                arc_module
+                    .patterns
+                    .resize_with(idx + 1, || crate::sequencer::pattern::Pattern::new(rows));
             } else if arc_module.patterns[idx].num_rows != rows {
                 arc_module.patterns[idx].num_rows = rows;
-                arc_module.patterns[idx].data.resize(rows, [Cell::default(); MAX_CHANNELS]);
+                arc_module.patterns[idx]
+                    .data
+                    .resize(rows, [Cell::default(); MAX_CHANNELS]);
             }
             core.sync_module_to_audio();
             return Ok(serde_json::json!({"ok": true, "index": idx, "num_rows": rows}));
@@ -64,7 +68,9 @@ pub(super) fn build_cell_from_params(params: &serde_json::Value, defaults: &Cell
     cell
 }
 
-fn parse_effect_json(obj: &serde_json::Map<String, serde_json::Value>) -> Option<crate::sequencer::effect::Effect> {
+fn parse_effect_json(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Option<crate::sequencer::effect::Effect> {
     if let Some(hex) = obj.get("hex").and_then(|v| v.as_str()) {
         return parse_hex_effect(hex);
     }
@@ -72,7 +78,9 @@ fn parse_effect_json(obj: &serde_json::Map<String, serde_json::Value>) -> Option
 }
 
 fn parse_hex_effect(hex: &str) -> Option<crate::sequencer::effect::Effect> {
-    if hex.len() < 3 { return None; }
+    if hex.len() < 3 {
+        return None;
+    }
     let chars: Vec<char> = hex.chars().collect();
     let effect_char = chars[0];
     let param_hi = chars.get(1).and_then(|c| c.to_digit(16)).unwrap_or(0) as u8;
@@ -84,11 +92,22 @@ fn parse_hex_effect(hex: &str) -> Option<crate::sequencer::effect::Effect> {
             // Volume column hex — treat as volume_effect
             return None;
         }
-        'A' => Effect::Arpeggio { note1: param_hi, note2: param_lo },
-        'B' => Effect::PositionJump { order: param_hi as u16 * 16 + param_lo as u16 },
-        'C' => Effect::SetVolume { volume: (param_hi << 4) | param_lo },
-        'D' => Effect::PatternBreak { row: param_hi as u16 * 16 + param_lo as u16 },
-        'E' => Effect::ExtendedEffect { param: (param_hi << 4) | param_lo },
+        'A' => Effect::Arpeggio {
+            note1: param_hi,
+            note2: param_lo,
+        },
+        'B' => Effect::PositionJump {
+            order: param_hi as u16 * 16 + param_lo as u16,
+        },
+        'C' => Effect::SetVolume {
+            volume: (param_hi << 4) | param_lo,
+        },
+        'D' => Effect::PatternBreak {
+            row: param_hi as u16 * 16 + param_lo as u16,
+        },
+        'E' => Effect::ExtendedEffect {
+            param: (param_hi << 4) | param_lo,
+        },
         'F' => {
             let param = (param_hi << 4) | param_lo;
             if param < 32 {
@@ -97,26 +116,61 @@ fn parse_hex_effect(hex: &str) -> Option<crate::sequencer::effect::Effect> {
                 Effect::SetTempo { bpm: param }
             }
         }
-        'G' => Effect::GlobalVolumeSlide { up: param_hi as i8, down: param_lo as i8 },
-        'H' => Effect::Vibrato { speed: param_hi, depth: param_lo },
-        'I' => Effect::Tremor { ontime: param_hi, offtime: param_lo },
-        'J' => Effect::TonePortamento { speed: (param_hi << 4) | param_lo },
+        'G' => Effect::GlobalVolumeSlide {
+            up: param_hi as i8,
+            down: param_lo as i8,
+        },
+        'H' => Effect::Vibrato {
+            speed: param_hi,
+            depth: param_lo,
+        },
+        'I' => Effect::Tremor {
+            ontime: param_hi,
+            offtime: param_lo,
+        },
+        'J' => Effect::TonePortamento {
+            speed: (param_hi << 4) | param_lo,
+        },
         'K' => Effect::TonePortamentoVolumeSlide { up: param_hi as i8 },
         'L' => Effect::VibratoVolumeSlide { up: param_hi as i8 },
-        'M' => Effect::SetPanning { pan: (param_hi << 4) | param_lo },
-        'N' => Effect::SetSampleOffset { offset: param_hi as u16 * 16 + param_lo as u16 },
-        'O' => Effect::SetEnvelopePosition { tick: param_hi as u16 * 16 + param_lo as u16 },
-        'P' => Effect::SetPanning { pan: (param_hi << 4) | param_lo },
+        'M' => Effect::SetPanning {
+            pan: (param_hi << 4) | param_lo,
+        },
+        'N' => Effect::SetSampleOffset {
+            offset: param_hi as u16 * 16 + param_lo as u16,
+        },
+        'O' => Effect::SetEnvelopePosition {
+            tick: param_hi as u16 * 16 + param_lo as u16,
+        },
+        'P' => Effect::SetPanning {
+            pan: (param_hi << 4) | param_lo,
+        },
         'Q' => Effect::ExtraFinePortamentoUp { speed: param_lo },
-        'R' => Effect::Retrigger { interval: (param_hi << 4) | param_lo },
-        'S' => Effect::SetFilterCutoff { cutoff: ((param_hi << 4) | param_lo) as u16 * 8 },
-        'T' => Effect::SetTempo { bpm: (param_hi << 4) | param_lo },
+        'R' => Effect::Retrigger {
+            interval: (param_hi << 4) | param_lo,
+        },
+        'S' => Effect::SetFilterCutoff {
+            cutoff: ((param_hi << 4) | param_lo) as u16 * 8,
+        },
+        'T' => Effect::SetTempo {
+            bpm: (param_hi << 4) | param_lo,
+        },
         'U' => Effect::FineVolumeSlideUp { amount: param_lo },
-        'V' => Effect::SetGlobalVolume { volume: (param_hi << 4) | param_lo },
-        'W' => Effect::GlobalVolumeSlide { up: param_hi as i8, down: param_lo as i8 },
+        'V' => Effect::SetGlobalVolume {
+            volume: (param_hi << 4) | param_lo,
+        },
+        'W' => Effect::GlobalVolumeSlide {
+            up: param_hi as i8,
+            down: param_lo as i8,
+        },
         'X' => Effect::ExtraFinePortamentoDown { speed: param_lo },
-        'Y' => Effect::Panbrello { speed: param_hi, depth: param_lo },
-        'Z' => Effect::SetFilterResonance { resonance: (param_hi << 4) | param_lo },
+        'Y' => Effect::Panbrello {
+            speed: param_hi,
+            depth: param_lo,
+        },
+        'Z' => Effect::SetFilterResonance {
+            resonance: (param_hi << 4) | param_lo,
+        },
         _ => return None,
     })
 }
@@ -130,18 +184,33 @@ pub(super) fn cmd_cell_set(core: &mut HtrkCore, params: &serde_json::Value) -> C
     core.ensure_module_ownership();
     if let Some(ref mut module) = core.module {
         if let Some(arc_module) = Arc::get_mut(module) {
-            let pat_idx = *arc_module.order_list.get(order).ok_or("Order index out of range")? as usize;
+            let pat_idx = *arc_module
+                .order_list
+                .get(order)
+                .ok_or("Order index out of range")? as usize;
             if pat_idx >= arc_module.patterns.len() {
                 return Err(format!("Pattern {pat_idx} does not exist"));
             }
             if row >= arc_module.patterns[pat_idx].num_rows {
-                return Err(format!("Row {row} out of range (max {})", arc_module.patterns[pat_idx].num_rows));
+                return Err(format!(
+                    "Row {row} out of range (max {})",
+                    arc_module.patterns[pat_idx].num_rows
+                ));
             }
             if channel >= MAX_CHANNELS {
-                return Err(format!("Channel {channel} out of range (max {})", MAX_CHANNELS - 1));
+                return Err(format!(
+                    "Channel {channel} out of range (max {})",
+                    MAX_CHANNELS - 1
+                ));
             }
             let old_cell = arc_module.patterns[pat_idx].data[row][channel];
-            let cmd = Box::new(SetCellCommand { order, row, channel, old_cell, new_cell });
+            let cmd = Box::new(SetCellCommand {
+                order,
+                row,
+                channel,
+                old_cell,
+                new_cell,
+            });
             let _ = core.undo_manager.execute(cmd, arc_module);
             core.sync_module_to_audio();
             return Ok(serde_json::json!({"ok": true}));
@@ -151,7 +220,9 @@ pub(super) fn cmd_cell_set(core: &mut HtrkCore, params: &serde_json::Value) -> C
 }
 
 pub(super) fn cmd_cell_set_batch(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResult {
-    let entries = params.get("entries").and_then(|v| v.as_array())
+    let entries = params
+        .get("entries")
+        .and_then(|v| v.as_array())
         .ok_or("Missing 'entries'")?;
 
     core.ensure_module_ownership();
@@ -161,11 +232,23 @@ pub(super) fn cmd_cell_set_batch(core: &mut HtrkCore, params: &serde_json::Value
             let mut new_cells = Vec::new();
 
             for entry in entries {
-                let order = entry.get("order").and_then(|v| v.as_i64()).ok_or("Each entry needs 'order'")? as usize;
-                let row = entry.get("row").and_then(|v| v.as_i64()).ok_or("Each entry needs 'row'")? as usize;
-                let channel = entry.get("channel").and_then(|v| v.as_i64()).ok_or("Each entry needs 'channel'")? as usize;
+                let order = entry
+                    .get("order")
+                    .and_then(|v| v.as_i64())
+                    .ok_or("Each entry needs 'order'")? as usize;
+                let row = entry
+                    .get("row")
+                    .and_then(|v| v.as_i64())
+                    .ok_or("Each entry needs 'row'")? as usize;
+                let channel = entry
+                    .get("channel")
+                    .and_then(|v| v.as_i64())
+                    .ok_or("Each entry needs 'channel'")? as usize;
 
-                let pat_idx = *arc_module.order_list.get(order).ok_or("Order index out of range")? as usize;
+                let pat_idx = *arc_module
+                    .order_list
+                    .get(order)
+                    .ok_or("Order index out of range")? as usize;
                 if pat_idx >= arc_module.patterns.len() {
                     return Err(format!("Pattern {pat_idx} does not exist"));
                 }
@@ -182,7 +265,11 @@ pub(super) fn cmd_cell_set_batch(core: &mut HtrkCore, params: &serde_json::Value
                 new_cells.push((row, channel, new_cell));
             }
 
-            let cmd = Box::new(BulkSetCellsCommand { order: 0, old_cells, new_cells });
+            let cmd = Box::new(BulkSetCellsCommand {
+                order: 0,
+                old_cells,
+                new_cells,
+            });
             let _ = core.undo_manager.execute(cmd, arc_module);
             core.sync_module_to_audio();
             return Ok(serde_json::json!({"ok": true, "count": entries.len()}));
@@ -220,15 +307,22 @@ pub(super) fn cmd_pattern_fill(core: &mut HtrkCore, params: &serde_json::Value) 
             for r in row_start..=row_end {
                 for c in ch_start..=ch_end {
                     old_cells.push((r, c, arc_module.patterns[idx].data[r][c]));
-                    let new_cell = build_cell_from_params(params, &arc_module.patterns[idx].data[r][c]);
+                    let new_cell =
+                        build_cell_from_params(params, &arc_module.patterns[idx].data[r][c]);
                     new_cells.push((r, c, new_cell));
                 }
             }
 
-            let cmd = Box::new(BulkSetCellsCommand { order: 0, old_cells, new_cells });
+            let cmd = Box::new(BulkSetCellsCommand {
+                order: 0,
+                old_cells,
+                new_cells,
+            });
             let _ = core.undo_manager.execute(cmd, arc_module);
             core.sync_module_to_audio();
-            return Ok(serde_json::json!({"ok": true, "cells_affected": (row_end - row_start + 1) * (ch_end - ch_start + 1)}));
+            return Ok(
+                serde_json::json!({"ok": true, "cells_affected": (row_end - row_start + 1) * (ch_end - ch_start + 1)}),
+            );
         }
     }
     Err("No module loaded".into())
@@ -265,7 +359,11 @@ pub(super) fn cmd_pattern_clear(core: &mut HtrkCore, params: &serde_json::Value)
                 }
             }
 
-            let cmd = Box::new(BulkSetCellsCommand { order: 0, old_cells, new_cells });
+            let cmd = Box::new(BulkSetCellsCommand {
+                order: 0,
+                old_cells,
+                new_cells,
+            });
             let _ = core.undo_manager.execute(cmd, arc_module);
             core.sync_module_to_audio();
             return Ok(serde_json::json!({"ok": true}));
@@ -307,7 +405,11 @@ pub(super) fn cmd_pattern_transpose(core: &mut HtrkCore, params: &serde_json::Va
             }
             let notes_affected = old_notes.len();
 
-            let cmd = Box::new(TransposeCommand { order: 0, delta: semitones, old_notes });
+            let cmd = Box::new(TransposeCommand {
+                order: 0,
+                delta: semitones,
+                old_notes,
+            });
             let _ = core.undo_manager.execute(cmd, arc_module);
             core.sync_module_to_audio();
             return Ok(serde_json::json!({"ok": true, "notes_affected": notes_affected}));
@@ -316,7 +418,10 @@ pub(super) fn cmd_pattern_transpose(core: &mut HtrkCore, params: &serde_json::Va
     Err("No module loaded".into())
 }
 
-pub(super) fn cmd_pattern_interpolate(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResult {
+pub(super) fn cmd_pattern_interpolate(
+    core: &mut HtrkCore,
+    params: &serde_json::Value,
+) -> CmdResult {
     let idx = get_i64!(params, "index").ok_or("Missing 'index'")? as usize;
     let channel = get_i64!(params, "channel").ok_or("Missing 'channel'")? as usize;
     let row_start = get_i64!(params, "row_start").ok_or("Missing 'row_start'")? as usize;
@@ -363,12 +468,16 @@ pub(super) fn cmd_pattern_interpolate(core: &mut HtrkCore, params: &serde_json::
                         old_cells.push((r, channel, arc_module.patterns[idx].data[r][channel]));
                         new_cells.push((r, channel, new_cell));
                     }
-                    let cmd = Box::new(InterpolateCommand { order: 0, old_cells, new_cells });
+                    let cmd = Box::new(InterpolateCommand {
+                        order: 0,
+                        old_cells,
+                        new_cells,
+                    });
                     let _ = core.undo_manager.execute(cmd, arc_module);
                     core.sync_module_to_audio();
                     Ok(serde_json::json!({"ok": true}))
                 }
-                _ => Err("Start or end row has no volume value".into())
+                _ => Err("Start or end row has no volume value".into()),
             }
         } else {
             Err("Failed to get exclusive module access".into())

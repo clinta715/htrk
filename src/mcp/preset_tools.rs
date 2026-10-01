@@ -9,9 +9,7 @@ use crate::mcp::protocol::*;
 /// List all discovered presets, with optional filtering and pagination.
 pub fn cmd_preset_list(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
     let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    let filter_plugin = params
-        .get("filter_plugin_id")
-        .and_then(|v| v.as_str());
+    let filter_plugin = params.get("filter_plugin_id").and_then(|v| v.as_str());
     let page = params.get("page").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
     let page_size = params
         .get("page_size")
@@ -68,9 +66,14 @@ pub fn cmd_preset_list_by_plugin(params: serde_json::Value, ctx: &ToolContext) -
         .map_err(|e| format!("Preset library lock poisoned: {e}"))?;
     let presets: Vec<_> = lib.list_plugin_presets(plugin_path, plugin_id);
     let total = presets.len();
-    let total_pages = (total + page_size - 1) / page_size;
+    let total_pages = total.div_ceil(page_size);
     let start = page * page_size;
-    let page_presets: Vec<_> = presets.iter().skip(start).take(page_size).cloned().collect();
+    let page_presets: Vec<_> = presets
+        .iter()
+        .skip(start)
+        .take(page_size)
+        .cloned()
+        .collect();
     let result: Vec<serde_json::Value> = page_presets
         .iter()
         .filter_map(|e| serde_json::to_value(e).ok())
@@ -208,12 +211,12 @@ fn format_iso8601(unix_secs: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::RwLock;
-    use crate::audio::plugins::PresetLibrary;
     use crate::audio::plugins::PluginLibrary;
+    use crate::audio::plugins::PresetLibrary;
     use crate::mcp::library::SampleLibrary;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use std::sync::RwLock;
 
     fn test_ctx() -> ToolContext {
         test_ctx_with_lib(PresetLibrary::new())
@@ -285,6 +288,10 @@ mod tests {
         let val = result.as_object().unwrap();
         assert_eq!(val["total"].as_i64().unwrap(), 1);
         assert_eq!(val["total_pages"].as_i64().unwrap(), 1);
-        assert_eq!(val["presets"].as_array().unwrap().len(), 0, "should return empty page, not panic");
+        assert_eq!(
+            val["presets"].as_array().unwrap().len(),
+            0,
+            "should return empty page, not panic"
+        );
     }
 }

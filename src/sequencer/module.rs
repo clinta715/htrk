@@ -6,7 +6,12 @@ use crate::sequencer::plugin::PluginSlot;
 use crate::sequencer::sample::Sample;
 
 fn default_send_bus_config() -> [SendEffectType; NUM_SEND_BUSES] {
-    [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None]
+    [
+        SendEffectType::Delay,
+        SendEffectType::Reverb,
+        SendEffectType::None,
+        SendEffectType::None,
+    ]
 }
 
 fn default_send_return_levels() -> [f32; NUM_SEND_BUSES] {
@@ -148,7 +153,12 @@ impl Default for Module {
             channel_panning: vec![PANNING_CENTER; DEFAULT_CHANNELS],
             channel_volume: vec![VOLUME_MAX; DEFAULT_CHANNELS],
             flags: ModuleFlags::default(),
-            send_bus_config: [SendEffectType::Delay, SendEffectType::Reverb, SendEffectType::None, SendEffectType::None],
+            send_bus_config: [
+                SendEffectType::Delay,
+                SendEffectType::Reverb,
+                SendEffectType::None,
+                SendEffectType::None,
+            ],
             send_return_levels: [0.5, 0.0, 0.0, 0.0],
             send_pre_fader: [false; NUM_SEND_BUSES],
             send_bus_plugins: [None, None, None, None],

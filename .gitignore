@@ -4,6 +4,8 @@
 *.it
 *.s3m
 *.xm
+htrk-*.zip
+.zcode/
 crash_log.txt
 run_log.txt
 analysis*.txt

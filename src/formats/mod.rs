@@ -1,16 +1,16 @@
-pub mod common;
 pub mod c669;
-pub mod htk;
+pub mod common;
 pub mod hti;
+pub mod htk;
 pub mod it;
 pub mod midi;
 pub mod mmd;
+pub mod modfile;
 pub mod s3m;
 pub mod stm;
 pub mod ult;
 pub mod wav;
 pub mod xm;
-pub mod modfile;
 
 use crate::errors::FormatResult;
 use crate::sequencer::instrument::Instrument;
@@ -92,10 +92,10 @@ pub fn save_instrument(instrument: &Instrument, samples: &[Sample]) -> FormatRes
 
 fn is_mod_magic(magic: &[u8]) -> bool {
     const MOD_SIGNATURES: &[&[u8]] = &[
-        b"M.K.", b"M!K!", b"FLT4", b"FLT8", b"4CHN", b"6CHN", b"8CHN", b"2CHN", b"CD81",
-        b"OKTA", b"16CN", b"32CN",
+        b"M.K.", b"M!K!", b"FLT4", b"FLT8", b"4CHN", b"6CHN", b"8CHN", b"2CHN", b"CD81", b"OKTA",
+        b"16CN", b"32CN",
     ];
-    MOD_SIGNATURES.iter().any(|sig| magic == *sig)
+    MOD_SIGNATURES.contains(&magic)
 }
 
 pub fn load_module(data: &[u8]) -> FormatResult<Module> {
@@ -127,9 +127,7 @@ pub fn load_module(data: &[u8]) -> FormatResult<Module> {
             let handler = s3m::S3mHandler;
             handler.load(data)
         }
-        ModuleFormat::HTK => {
-            htk::load_module(data)
-        }
+        ModuleFormat::HTK => htk::load_module(data),
         ModuleFormat::C669 => {
             let handler = c669::C669Handler;
             handler.load(data)

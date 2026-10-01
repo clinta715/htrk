@@ -331,32 +331,32 @@ fn cli_row(ui: &mut egui::Ui, flag: &str, action: &str, theme: &TrackerTheme) {
 /// params where space is tight; the popup is the canonical source.
 fn effect_table(ui: &mut egui::Ui, theme: &TrackerTheme) {
     let entries: &[(&str, &str, &str)] = &[
-        ("0",  "Arpeggio",              "XY: +semitones"),
-        ("1",  "Portamento Up",         "XX: speed"),
-        ("2",  "Portamento Down",       "XX: speed"),
-        ("3",  "Tone Portamento",       "XX: speed"),
-        ("4",  "Vibrato",               "X: speed, Y: depth"),
-        ("5",  "Tone Porta + Vol Slide","X: porta, Y: slide"),
-        ("6",  "Vibrato + Vol Slide",   "X: vib, Y: slide"),
-        ("7",  "Tremolo",               "X: speed, Y: depth"),
-        ("8",  "Set Panning",           "XX: 00-FF (80=center)"),
-        ("9",  "Set Sample Offset",     "XX: high byte"),
-        ("A",  "Volume Slide",          "X: up, Y: down"),
-        ("B",  "Position Jump",         "XX: order"),
-        ("C",  "Set Volume",            "XX: 00-40"),
-        ("D",  "Pattern Break",         "XX: row"),
-        ("E",  "Extended (E0-EF)",      "see sub-effect table"),
-        ("F",  "Set Speed / Tempo",     "XX<20: ticks, XX>=20: BPM"),
-        ("G",  "Global Volume",         "XX: 00-80"),
-        ("H",  "Global Vol Slide",      "X: up, Y: down"),
-        ("I",  "Tremor",                "X: on, Y: off"),
-        ("L",  "Envelope Position",     "XX: tick"),
-        ("P",  "Panning Slide",         "XX: signed speed"),
-        ("R",  "Filter Resonance",      "XX: 00-FF"),
-        ("S",  "Set Send Level",        "X: bus, Y: level"),
-        ("X",  "Filter Type",           "00=LP 01=HP 02=BP 03=Notch"),
-        ("Y",  "Panbrello",             "X: speed, Y: depth"),
-        ("Z",  "Filter Cutoff",         "XX: 00-FF"),
+        ("0", "Arpeggio", "XY: +semitones"),
+        ("1", "Portamento Up", "XX: speed"),
+        ("2", "Portamento Down", "XX: speed"),
+        ("3", "Tone Portamento", "XX: speed"),
+        ("4", "Vibrato", "X: speed, Y: depth"),
+        ("5", "Tone Porta + Vol Slide", "X: porta, Y: slide"),
+        ("6", "Vibrato + Vol Slide", "X: vib, Y: slide"),
+        ("7", "Tremolo", "X: speed, Y: depth"),
+        ("8", "Set Panning", "XX: 00-FF (80=center)"),
+        ("9", "Set Sample Offset", "XX: high byte"),
+        ("A", "Volume Slide", "X: up, Y: down"),
+        ("B", "Position Jump", "XX: order"),
+        ("C", "Set Volume", "XX: 00-40"),
+        ("D", "Pattern Break", "XX: row"),
+        ("E", "Extended (E0-EF)", "see sub-effect table"),
+        ("F", "Set Speed / Tempo", "XX<20: ticks, XX>=20: BPM"),
+        ("G", "Global Volume", "XX: 00-80"),
+        ("H", "Global Vol Slide", "X: up, Y: down"),
+        ("I", "Tremor", "X: on, Y: off"),
+        ("L", "Envelope Position", "XX: tick"),
+        ("P", "Panning Slide", "XX: signed speed"),
+        ("R", "Filter Resonance", "XX: 00-FF"),
+        ("S", "Set Send Level", "X: bus, Y: level"),
+        ("X", "Filter Type", "00=LP 01=HP 02=BP 03=Notch"),
+        ("Y", "Panbrello", "X: speed, Y: depth"),
+        ("Z", "Filter Cutoff", "XX: 00-FF"),
     ];
 
     egui::Grid::new("effect_table")
@@ -370,7 +370,12 @@ fn effect_table(ui: &mut egui::Ui, theme: &TrackerTheme) {
             ui.label(egui::RichText::new("Param").strong().color(theme.fg_volume));
             ui.end_row();
             for (code, name, param) in entries {
-                ui.label(egui::RichText::new(*code).monospace().strong().color(theme.fg_effect));
+                ui.label(
+                    egui::RichText::new(*code)
+                        .monospace()
+                        .strong()
+                        .color(theme.fg_effect),
+                );
                 ui.label(egui::RichText::new(*name).color(theme.fg_text));
                 ui.label(egui::RichText::new(*param).color(theme.fg_dim));
                 ui.end_row();

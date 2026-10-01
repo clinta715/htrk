@@ -1,8 +1,8 @@
-use eframe::egui;
 use crate::audio::playback_state::AtomicPlaybackState;
 use crate::sequencer::Module;
 use crate::ui::style::{FONT_CAPTION, FONT_TITLE};
 use crate::ui::TrackerTheme;
+use eframe::egui;
 use eguidev::DevUiExt;
 
 #[derive(Debug, Clone)]
@@ -48,14 +48,14 @@ pub fn draw_sample_editor(
     if *selected_sample != sample_editor.last_sample_index {
         sample_editor.zoom = 0.0;
         sample_editor.scroll_offset = 0.0;
+        // A drag never survives a sample switch (old per-sample temp IDs
+        // scoped this implicitly; typed state resets explicitly).
+        sample_editor.dragging_marker = None;
+        sample_editor.selecting = false;
         sample_editor.last_sample_index = *selected_sample;
     }
 
     let has_clipboard = sample_editor.clipboard.is_some();
-    let selection = &mut sample_editor.selection;
-    let clipboard = &mut sample_editor.clipboard;
-    let amplify_factor = &mut sample_editor.amplify_factor;
-    let waveform_visible = &mut sample_editor.waveform_visible;
 
     let list_width = sample_editor.list_width;
     let list_panel_resp = egui::Panel::left("sample_list_panel")
@@ -68,8 +68,13 @@ pub fn draw_sample_editor(
                 let any_selected = !sample_editor.selected_samples.is_empty();
                 if any_selected {
                     let count = sample_editor.selected_samples.len();
-                    if ui.dev_button("sample.delete", format!("Del {}...", count)).clicked() {
-                        let mut to_delete: Vec<usize> = sample_editor.selected_samples.iter()
+                    if ui
+                        .dev_button("sample.delete", format!("Del {}...", count))
+                        .clicked()
+                    {
+                        let mut to_delete: Vec<usize> = sample_editor
+                            .selected_samples
+                            .iter()
                             .copied()
                             .filter(|&i| i > 0 && i < module.samples.len())
                             .collect();
@@ -110,7 +115,11 @@ pub fn draw_sample_editor(
                             let sample = &module.samples[i];
                             let has_data = !sample.data.is_empty();
                             let has_name = !sample.name.is_empty();
-                            let name = if has_name { sample.name.as_str() } else { "---" };
+                            let name = if has_name {
+                                sample.name.as_str()
+                            } else {
+                                "---"
+                            };
 
                             let len_str = if sample.data.len() >= 1_048_576 {
                                 format!("{:.1}MB", sample.data.len() as f64 / 1_048_576.0)
@@ -130,7 +139,10 @@ pub fn draw_sample_editor(
                             };
 
                             let detail = if has_data {
-                                format!("{} \u{00b7} {}Hz{}", len_str, sample.sample_rate, loop_info)
+                                format!(
+                                    "{} \u{00b7} {}Hz{}",
+                                    len_str, sample.sample_rate, loop_info
+                                )
                             } else {
                                 String::new()
                             };
@@ -177,17 +189,19 @@ pub fn draw_sample_editor(
                             );
                             let prim_w = primary_galley.size().x;
                             painter.galley(
-                                egui::pos2(
-                                    text_x,
-                                    rect.center().y - primary_galley.size().y / 2.0,
-                                ),
+                                egui::pos2(text_x, rect.center().y - primary_galley.size().y / 2.0),
                                 primary_galley.clone(),
                                 fg,
                             );
 
                             if has_data && !detail.is_empty() {
                                 let dw = painter
-                                    .layout(detail.clone(), egui::FontId::monospace(9.0), theme.fg_note_empty, f32::INFINITY)
+                                    .layout(
+                                        detail.clone(),
+                                        egui::FontId::monospace(9.0),
+                                        theme.fg_note_empty,
+                                        f32::INFINITY,
+                                    )
                                     .size()
                                     .x;
                                 let dx = text_x + prim_w + 8.0;
@@ -214,7 +228,11 @@ pub fn draw_sample_editor(
                             }
 
                             if is_selected || is_playing {
-                                let bar = if is_selected { theme.fg_volume } else { theme.playback_position_line };
+                                let bar = if is_selected {
+                                    theme.fg_volume
+                                } else {
+                                    theme.playback_position_line
+                                };
                                 painter.rect_filled(
                                     egui::Rect::from_min_size(
                                         egui::pos2(rect.left(), rect.top()),
@@ -228,13 +246,15 @@ pub fn draw_sample_editor(
                             if response.clicked() {
                                 if ctrl_down {
                                     // Toggle multi-select
-                                    if let Some(pos) = sample_editor.selected_samples.iter().position(|&x| x == i) {
+                                    if let Some(pos) =
+                                        sample_editor.selected_samples.iter().position(|&x| x == i)
+                                    {
                                         sample_editor.selected_samples.remove(pos);
                                     } else {
                                         sample_editor.selected_samples.push(i);
                                     }
                                     *selected_sample = i;
-                                    *selection = None;
+                                    sample_editor.selection = None;
                                 } else if shift_down {
                                     // Select range from current selected to clicked
                                     let range_start = (*selected_sample).min(i);
@@ -246,12 +266,12 @@ pub fn draw_sample_editor(
                                         }
                                     }
                                     *selected_sample = i;
-                                    *selection = None;
+                                    sample_editor.selection = None;
                                 } else {
                                     sample_editor.selected_samples.clear();
                                     sample_editor.selected_samples.push(i);
                                     *selected_sample = i;
-                                    *selection = None;
+                                    sample_editor.selection = None;
                                 }
                             }
                             if has_data {
@@ -280,7 +300,7 @@ pub fn draw_sample_editor(
         });
     sample_editor.list_width = list_panel_resp.response.rect.width();
 
-    if *waveform_visible {
+    if sample_editor.waveform_visible {
         if let Some(sample) = module.samples.get(*selected_sample) {
             if !sample.data.is_empty() {
                 let wave_height = sample_editor.waveform_height;
@@ -289,20 +309,18 @@ pub fn draw_sample_editor(
                     .size_range(80.0..=400.0)
                     .default_size(wave_height)
                     .show_inside(ui, |ui| {
-                        let playback_positions = playback_state.sample_positions_for(*selected_sample);
+                        let playback_positions =
+                            playback_state.sample_positions_for(*selected_sample);
                         if let Some(w_event) = crate::ui::waveform::draw_waveform(
                             ui,
                             &sample.data,
                             sample.loop_start,
                             sample.loop_end,
                             sample.loop_type != crate::sequencer::sample::LoopType::None,
-                            selection,
                             *selected_sample,
                             &playback_positions,
                             theme,
-                            &mut sample_editor.cursor_pos,
-                            &mut sample_editor.zoom,
-                            &mut sample_editor.scroll_offset,
+                            sample_editor,
                             has_clipboard,
                         ) {
                             match w_event {
@@ -313,14 +331,14 @@ pub fn draw_sample_editor(
                                     event = Some(SampleEditEvent::LoopEndChanged(pos));
                                 }
                                 crate::ui::waveform::WaveformEvent::CutSelection => {
-                                    if let Some((s, e)) = *selection {
+                                    if let Some((s, e)) = sample_editor.selection {
                                         let start = s.min(e);
                                         let end = s.max(e);
                                         event = Some(SampleEditEvent::CutRegion(start, end));
                                     }
                                 }
                                 crate::ui::waveform::WaveformEvent::CopySelection => {
-                                    if let Some((s, e)) = *selection {
+                                    if let Some((s, e)) = sample_editor.selection {
                                         let start = s.min(e);
                                         let end = s.max(e);
                                         event = Some(SampleEditEvent::CopyRegion(start, end));
@@ -332,14 +350,14 @@ pub fn draw_sample_editor(
                                     }
                                 }
                                 crate::ui::waveform::WaveformEvent::CropToSelection => {
-                                    if let Some((s, e)) = *selection {
+                                    if let Some((s, e)) = sample_editor.selection {
                                         let start = s.min(e);
                                         let end = s.max(e);
                                         event = Some(SampleEditEvent::CropRegion(start, end));
                                     }
                                 }
                                 crate::ui::waveform::WaveformEvent::SilenceSelection => {
-                                    if let Some((s, e)) = *selection {
+                                    if let Some((s, e)) = sample_editor.selection {
                                         let start = s.min(e);
                                         let end = s.max(e);
                                         event = Some(SampleEditEvent::SilenceRegion(start, end));
@@ -355,33 +373,39 @@ pub fn draw_sample_editor(
                                     event = Some(SampleEditEvent::TrimSilence);
                                 }
                                 crate::ui::waveform::WaveformEvent::SetLoopFromSelection => {
-                                    if let Some((s, e)) = *selection {
+                                    if let Some((s, e)) = sample_editor.selection {
                                         let start = s.min(e);
                                         let end = s.max(e);
-                                        event = Some(SampleEditEvent::SetLoopFromSelection(start, end));
+                                        event =
+                                            Some(SampleEditEvent::SetLoopFromSelection(start, end));
                                     }
                                 }
                                 crate::ui::waveform::WaveformEvent::FadeInSelection => {
-                                    if let Some((s, e)) = *selection {
+                                    if let Some((s, e)) = sample_editor.selection {
                                         let start = s.min(e);
                                         let end = s.max(e);
                                         event = Some(SampleEditEvent::FadeIn(start, end));
                                     }
                                 }
                                 crate::ui::waveform::WaveformEvent::FadeOutSelection => {
-                                    if let Some((s, e)) = *selection {
+                                    if let Some((s, e)) = sample_editor.selection {
                                         let start = s.min(e);
                                         let end = s.max(e);
                                         event = Some(SampleEditEvent::FadeOut(start, end));
                                     }
                                 }
                                 crate::ui::waveform::WaveformEvent::ZoomToSelection => {
-                                    if let Some((s, e)) = *selection {
+                                    if let Some((s, e)) = sample_editor.selection {
                                         let start = s.min(e);
                                         let end = s.max(e);
                                         let sel_len = end.saturating_sub(start).max(1);
                                         sample_editor.zoom = sel_len as f32;
-                                        sample_editor.scroll_offset = if sel_len >= sample.data.len() { 0.0 } else { start as f32 / (sample.data.len() - sel_len) as f32 };
+                                        sample_editor.scroll_offset =
+                                            if sel_len >= sample.data.len() {
+                                                0.0
+                                            } else {
+                                                start as f32 / (sample.data.len() - sel_len) as f32
+                                            };
                                     }
                                 }
                                 crate::ui::waveform::WaveformEvent::ZoomFit => {
@@ -399,9 +423,13 @@ pub fn draw_sample_editor(
                         ui.horizontal(|ui| {
                             if let Some(idx) = sample_editor.cursor_pos {
                                 let time_ms = idx as f64 / sample.sample_rate as f64 * 1000.0;
-                                ui.label(egui::RichText::new(format!("Pos:{} ({:.1}ms)", idx, time_ms)).size(FONT_CAPTION).monospace());
+                                ui.label(
+                                    egui::RichText::new(format!("Pos:{} ({:.1}ms)", idx, time_ms))
+                                        .size(FONT_CAPTION)
+                                        .monospace(),
+                                );
                             }
-                            if let Some((s, e)) = *selection {
+                            if let Some((s, e)) = sample_editor.selection {
                                 let sel_len = e.saturating_sub(s);
                                 let sel_ms = sel_len as f64 / sample.sample_rate as f64 * 1000.0;
                                 let mut peak: f32 = 0.0;
@@ -410,39 +438,87 @@ pub fn draw_sample_editor(
                                 let e_clamped = e.min(sample.data.len());
                                 for i in s_clamped..e_clamped {
                                     let v = sample.data[i].abs();
-                                    if v > peak { peak = v; }
+                                    if v > peak {
+                                        peak = v;
+                                    }
                                     sum_sq += sample.data[i] as f64 * sample.data[i] as f64;
                                 }
                                 let rms = (sum_sq / sel_len.max(1) as f64).sqrt() as f32;
-                                let peak_db = if peak > 0.0 { 20.0 * peak.log10() } else { -f32::INFINITY };
-                                let rms_db = if rms > 0.0 { 20.0 * rms.log10() } else { -f32::INFINITY };
-                                ui.label(egui::RichText::new(format!("Sel:{}-{} ({}smp, {:.1}ms)", s, e, sel_len, sel_ms)).size(FONT_CAPTION).monospace());
-                                ui.label(egui::RichText::new(format!("Peak:{:.1}dB", peak_db)).size(FONT_CAPTION).monospace());
-                                ui.label(egui::RichText::new(format!("RMS:{:.1}dB", rms_db)).size(FONT_CAPTION).monospace());
-                            }
-                            ui.label(egui::RichText::new(format!("{}Hz|{}smp", sample.sample_rate, sample.data.len())).size(FONT_CAPTION).monospace());
-
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let zoom_pct = if sample_editor.zoom <= 0.0 || sample_editor.zoom >= sample.data.len() as f32 {
-                                    100.0
+                                let peak_db = if peak > 0.0 {
+                                    20.0 * peak.log10()
                                 } else {
-                                    (sample.data.len() as f32 / sample_editor.zoom) * 100.0
+                                    -f32::INFINITY
                                 };
-                                ui.label(egui::RichText::new(format!("Zoom:{:.0}%", zoom_pct)).size(FONT_CAPTION).monospace());
-                                if ui.dev_button("waveform.zoom_sel", "Sel").clicked() {
-                                    if let Some((s, e)) = *selection {
-                                        let start = s.min(e);
-                                        let end = s.max(e);
-                                        let sel_len = end.saturating_sub(start).max(1);
-                                        sample_editor.zoom = sel_len as f32;
-                                        sample_editor.scroll_offset = if sel_len >= sample.data.len() { 0.0 } else { start as f32 / (sample.data.len() - sel_len) as f32 };
+                                let rms_db = if rms > 0.0 {
+                                    20.0 * rms.log10()
+                                } else {
+                                    -f32::INFINITY
+                                };
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Sel:{}-{} ({}smp, {:.1}ms)",
+                                        s, e, sel_len, sel_ms
+                                    ))
+                                    .size(FONT_CAPTION)
+                                    .monospace(),
+                                );
+                                ui.label(
+                                    egui::RichText::new(format!("Peak:{:.1}dB", peak_db))
+                                        .size(FONT_CAPTION)
+                                        .monospace(),
+                                );
+                                ui.label(
+                                    egui::RichText::new(format!("RMS:{:.1}dB", rms_db))
+                                        .size(FONT_CAPTION)
+                                        .monospace(),
+                                );
+                            }
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{}Hz|{}smp",
+                                    sample.sample_rate,
+                                    sample.data.len()
+                                ))
+                                .size(FONT_CAPTION)
+                                .monospace(),
+                            );
+
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let zoom_pct = if sample_editor.zoom <= 0.0
+                                        || sample_editor.zoom >= sample.data.len() as f32
+                                    {
+                                        100.0
+                                    } else {
+                                        (sample.data.len() as f32 / sample_editor.zoom) * 100.0
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(format!("Zoom:{:.0}%", zoom_pct))
+                                            .size(FONT_CAPTION)
+                                            .monospace(),
+                                    );
+                                    if ui.dev_button("waveform.zoom_sel", "Sel").clicked() {
+                                        if let Some((s, e)) = sample_editor.selection {
+                                            let start = s.min(e);
+                                            let end = s.max(e);
+                                            let sel_len = end.saturating_sub(start).max(1);
+                                            sample_editor.zoom = sel_len as f32;
+                                            sample_editor.scroll_offset = if sel_len
+                                                >= sample.data.len()
+                                            {
+                                                0.0
+                                            } else {
+                                                start as f32 / (sample.data.len() - sel_len) as f32
+                                            };
+                                        }
                                     }
-                                }
-                                if ui.dev_button("waveform.fit", "Fit").clicked() {
-                                    sample_editor.zoom = 0.0;
-                                    sample_editor.scroll_offset = 0.0;
-                                }
-                            });
+                                    if ui.dev_button("waveform.fit", "Fit").clicked() {
+                                        sample_editor.zoom = 0.0;
+                                        sample_editor.scroll_offset = 0.0;
+                                    }
+                                },
+                            );
                         });
                     }
                 }
@@ -469,17 +545,17 @@ pub fn draw_sample_editor(
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.selectable_label(*waveform_visible, "Waveform").clicked() {
-                            *waveform_visible = !*waveform_visible;
+                        if ui.selectable_label(sample_editor.waveform_visible, "Waveform").clicked() {
+                            sample_editor.waveform_visible = !sample_editor.waveform_visible;
                         }
                         ui.separator();
                         if ui.dev_button("sample.header.next", ">>").clicked() && *selected_sample + 1 < module.samples.len() {
                             *selected_sample += 1;
-                            *selection = None;
+                            sample_editor.selection = None;
                         }
                         if ui.dev_button("sample.header.prev", "<<").clicked() && *selected_sample > 1 {
                             *selected_sample -= 1;
-                            *selection = None;
+                            sample_editor.selection = None;
                         }
                     });
                 });
@@ -577,8 +653,8 @@ pub fn draw_sample_editor(
                                 });
 
                                 crate::ui::draw_group(&mut columns[1], "Clipboard", theme, |ui| {
-                                    let has_sel = selection.is_some();
-                                    let has_clip = clipboard.is_some();
+                                    let has_sel = sample_editor.selection.is_some();
+                                    let has_clip = sample_editor.clipboard.is_some();
                                     ui.horizontal_wrapped(|ui| {
                                         let r = ui.add_enabled(has_sel, egui::Button::new("Cut"));
                                         eguidev::track_response_full(
@@ -587,7 +663,7 @@ pub fn draw_sample_editor(
                                                 visible: ui.is_visible() && ui.is_rect_visible(r.rect), ..Default::default() },
                                         );
                                         if r.clicked() {
-                                            if let Some((s, e)) = *selection {
+                                            if let Some((s, e)) = sample_editor.selection {
                                                 ev = Some(SampleEditEvent::CutRegion(s.min(e), s.max(e)));
                                             }
                                         }
@@ -599,7 +675,7 @@ pub fn draw_sample_editor(
                                                 visible: ui.is_visible() && ui.is_rect_visible(r.rect), ..Default::default() },
                                         );
                                         if r.clicked() {
-                                            if let Some((s, e)) = *selection {
+                                            if let Some((s, e)) = sample_editor.selection {
                                                 ev = Some(SampleEditEvent::CopyRegion(s.min(e), s.max(e)));
                                             }
                                         }
@@ -611,7 +687,7 @@ pub fn draw_sample_editor(
                                                 visible: ui.is_visible() && ui.is_rect_visible(r.rect), ..Default::default() },
                                         );
                                         if r.clicked() {
-                                            let pos = selection.map(|(s, e)| s.min(e)).unwrap_or(0);
+                                            let pos = sample_editor.selection.map(|(s, e)| s.min(e)).unwrap_or(0);
                                             ev = Some(SampleEditEvent::PasteRegion(pos));
                                         }
                                     });
@@ -625,7 +701,7 @@ pub fn draw_sample_editor(
 
                         ui.add_space(4.0);
                         crate::ui::draw_group(ui, "Process", theme, |ui| {
-                            let has_sel = selection.is_some();
+                            let has_sel = sample_editor.selection.is_some();
                             ui.horizontal(|ui| {
                                 let r = ui.add_enabled(has_sel, egui::Button::new("Crop"));
                                 eguidev::track_response_full(
@@ -634,15 +710,15 @@ pub fn draw_sample_editor(
                                         visible: ui.is_visible() && ui.is_rect_visible(r.rect), ..Default::default() },
                                 );
                                 if r.clicked() {
-                                    if let Some((s, e)) = *selection {
+                                    if let Some((s, e)) = sample_editor.selection {
                                         event = Some(SampleEditEvent::CropRegion(s.min(e), s.max(e)));
                                     }
                                 }
 
                                 ui.label("Amp:");
-                                ui.add(egui::DragValue::new(amplify_factor).speed(0.05).range(0.0..=10.0));
-                                if ui.dev_button("sample.process.amplify", "Apply").clicked() && *amplify_factor != 1.0 {
-                                    event = Some(SampleEditEvent::Amplify(*amplify_factor));
+                                ui.add(egui::DragValue::new(&mut sample_editor.amplify_factor).speed(0.05).range(0.0..=10.0));
+                                if ui.dev_button("sample.process.amplify", "Apply").clicked() && sample_editor.amplify_factor != 1.0 {
+                                    event = Some(SampleEditEvent::Amplify(sample_editor.amplify_factor));
                                 }
 
                                 let r = ui.add_enabled(has_sel, egui::Button::new("Silence"));
@@ -652,7 +728,7 @@ pub fn draw_sample_editor(
                                         visible: ui.is_visible() && ui.is_rect_visible(r.rect), ..Default::default() },
                                 );
                                 if r.clicked() {
-                                    if let Some((s, e)) = *selection {
+                                    if let Some((s, e)) = sample_editor.selection {
                                         event = Some(SampleEditEvent::SilenceRegion(s.min(e), s.max(e)));
                                     }
                                 }
@@ -664,7 +740,7 @@ pub fn draw_sample_editor(
                                         visible: ui.is_visible() && ui.is_rect_visible(r.rect), ..Default::default() },
                                 );
                                 if r.clicked() {
-                                    if let Some((s, e)) = *selection {
+                                    if let Some((s, e)) = sample_editor.selection {
                                         event = Some(SampleEditEvent::SetLoopFromSelection(s.min(e), s.max(e)));
                                     }
                                 }

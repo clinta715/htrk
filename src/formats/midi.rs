@@ -74,11 +74,21 @@ pub fn import_midi(data: &[u8], rows_per_beat: u32) -> FormatResult<MidiImport> 
     // ── Pass 1: walk every track, accumulate absolute-tick note events. ──
     // A note-on with velocity 0 is treated as a note-off (common SMF convention).
     #[derive(Clone, Copy)]
-    struct NoteOn { row: usize, key: u8, vel: u8 }
+    struct NoteOn {
+        row: usize,
+        key: u8,
+        vel: u8,
+    }
     // channel -> key -> (row, vel) of the still-sounding note-on
     let mut sounding: Vec<std::collections::HashMap<u8, NoteOn>> = vec![];
     // (row, channel, key, vel) — final placed note-ons with their cut row
-    struct PlacedNote { on_row: usize, off_row: usize, channel: usize, key: u8, vel: u8 }
+    struct PlacedNote {
+        on_row: usize,
+        off_row: usize,
+        channel: usize,
+        key: u8,
+        vel: u8,
+    }
     let mut placed: Vec<PlacedNote> = Vec::new();
     let mut track_names: Vec<String> = Vec::new();
     let mut bpm: u16 = 0;
@@ -116,7 +126,9 @@ pub fn import_midi(data: &[u8], rows_per_beat: u32) -> FormatResult<MidiImport> 
                                     key: on.key,
                                     vel: on.vel,
                                 });
-                                if row > max_row { max_row = row; }
+                                if row > max_row {
+                                    max_row = row;
+                                }
                             }
                         } else {
                             // Close any prior sounding note of the same key first.
@@ -130,14 +142,17 @@ pub fn import_midi(data: &[u8], rows_per_beat: u32) -> FormatResult<MidiImport> 
                                 });
                             }
                             sounding[channel].insert(key, NoteOn { row, key, vel });
-                            if row > max_row { max_row = row; }
+                            if row > max_row {
+                                max_row = row;
+                            }
                         }
                     }
                     MidiMessage::NoteOff { key, .. } => {
                         let key = key.as_int();
                         if let Some(on) = sounding[channel].remove(&key) {
                             let row = ((abs_tick as u64 + (ticks_per_row / 2) as u64)
-                                / ticks_per_row as u64) as usize;
+                                / ticks_per_row as u64)
+                                as usize;
                             placed.push(PlacedNote {
                                 on_row: on.row,
                                 off_row: row,
@@ -145,7 +160,9 @@ pub fn import_midi(data: &[u8], rows_per_beat: u32) -> FormatResult<MidiImport> 
                                 key: on.key,
                                 vel: on.vel,
                             });
-                            if row > max_row { max_row = row; }
+                            if row > max_row {
+                                max_row = row;
+                            }
                         }
                     }
                     // Other channel-voice messages (CC, pitch bend, program change,
@@ -156,7 +173,9 @@ pub fn import_midi(data: &[u8], rows_per_beat: u32) -> FormatResult<MidiImport> 
                     MetaMessage::TrackName(name) => {
                         let s = std::str::from_utf8(name).unwrap_or("").trim().to_string();
                         if !s.is_empty() {
-                            while track_names.len() <= channel { track_names.push(String::new()); }
+                            while track_names.len() <= channel {
+                                track_names.push(String::new());
+                            }
                             track_names[channel] = s;
                         }
                     }
@@ -175,9 +194,11 @@ pub fn import_midi(data: &[u8], rows_per_beat: u32) -> FormatResult<MidiImport> 
             }
         }
         // Close any notes still sounding at end-of-track.
-        let end_row = ((abs_tick as u64 + (ticks_per_row / 2) as u64)
-            / ticks_per_row as u64) as usize;
-        if end_row > max_row { max_row = end_row; }
+        let end_row =
+            ((abs_tick as u64 + (ticks_per_row / 2) as u64) / ticks_per_row as u64) as usize;
+        if end_row > max_row {
+            max_row = end_row;
+        }
         if !sounding[channel].is_empty() {
             for (_, on) in sounding[channel].drain() {
                 placed.push(PlacedNote {
@@ -201,7 +222,7 @@ pub fn import_midi(data: &[u8], rows_per_beat: u32) -> FormatResult<MidiImport> 
         )));
     }
     let total_rows = max_row + 1;
-    let num_patterns = ((total_rows + ROWS_PER_PATTERN - 1) / ROWS_PER_PATTERN).max(1);
+    let num_patterns = total_rows.div_ceil(ROWS_PER_PATTERN).max(1);
     let mut patterns: Vec<Pattern> = (0..num_patterns)
         .map(|_| Pattern::new(ROWS_PER_PATTERN))
         .collect();
@@ -209,7 +230,9 @@ pub fn import_midi(data: &[u8], rows_per_beat: u32) -> FormatResult<MidiImport> 
     // Place note-offs first, then note-ons — so a note-on landing on a row
     // that also carries a note-off (retrigger) overwrites the off.
     for n in &placed {
-        if n.off_row <= n.on_row { continue; }
+        if n.off_row <= n.on_row {
+            continue;
+        }
         let off_pat = n.off_row / ROWS_PER_PATTERN;
         let off_row_in_pat = n.off_row % ROWS_PER_PATTERN;
         if off_pat < patterns.len() {
@@ -222,7 +245,9 @@ pub fn import_midi(data: &[u8], rows_per_beat: u32) -> FormatResult<MidiImport> 
     for n in &placed {
         let pat = n.on_row / ROWS_PER_PATTERN;
         let row_in_pat = n.on_row % ROWS_PER_PATTERN;
-        if pat >= patterns.len() { continue; }
+        if pat >= patterns.len() {
+            continue;
+        }
         let cell = patterns[pat].cell_mut(row_in_pat, n.channel);
         // Note-on wins over any prior contents (incl. a note-off from the loop
         // above), but a note already placed by an earlier (row,channel) entry
@@ -296,7 +321,7 @@ mod tests {
         value >>= 7;
         while value > 0 {
             idx -= 1;
-            buffer[idx] = (((value & 0x7F) as u8)) | 0x80;
+            buffer[idx] = ((value & 0x7F) as u8) | 0x80;
             value >>= 7;
         }
         out.extend_from_slice(&buffer[idx..]);
@@ -353,13 +378,14 @@ mod tests {
     #[test]
     fn test_pattern_split_at_64_rows() {
         // A note at row 70 should land in pattern 1, row 6.
-        let track: &[(u32, u8, u8, u8)] = &[
-            (70, 0x90, 72, 100),
-            (74, 0x80, 72, 0),
-        ];
+        let track: &[(u32, u8, u8, u8)] = &[(70, 0x90, 72, 100), (74, 0x80, 72, 0)];
         let data = build_smf(&[track], 1); // ppq=1, rpb=4 => ticks_per_row=1 (ppq/rpb rounded: (1+2)/4=0 -> max(1)=1)
         let imp = import_midi(&data, 4).unwrap();
-        assert!(imp.patterns.len() >= 2, "expected split, got {}", imp.patterns.len());
+        assert!(
+            imp.patterns.len() >= 2,
+            "expected split, got {}",
+            imp.patterns.len()
+        );
         assert_eq!(imp.patterns[1].cell(6, 0).note, Note::On(72));
     }
 
@@ -369,10 +395,10 @@ mod tests {
         // (here both at abs tick 5: off after delta 5, then on with delta 0),
         // the note-on wins and the off is not placed.
         let track: &[(u32, u8, u8, u8)] = &[
-            (0, 0x90, 60, 100),  // on  at abs 0
-            (5, 0x80, 60, 0),    // off at abs 5
-            (0, 0x90, 62, 100),  // on  at abs 5 (delta 0)
-            (9, 0x80, 62, 0),    // off at abs 14
+            (0, 0x90, 60, 100), // on  at abs 0
+            (5, 0x80, 60, 0),   // off at abs 5
+            (0, 0x90, 62, 100), // on  at abs 5 (delta 0)
+            (9, 0x80, 62, 0),   // off at abs 14
         ];
         let data = build_smf(&[track], 4);
         let imp = import_midi(&data, 4).unwrap();
@@ -391,7 +417,7 @@ mod tests {
         out.extend_from_slice(&6u32.to_be_bytes());
         out.extend_from_slice(&0u16.to_be_bytes()); // format 0
         out.extend_from_slice(&1u16.to_be_bytes()); // 1 track
-        // SMPTE: -24 fps => 0xE8, 40 subframes
+                                                    // SMPTE: -24 fps => 0xE8, 40 subframes
         out.push(0xE8);
         out.push(40u8);
         // empty track

@@ -1,6 +1,6 @@
-use std::{env, fs};
 use htrk::formats::load_module;
-use htrk::sequencer::{Module, Note, Effect, Cell};
+use htrk::sequencer::{Cell, Effect, Module, Note};
+use std::{env, fs};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -72,17 +72,26 @@ fn effect_name(e: &Effect) -> String {
 fn flag_warnings(module: &Module, ord_idx: usize, row: usize, ch: usize, cell: &Cell) {
     if let Effect::SetVolume { volume } = cell.effect {
         if volume == 0 {
-            println!("        *** WARNING: SetVolume(0) at order {} row {} ch {} - channel silenced", ord_idx, row, ch);
+            println!(
+                "        *** WARNING: SetVolume(0) at order {} row {} ch {} - channel silenced",
+                ord_idx, row, ch
+            );
         }
     }
     if let Effect::Arpeggio { note1, note2 } = cell.effect {
         if note1 == 0 && note2 == 0 {
-            println!("        *** NOTE: Arpeggio(0,0) = no-op effect at order {} row {} ch {}", ord_idx, row, ch);
+            println!(
+                "        *** NOTE: Arpeggio(0,0) = no-op effect at order {} row {} ch {}",
+                ord_idx, row, ch
+            );
         }
     }
     if let Effect::VolumeSlide { up, down } = cell.effect {
         if up == 0 && down == 0 {
-            println!("        *** NOTE: VolumeSlide(0,0) = no-op at order {} row {} ch {}", ord_idx, row, ch);
+            println!(
+                "        *** NOTE: VolumeSlide(0,0) = no-op at order {} row {} ch {}",
+                ord_idx, row, ch
+            );
         }
     }
     if let Note::On(_) = cell.note {
@@ -104,20 +113,20 @@ fn flag_warnings(module: &Module, ord_idx: usize, row: usize, ch: usize, cell: &
                 }
             }
         } else {
-            println!("        *** WARNING: Note without instrument at order {} row {} ch {}", ord_idx, row, ch);
+            println!(
+                "        *** WARNING: Note without instrument at order {} row {} ch {}",
+                ord_idx, row, ch
+            );
         }
     }
-    match &cell.effect {
-        Effect::ExtendedEffect { param } => {
-            let sub = param >> 4;
-            match sub {
-                0x1 | 0x2 => println!("        *** NOTE: E{:X}{:X} = fine portamento (not regular) at order {} row {} ch {}", sub, param & 0xF, ord_idx, row, ch),
-                0xA => println!("        *** NOTE: EA{:X} = FineVolumeSlideUp (not NoteCut) at order {} row {} ch {}", param & 0xF, ord_idx, row, ch),
-                0xB => println!("        *** NOTE: EB{:X} = FineVolumeSlideDown (not NoteDelay) at order {} row {} ch {}", param & 0xF, ord_idx, row, ch),
-                _ => {}
-            }
+    if let Effect::ExtendedEffect { param } = &cell.effect {
+        let sub = param >> 4;
+        match sub {
+            0x1 | 0x2 => println!("        *** NOTE: E{:X}{:X} = fine portamento (not regular) at order {} row {} ch {}", sub, param & 0xF, ord_idx, row, ch),
+            0xA => println!("        *** NOTE: EA{:X} = FineVolumeSlideUp (not NoteCut) at order {} row {} ch {}", param & 0xF, ord_idx, row, ch),
+            0xB => println!("        *** NOTE: EB{:X} = FineVolumeSlideDown (not NoteDelay) at order {} row {} ch {}", param & 0xF, ord_idx, row, ch),
+            _ => {}
         }
-        _ => {}
     }
 }
 
@@ -125,11 +134,16 @@ fn dump_header(module: &Module) {
     println!("=== Module Header ===");
     println!("Name:   {}", module.name);
     println!("Format: {:?}", module.format);
-    println!("BPM:    {}  Speed: {}", module.initial_bpm, module.initial_speed);
+    println!(
+        "BPM:    {}  Speed: {}",
+        module.initial_bpm, module.initial_speed
+    );
     println!("Global Vol: {}", module.initial_global_volume);
-    println!("Orders: {} entries, first = {:?}",
+    println!(
+        "Orders: {} entries, first = {:?}",
         module.order_list.len(),
-        module.order_list.first().copied().unwrap_or(0));
+        module.order_list.first().copied().unwrap_or(0)
+    );
     println!("Instruments: {} total", module.instruments.len());
     println!("Samples: {} total", module.samples.len());
     println!("Patterns: {} total", module.patterns.len());
@@ -145,12 +159,20 @@ fn dump_samples(module: &Module) {
         let len_kb = s.data.len() as f64 / 1024.0;
         let loop_str = match s.loop_type {
             htrk::sequencer::LoopType::None => "None".to_string(),
-            htrk::sequencer::LoopType::Forward => format!("Forward[{}-{}]", s.loop_start, s.loop_end),
-            htrk::sequencer::LoopType::PingPong => format!("PingPong[{}-{}]", s.loop_start, s.loop_end),
-            htrk::sequencer::LoopType::Backward => format!("Backward[{}-{}]", s.loop_start, s.loop_end),
+            htrk::sequencer::LoopType::Forward => {
+                format!("Forward[{}-{}]", s.loop_start, s.loop_end)
+            }
+            htrk::sequencer::LoopType::PingPong => {
+                format!("PingPong[{}-{}]", s.loop_start, s.loop_end)
+            }
+            htrk::sequencer::LoopType::Backward => {
+                format!("Backward[{}-{}]", s.loop_start, s.loop_end)
+            }
         };
-        println!("  {:2}: \"{}\"  {:>7.1}KB  {}Hz  vol={}  loop={}",
-            i, s.name, len_kb, s.sample_rate, s.default_volume, loop_str);
+        println!(
+            "  {:2}: \"{}\"  {:>7.1}KB  {}Hz  vol={}  loop={}",
+            i, s.name, len_kb, s.sample_rate, s.default_volume, loop_str
+        );
     }
     println!();
 }
@@ -162,8 +184,12 @@ fn dump_orders(module: &Module) {
 
     for (ord_idx, &pat_idx) in module.order_list.iter().enumerate() {
         if pat_idx as usize >= module.patterns.len() {
-            println!("[Order {}] *** INVALID pattern index {} (max {}) ***",
-                ord_idx, pat_idx, module.patterns.len() - 1);
+            println!(
+                "[Order {}] *** INVALID pattern index {} (max {}) ***",
+                ord_idx,
+                pat_idx,
+                module.patterns.len() - 1
+            );
             continue;
         }
 
@@ -188,18 +214,24 @@ fn dump_orders(module: &Module) {
             }
 
             if !has_any {
-                println!("[Order {:3}] Pattern {} ({} rows)", ord_idx, pat_idx, pattern.num_rows);
+                println!(
+                    "[Order {:3}] Pattern {} ({} rows)",
+                    ord_idx, pat_idx, pattern.num_rows
+                );
                 has_any = true;
             }
 
             for (ch, cell) in &row_cells {
                 let note_str = format!("{}", cell.note);
-                let inst_str = cell.instrument
+                let inst_str = cell
+                    .instrument
                     .map(|i| format!("{:02X}", i))
                     .unwrap_or_else(|| "--".to_string());
                 let eff_str = effect_name(&cell.effect);
-                println!("  row={:3} ch={:2}  note={:>4}  inst={:>3}  eff={}",
-                    row, ch, note_str, inst_str, eff_str);
+                println!(
+                    "  row={:3} ch={:2}  note={:>4}  inst={:>3}  eff={}",
+                    row, ch, note_str, inst_str, eff_str
+                );
                 flag_warnings(module, ord_idx, row, *ch, cell);
             }
         }

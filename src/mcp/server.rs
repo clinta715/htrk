@@ -1,16 +1,16 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{mpsc, Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
+use std::sync::{mpsc, Arc};
 use std::thread;
 
-use crate::mcp::library::SampleLibrary;
 use crate::audio::plugins::{PluginLibrary, PresetLibrary};
+use crate::mcp::http::HttpServer;
+use crate::mcp::library::SampleLibrary;
 use crate::mcp::protocol::*;
 use crate::mcp::resources;
 use crate::mcp::tools;
-use crate::mcp::http::HttpServer;
 
 pub struct McpServer {
     pub port: u16,
@@ -120,7 +120,10 @@ impl McpServer {
                                 let mut reader = BufReader::new(s.try_clone().unwrap());
                                 reader.read_line(&mut read_buf)
                             }
-                            None => { i += 1; continue; }
+                            None => {
+                                i += 1;
+                                continue;
+                            }
                         };
 
                         match read_result {
@@ -151,7 +154,8 @@ impl McpServer {
 
                                     if let Some(s) = connections.get(i) {
                                         let mut write_stream = s.try_clone().unwrap();
-                                        let resp_str = serde_json::to_string(&response).unwrap_or_default();
+                                        let resp_str =
+                                            serde_json::to_string(&response).unwrap_or_default();
                                         let _ = writeln!(write_stream, "{resp_str}");
                                         let _ = write_stream.flush();
                                     }
@@ -270,7 +274,7 @@ pub(crate) fn handle_jsonrpc(
             // Try read-only path first
             match tools::call_tool(name, arguments.clone(), ctx) {
                 Ok(result) => {
-                    return JsonRpcResponse::success(id, serde_json::json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&result).unwrap_or_default() }] }));
+                    JsonRpcResponse::success(id, serde_json::json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&result).unwrap_or_default() }] }))
                 }
                 Err(ref e) if e == "Requires mutation dispatch" => {
                     // Route through main-thread command queue

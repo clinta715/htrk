@@ -3,12 +3,12 @@ fixture_raw("empty_project")
 local vp = root()
 vp:wait_for_settle()
 
--- Try raw_key: press ctrl, press n, release n, release ctrl
-vp:raw_key("control_left", "press", { ctrl = true })
-vp:wait_for_capture()
+-- Try raw_key: press n with ctrl modifier, release n.
+-- NOTE: the runner has no "control_left"/"alt_left" key names (egui models
+-- modifiers, not modifier keys), so modifier keys are expressed via the
+-- modifiers argument only. Per-event modifiers are what the app routes on.
 vp:raw_key("n", "press", { ctrl = true })
 vp:raw_key("n", "release", { ctrl = true })
-vp:raw_key("control_left", "release", { ctrl = false })
 vp:wait_for_capture()
 
 -- Check for any new widgets
@@ -25,13 +25,9 @@ for _, w in ipairs(all) do
 end
 log("View widgets: " .. view_count)
 
--- Also try clicking the "New Song" button through the menu
--- First try opening the File menu with Alt+F
-vp:raw_key("alt_left", "press", { alt = true })
-vp:wait_for_capture()
+-- Also try opening the File menu with raw Alt+F (modifiers only).
 vp:raw_key("f", "press", { alt = true })
 vp:raw_key("f", "release", { alt = true })
-vp:raw_key("alt_left", "release", { alt = false })
 vp:wait_for_capture()
 
 -- Check after Alt+F

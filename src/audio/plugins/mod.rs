@@ -9,8 +9,8 @@ pub mod library;
 pub mod param_ring;
 #[cfg(windows)]
 pub mod plugin_window;
-pub mod preset_library;
 pub mod preset_discovery;
+pub mod preset_library;
 
 pub use library::PluginLibrary;
 pub use preset_library::PresetLibrary;
@@ -142,7 +142,7 @@ pub struct ParamInfo {
 // ── Parameter Change Event (for SPSC queue) ──
 
 pub use param_ring::ParamChange;
-pub use param_ring::ParamRingBuffer;
+pub use param_ring::{param_channel, ParamReceiver, ParamSender};
 
 // ── Audio-Thread Trait ──
 //
@@ -207,7 +207,11 @@ pub trait HostedPluginHandle {
 
     /// Activate the plugin and return a processor for the audio thread.
     /// Called on the main thread.
-    fn activate(&mut self, sample_rate: f64, max_block: u32) -> Result<Box<dyn HostedPluginProcessor>, String>;
+    fn activate(
+        &mut self,
+        sample_rate: f64,
+        max_block: u32,
+    ) -> Result<Box<dyn HostedPluginProcessor>, String>;
 
     /// Deactivate the plugin. Called on the main thread.
     /// The caller must have already received a StoppedAudioProcessor from the
@@ -322,7 +326,9 @@ pub fn default_search_paths() -> Vec<std::path::PathBuf> {
         if let Some(p) = std::env::var_os("COMMONPROGRAMFILES") {
             paths.push(std::path::PathBuf::from(p).join("CLAP"));
         }
-        paths.push(std::path::PathBuf::from(r"C:\Program Files\Common Files\CLAP"));
+        paths.push(std::path::PathBuf::from(
+            r"C:\Program Files\Common Files\CLAP",
+        ));
     }
     #[cfg(target_os = "macos")]
     {
@@ -368,7 +374,10 @@ mod tests {
     #[test]
     fn test_default_search_paths_nonempty() {
         let paths = default_search_paths();
-        assert!(!paths.is_empty(), "default search paths should not be empty");
+        assert!(
+            !paths.is_empty(),
+            "default search paths should not be empty"
+        );
     }
 
     #[test]
@@ -382,7 +391,10 @@ mod tests {
 
     #[test]
     fn test_param_change_construction() {
-        let change = ParamChange { param_id: 7, value: 0.5 };
+        let change = ParamChange {
+            param_id: 7,
+            value: 0.5,
+        };
         assert_eq!(change.param_id, 7);
         assert!((change.value - 0.5).abs() < 1e-6);
     }

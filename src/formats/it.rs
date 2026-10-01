@@ -3,12 +3,12 @@ use std::sync::Arc;
 use crate::errors::{FormatError, FormatResult};
 use crate::formats::common::*;
 use crate::formats::FormatHandler;
+use crate::sequencer::effect::{FormatEffect, ItEffect, SendEffectType};
 use crate::sequencer::{
     Cell, DuplicateCheckAction, DuplicateCheckType, Effect, Envelope, EnvelopeFlags, EnvelopePoint,
     Instrument, LoopType, Module, ModuleFlags, ModuleFormat, NewNoteAction, Note, Pattern, Sample,
     SampleFlags, VibratoWaveform, MAX_CHANNELS, MAX_ENVELOPE_POINTS,
 };
-use crate::sequencer::effect::{FormatEffect, ItEffect, SendEffectType};
 
 pub struct ItHandler;
 
@@ -119,7 +119,9 @@ impl FormatHandler for ItHandler {
         let mut instruments = vec![Instrument::default(); instrument_count + 1];
         for (i, &paraptr) in instrument_paraptrs.iter().enumerate() {
             let abs_offset = paraptr as usize;
-            if abs_offset == 0 || abs_offset + 4 > data.len() { continue; }
+            if abs_offset == 0 || abs_offset + 4 > data.len() {
+                continue;
+            }
             if &data[abs_offset..abs_offset + 4] == b"IMPI" {
                 instruments[i + 1] = parse_it_instrument(data, abs_offset)?;
             }
@@ -128,7 +130,9 @@ impl FormatHandler for ItHandler {
         let mut samples = vec![Sample::default(); sample_count + 1];
         for (i, &paraptr) in sample_paraptrs.iter().enumerate() {
             let abs_offset = paraptr as usize;
-            if abs_offset == 0 || abs_offset + 4 > data.len() { continue; }
+            if abs_offset == 0 || abs_offset + 4 > data.len() {
+                continue;
+            }
             if &data[abs_offset..abs_offset + 4] == b"IMPS" {
                 samples[i + 1] = parse_it_sample(data, abs_offset, tracker_version)?;
             }
@@ -214,7 +218,9 @@ fn parse_it_instrument(data: &[u8], offset: usize) -> FormatResult<Instrument> {
     let mut sample_map = [0u8; 120];
     let mut note_map = {
         let mut m = [0u8; 120];
-        for i in 0..120 { m[i] = i as u8; }
+        for i in 0..120 {
+            m[i] = i as u8;
+        }
         m
     };
     for i in 0..120 {
@@ -231,7 +237,11 @@ fn parse_it_instrument(data: &[u8], offset: usize) -> FormatResult<Instrument> {
     let pitch_env = parse_envelope(data, &mut pos)?;
     let filter_env = parse_envelope(data, &mut pos)?;
 
-    let filter_cutoff_val = if filter_cutoff_byte == 0 { 0xFFFF } else { (filter_cutoff_byte as u16) << 8 };
+    let filter_cutoff_val = if filter_cutoff_byte == 0 {
+        0xFFFF
+    } else {
+        (filter_cutoff_byte as u16) << 8
+    };
 
     Ok(Instrument {
         name,
@@ -359,7 +369,11 @@ fn parse_it_sample(data: &[u8], offset: usize, tracker_version: u16) -> FormatRe
     let is_ping_pong = (flags_byte & 0x40) != 0;
 
     let loop_type = if has_loop {
-        if is_ping_pong { LoopType::PingPong } else { LoopType::Forward }
+        if is_ping_pong {
+            LoopType::PingPong
+        } else {
+            LoopType::Forward
+        }
     } else {
         LoopType::None
     };
@@ -369,21 +383,36 @@ fn parse_it_sample(data: &[u8], offset: usize, tracker_version: u16) -> FormatRe
     let is_delta_pcm = (convert_byte & 0x04) != 0;
     let is_it215 = is_compressed && is_delta_pcm;
 
-    let sample_data = if sample_data_offset > 0 && sample_data_length > 0 && sample_data_offset < data.len() {
-        if is_compressed {
-            let compressed = &data[sample_data_offset..];
-            decompress_it_sample(compressed, is_16bit, is_it215, sample_data_length, is_unsigned, is_stereo)?
+    let sample_data =
+        if sample_data_offset > 0 && sample_data_length > 0 && sample_data_offset < data.len() {
+            if is_compressed {
+                let compressed = &data[sample_data_offset..];
+                decompress_it_sample(
+                    compressed,
+                    is_16bit,
+                    is_it215,
+                    sample_data_length,
+                    is_unsigned,
+                    is_stereo,
+                )?
+            } else {
+                let num_channels = if is_stereo { 2 } else { 1 };
+                let bytes_per_sample = if is_16bit { 2 } else { 1 };
+                let size = sample_data_length * num_channels * bytes_per_sample;
+                let end = (sample_data_offset + size).min(data.len());
+                let raw = &data[sample_data_offset..end];
+                Arc::new(load_raw_sample(
+                    raw,
+                    is_16bit,
+                    is_unsigned,
+                    is_big_endian,
+                    is_delta_pcm,
+                    is_stereo,
+                ))
+            }
         } else {
-            let num_channels = if is_stereo { 2 } else { 1 };
-            let bytes_per_sample = if is_16bit { 2 } else { 1 };
-            let size = sample_data_length * num_channels * bytes_per_sample;
-            let end = (sample_data_offset + size).min(data.len());
-            let raw = &data[sample_data_offset..end];
-            Arc::new(load_raw_sample(raw, is_16bit, is_unsigned, is_big_endian, is_delta_pcm, is_stereo))
-        }
-    } else {
-        Arc::new(Vec::new())
-    };
+            Arc::new(Vec::new())
+        };
 
     Ok(Sample {
         name,
@@ -408,12 +437,26 @@ fn parse_it_sample(data: &[u8], offset: usize, tracker_version: u16) -> FormatRe
             3 => VibratoWaveform::Random,
             _ => VibratoWaveform::Sine,
         },
-        _flags: SampleFlags { is_stereo, is_16bit, is_compressed, has_trailing_byte: false },
+        _flags: SampleFlags {
+            is_stereo,
+            is_16bit,
+            is_compressed,
+            has_trailing_byte: false,
+        },
     })
 }
 
-fn load_raw_sample(raw: &[u8], is_16bit: bool, is_unsigned: bool, is_big_endian: bool, is_delta_pcm: bool, is_stereo: bool) -> Vec<f32> {
-    if raw.is_empty() { return Vec::new(); }
+fn load_raw_sample(
+    raw: &[u8],
+    is_16bit: bool,
+    is_unsigned: bool,
+    is_big_endian: bool,
+    is_delta_pcm: bool,
+    is_stereo: bool,
+) -> Vec<f32> {
+    if raw.is_empty() {
+        return Vec::new();
+    }
     let num_channels = if is_stereo { 2 } else { 1 };
     let bytes_per_sample = if is_16bit { 2 } else { 1 };
     let stride = bytes_per_sample * num_channels;
@@ -425,7 +468,9 @@ fn load_raw_sample(raw: &[u8], is_16bit: bool, is_unsigned: bool, is_big_endian:
         let mut acc: i32 = 0;
         for i in 0..samples_per_channel {
             let off = i * stride;
-            if off + 1 >= raw.len() { break; }
+            if off + 1 >= raw.len() {
+                break;
+            }
             let raw_val = if is_big_endian {
                 u16::from_be_bytes([raw[off], raw[off + 1]])
             } else {
@@ -434,7 +479,11 @@ fn load_raw_sample(raw: &[u8], is_16bit: bool, is_unsigned: bool, is_big_endian:
             if is_delta_pcm {
                 acc += raw_val as i16 as i32;
             } else {
-                acc = if is_unsigned { (raw_val as i32).wrapping_sub(32768) } else { raw_val as i16 as i32 };
+                acc = if is_unsigned {
+                    (raw_val as i32).wrapping_sub(32768)
+                } else {
+                    raw_val as i16 as i32
+                };
             }
             samples.push(acc as f32 / 32768.0);
         }
@@ -442,12 +491,18 @@ fn load_raw_sample(raw: &[u8], is_16bit: bool, is_unsigned: bool, is_big_endian:
         let mut acc: i32 = 0;
         for i in 0..samples_per_channel {
             let off = i * stride;
-            if off >= raw.len() { break; }
+            if off >= raw.len() {
+                break;
+            }
             let raw_val = raw[off];
             if is_delta_pcm {
                 acc += raw_val as i8 as i32;
             } else {
-                acc = if is_unsigned { (raw_val as i32).wrapping_sub(128) } else { raw_val as i8 as i32 };
+                acc = if is_unsigned {
+                    (raw_val as i32).wrapping_sub(128)
+                } else {
+                    raw_val as i8 as i32
+                };
             }
             samples.push(acc as f32 / 128.0);
         }
@@ -468,7 +523,13 @@ fn decompress_it_sample(
         let mut raw = Vec::with_capacity(sample_data_length * num_channels * 2);
         let mut compressed_offset = 0usize;
         for _ch in 0..num_channels {
-            let (channel_data, bytes_read) = decompress_it214_16bit(compressed, compressed_offset, is_it215, sample_data_length, raw.len() / 2)?;
+            let (channel_data, bytes_read) = decompress_it214_16bit(
+                compressed,
+                compressed_offset,
+                is_it215,
+                sample_data_length,
+                raw.len() / 2,
+            )?;
             raw.extend_from_slice(&channel_data);
             compressed_offset = bytes_read;
         }
@@ -477,7 +538,13 @@ fn decompress_it_sample(
         let mut raw = Vec::with_capacity(sample_data_length * num_channels);
         let mut compressed_offset = 0usize;
         for _ch in 0..num_channels {
-            let (channel_data, bytes_read) = decompress_it214_8bit(compressed, compressed_offset, is_it215, sample_data_length, raw.len())?;
+            let (channel_data, bytes_read) = decompress_it214_8bit(
+                compressed,
+                compressed_offset,
+                is_it215,
+                sample_data_length,
+                raw.len(),
+            )?;
             raw.extend_from_slice(&channel_data);
             compressed_offset = bytes_read;
         }
@@ -488,24 +555,52 @@ fn decompress_it_sample(
     let samples: Vec<f32> = if num_channels == 2 {
         let ch0_bytes = &decompressed[..samples_per_channel * if is_16bit { 2 } else { 1 }];
         if is_16bit {
-            ch0_bytes.chunks_exact(2).map(|chunk| {
-                let val = u16::from_le_bytes([chunk[0], chunk[1]]);
-                if is_unsigned { (val as f32 - 32768.0) / 32768.0 } else { (val as i16) as f32 / 32768.0 }
-            }).collect()
+            ch0_bytes
+                .chunks_exact(2)
+                .map(|chunk| {
+                    let val = u16::from_le_bytes([chunk[0], chunk[1]]);
+                    if is_unsigned {
+                        (val as f32 - 32768.0) / 32768.0
+                    } else {
+                        (val as i16) as f32 / 32768.0
+                    }
+                })
+                .collect()
         } else {
-            ch0_bytes.iter().map(|&b| {
-                if is_unsigned { (b as f32 - 128.0) / 128.0 } else { (b as i8) as f32 / 128.0 }
-            }).collect()
+            ch0_bytes
+                .iter()
+                .map(|&b| {
+                    if is_unsigned {
+                        (b as f32 - 128.0) / 128.0
+                    } else {
+                        (b as i8) as f32 / 128.0
+                    }
+                })
+                .collect()
         }
     } else if is_16bit {
-        decompressed.chunks_exact(2).map(|chunk| {
-            let val = u16::from_le_bytes([chunk[0], chunk[1]]);
-            if is_unsigned { (val as f32 - 32768.0) / 32768.0 } else { (val as i16) as f32 / 32768.0 }
-        }).collect()
+        decompressed
+            .chunks_exact(2)
+            .map(|chunk| {
+                let val = u16::from_le_bytes([chunk[0], chunk[1]]);
+                if is_unsigned {
+                    (val as f32 - 32768.0) / 32768.0
+                } else {
+                    (val as i16) as f32 / 32768.0
+                }
+            })
+            .collect()
     } else {
-        decompressed.iter().map(|&b| {
-            if is_unsigned { (b as f32 - 128.0) / 128.0 } else { (b as i8) as f32 / 128.0 }
-        }).collect()
+        decompressed
+            .iter()
+            .map(|&b| {
+                if is_unsigned {
+                    (b as f32 - 128.0) / 128.0
+                } else {
+                    (b as i8) as f32 / 128.0
+                }
+            })
+            .collect()
     };
     Ok(Arc::new(samples))
 }
@@ -518,14 +613,20 @@ struct BitReader<'a> {
 
 impl<'a> BitReader<'a> {
     fn new(data: &'a [u8]) -> Self {
-        BitReader { data, byte_pos: 0, bit_pos: 0 }
+        BitReader {
+            data,
+            byte_pos: 0,
+            bit_pos: 0,
+        }
     }
 
     fn read_bits(&mut self, num_bits: u8) -> Option<u32> {
         let mut result: u32 = 0;
         let mut bits_out: u8 = 0;
         while bits_out < num_bits {
-            if self.byte_pos >= self.data.len() { return None; }
+            if self.byte_pos >= self.data.len() {
+                return None;
+            }
             let bits_available = 8 - self.bit_pos;
             let bits_to_read = bits_available.min(num_bits - bits_out);
             let mask = ((1u32 << bits_to_read) - 1) << self.bit_pos;
@@ -533,23 +634,38 @@ impl<'a> BitReader<'a> {
             result |= val << bits_out;
             bits_out += bits_to_read;
             self.bit_pos += bits_to_read;
-            if self.bit_pos >= 8 { self.bit_pos = 0; self.byte_pos += 1; }
+            if self.bit_pos >= 8 {
+                self.bit_pos = 0;
+                self.byte_pos += 1;
+            }
         }
         Some(result)
     }
 }
 
-fn decompress_it214_8bit(compressed: &[u8], start_offset: usize, is_it215: bool, sample_data_length: usize, samples_already_decompressed: usize) -> FormatResult<(Vec<u8>, usize)> {
+fn decompress_it214_8bit(
+    compressed: &[u8],
+    start_offset: usize,
+    is_it215: bool,
+    sample_data_length: usize,
+    samples_already_decompressed: usize,
+) -> FormatResult<(Vec<u8>, usize)> {
     let mut pos = start_offset;
     let channel_offset = samples_already_decompressed;
     let channel_end = channel_offset + sample_data_length;
     let mut output = Vec::with_capacity(sample_data_length);
     while output.len() < sample_data_length {
-        if pos + 2 > compressed.len() { break; }
-        let block_size = u16::from_le_bytes([compressed[pos], compressed[pos+1]]) as usize;
+        if pos + 2 > compressed.len() {
+            break;
+        }
+        let block_size = u16::from_le_bytes([compressed[pos], compressed[pos + 1]]) as usize;
         pos += 2;
-        if block_size == 0 { break; }
-        if pos + block_size > compressed.len() { break; }
+        if block_size == 0 {
+            break;
+        }
+        if pos + block_size > compressed.len() {
+            break;
+        }
         let block_data = &compressed[pos..pos + block_size];
         pos += block_size;
         let mut reader = BitReader::new(block_data);
@@ -557,13 +673,22 @@ fn decompress_it214_8bit(compressed: &[u8], start_offset: usize, is_it215: bool,
         let mut value1: i16 = 0;
         let mut value2: i16 = 0;
         let global_pos = channel_offset + output.len();
-        let block_target_len = ((global_pos / 0x8000 + 1) * 0x8000).min(channel_end) - channel_offset;
+        let block_target_len =
+            ((global_pos / 0x8000 + 1) * 0x8000).min(channel_end) - channel_offset;
         while output.len() < block_target_len {
-            let raw = reader.read_bits(bit_width).ok_or_else(|| FormatError::DecompressionFailed("IT214: EOF".into()))?;
+            let raw = reader
+                .read_bits(bit_width)
+                .ok_or_else(|| FormatError::DecompressionFailed("IT214: EOF".into()))?;
             if bit_width <= 6 {
                 if raw == (1 << (bit_width - 1)) {
-                    let mut nw = (reader.read_bits(3).ok_or_else(|| FormatError::DecompressionFailed("IT214: EOF".into()))? as u8).wrapping_add(1);
-                    if nw >= bit_width { nw = nw.wrapping_add(1); }
+                    let mut nw = (reader
+                        .read_bits(3)
+                        .ok_or_else(|| FormatError::DecompressionFailed("IT214: EOF".into()))?
+                        as u8)
+                        .wrapping_add(1);
+                    if nw >= bit_width {
+                        nw = nw.wrapping_add(1);
+                    }
                     bit_width = nw;
                     continue;
                 }
@@ -571,7 +696,9 @@ fn decompress_it214_8bit(compressed: &[u8], start_offset: usize, is_it215: bool,
                 let border = (1 << (bit_width - 1)) - 4;
                 if raw >= border && raw <= border + 7 {
                     let mut nw = (raw - border) as u8 + 1;
-                    if nw >= bit_width { nw += 1; }
+                    if nw >= bit_width {
+                        nw += 1;
+                    }
                     bit_width = nw;
                     continue;
                 }
@@ -581,7 +708,11 @@ fn decompress_it214_8bit(compressed: &[u8], start_offset: usize, is_it215: bool,
                     continue;
                 }
             }
-            let delta = if (raw & (1 << (bit_width - 1))) != 0 { (raw as i32) - (1 << bit_width) } else { raw as i32 };
+            let delta = if (raw & (1 << (bit_width - 1))) != 0 {
+                (raw as i32) - (1 << bit_width)
+            } else {
+                raw as i32
+            };
             value1 = value1.wrapping_add(delta as i16);
             value2 = value2.wrapping_add(value1);
             output.push(if is_it215 { value2 as u8 } else { value1 as u8 });
@@ -590,17 +721,29 @@ fn decompress_it214_8bit(compressed: &[u8], start_offset: usize, is_it215: bool,
     Ok((output, pos))
 }
 
-fn decompress_it214_16bit(compressed: &[u8], start_offset: usize, is_it215: bool, sample_data_length: usize, samples_already_decompressed: usize) -> FormatResult<(Vec<u8>, usize)> {
+fn decompress_it214_16bit(
+    compressed: &[u8],
+    start_offset: usize,
+    is_it215: bool,
+    sample_data_length: usize,
+    samples_already_decompressed: usize,
+) -> FormatResult<(Vec<u8>, usize)> {
     let mut pos = start_offset;
     let channel_offset = samples_already_decompressed;
     let channel_end = channel_offset + sample_data_length;
     let mut output = Vec::with_capacity(sample_data_length * 2);
     while output.len() < sample_data_length * 2 {
-        if pos + 2 > compressed.len() { break; }
-        let block_size = u16::from_le_bytes([compressed[pos], compressed[pos+1]]) as usize;
+        if pos + 2 > compressed.len() {
+            break;
+        }
+        let block_size = u16::from_le_bytes([compressed[pos], compressed[pos + 1]]) as usize;
         pos += 2;
-        if block_size == 0 { break; }
-        if pos + block_size > compressed.len() { break; }
+        if block_size == 0 {
+            break;
+        }
+        if pos + block_size > compressed.len() {
+            break;
+        }
         let block_data = &compressed[pos..pos + block_size];
         pos += block_size;
         let mut reader = BitReader::new(block_data);
@@ -608,18 +751,31 @@ fn decompress_it214_16bit(compressed: &[u8], start_offset: usize, is_it215: bool
         let mut value1: i32 = 0;
         let mut value2: i32 = 0;
         let global_sample_pos = channel_offset + output.len() / 2;
-        let block_target_samples = ((global_sample_pos / 0x4000 + 1) * 0x4000).min(channel_end) - channel_offset;
+        let block_target_samples =
+            ((global_sample_pos / 0x4000 + 1) * 0x4000).min(channel_end) - channel_offset;
         while output.len() < block_target_samples * 2 {
-            let raw = reader.read_bits(bit_width).ok_or_else(|| FormatError::DecompressionFailed("IT214: EOF".into()))?;
+            let raw = reader
+                .read_bits(bit_width)
+                .ok_or_else(|| FormatError::DecompressionFailed("IT214: EOF".into()))?;
             if bit_width <= 6 {
                 if raw == (1 << (bit_width - 1)) {
-                    let mut nw = reader.read_bits(if is_it215 { 5 } else { 4 }).ok_or_else(|| FormatError::DecompressionFailed("IT214: EOF".into()))? as u8;
+                    let mut nw = reader
+                        .read_bits(if is_it215 { 5 } else { 4 })
+                        .ok_or_else(|| FormatError::DecompressionFailed("IT214: EOF".into()))?
+                        as u8;
                     if nw == 0 {
-                        nw = reader.read_bits(if is_it215 { 4 } else { 8 }).ok_or_else(|| FormatError::DecompressionFailed("IT214: EOF".into()))? as u8;
-                        if nw == 0 { break; }
+                        nw = reader
+                            .read_bits(if is_it215 { 4 } else { 8 })
+                            .ok_or_else(|| FormatError::DecompressionFailed("IT214: EOF".into()))?
+                            as u8;
+                        if nw == 0 {
+                            break;
+                        }
                         bit_width = nw;
                     } else {
-                        if nw >= bit_width { nw += 1; }
+                        if nw >= bit_width {
+                            nw += 1;
+                        }
                         bit_width = nw;
                     }
                     continue;
@@ -628,7 +784,9 @@ fn decompress_it214_16bit(compressed: &[u8], start_offset: usize, is_it215: bool
                 let border = (1 << (bit_width - 1)) - 8;
                 if raw >= border && raw <= border + 15 {
                     let mut nw = (raw - border) as u8 + 1;
-                    if nw >= bit_width { nw += 1; }
+                    if nw >= bit_width {
+                        nw += 1;
+                    }
                     bit_width = nw;
                     continue;
                 }
@@ -638,15 +796,21 @@ fn decompress_it214_16bit(compressed: &[u8], start_offset: usize, is_it215: bool
                     continue;
                 }
             }
-            let delta = if (raw & (1 << (bit_width - 1))) != 0 { (raw as i32) - (1 << bit_width) } else { raw as i32 };
+            let delta = if (raw & (1 << (bit_width - 1))) != 0 {
+                (raw as i32) - (1 << bit_width)
+            } else {
+                raw as i32
+            };
             value1 = value1.wrapping_add(delta);
             value2 = value2.wrapping_add(value1);
             let out_val = if is_it215 { value2 } else { value1 };
             let b = (out_val as i16).to_le_bytes();
-            output.push(b[0]); output.push(b[1]);
+            output.push(b[0]);
+            output.push(b[1]);
         }
     }
-    Ok((output, pos))}
+    Ok((output, pos))
+}
 
 fn parse_it_pattern(data: &[u8], offset: usize) -> FormatResult<Pattern> {
     let mut pos = offset;
@@ -663,39 +827,89 @@ fn parse_it_pattern(data: &[u8], offset: usize) -> FormatResult<Pattern> {
     let mut last_fxp = [0u8; 64];
     let mut row = 0usize;
     while row < rows {
-        if pos >= data.len() { break; }
-        let mask_byte = data[pos]; pos += 1;
-        if mask_byte == 0 { row += 1; continue; }
+        if pos >= data.len() {
+            break;
+        }
+        let mask_byte = data[pos];
+        pos += 1;
+        if mask_byte == 0 {
+            row += 1;
+            continue;
+        }
         let ch = ((mask_byte & 0x7F) as usize).saturating_sub(1);
         if ch >= 64 {
-             if (mask_byte & 0x80) != 0 {
-                 let m = data[pos]; pos += 1;
-                 if (m & 0x01) != 0 { pos += 1; }
-                 if (m & 0x02) != 0 { pos += 1; }
-                 if (m & 0x04) != 0 { pos += 1; }
-                 if (m & 0x08) != 0 { pos += 1; }
-                 if (m & 0x10) != 0 { pos += 1; }
-             }
-             continue;
+            if (mask_byte & 0x80) != 0 {
+                let m = data[pos];
+                pos += 1;
+                if (m & 0x01) != 0 {
+                    pos += 1;
+                }
+                if (m & 0x02) != 0 {
+                    pos += 1;
+                }
+                if (m & 0x04) != 0 {
+                    pos += 1;
+                }
+                if (m & 0x08) != 0 {
+                    pos += 1;
+                }
+                if (m & 0x10) != 0 {
+                    pos += 1;
+                }
+            }
+            continue;
         }
         if (mask_byte & 0x80) != 0 {
-            let m = data[pos]; pos += 1;
+            let m = data[pos];
+            pos += 1;
             last_mask[ch] = m;
-            if (m & 0x01) != 0 { last_note[ch] = data[pos]; pos += 1; }
-            if (m & 0x02) != 0 { last_inst[ch] = data[pos]; pos += 1; }
-            if (m & 0x04) != 0 { last_vol[ch] = data[pos]; pos += 1; }
-            if (m & 0x08) != 0 { last_fx[ch] = data[pos]; pos += 1; last_fxp[ch] = data[pos]; pos += 1; }
+            if (m & 0x01) != 0 {
+                last_note[ch] = data[pos];
+                pos += 1;
+            }
+            if (m & 0x02) != 0 {
+                last_inst[ch] = data[pos];
+                pos += 1;
+            }
+            if (m & 0x04) != 0 {
+                last_vol[ch] = data[pos];
+                pos += 1;
+            }
+            if (m & 0x08) != 0 {
+                last_fx[ch] = data[pos];
+                pos += 1;
+                last_fxp[ch] = data[pos];
+                pos += 1;
+            }
         }
         let m = last_mask[ch];
-        let note = if (m & 0x01) != 0 { decode_it_note(last_note[ch]) } else { Note::None };
-        let inst = if (m & 0x02) != 0 && last_inst[ch] > 0 { Some(last_inst[ch]) } else { None };
+        let note = if (m & 0x01) != 0 {
+            decode_it_note(last_note[ch])
+        } else {
+            Note::None
+        };
+        let inst = if (m & 0x02) != 0 && last_inst[ch] > 0 {
+            Some(last_inst[ch])
+        } else {
+            None
+        };
         let (vol, vol_effect) = if (m & 0x04) != 0 {
             decode_it_volume(last_vol[ch])
         } else {
             (None, None)
         };
-        let fx = if (m & 0x08) != 0 { decode_it_effect(last_fx[ch], last_fxp[ch]) } else { Effect::None };
-        pattern.data[row][ch] = Cell { note, instrument: inst, volume: vol, volume_effect: vol_effect, effect: fx };
+        let fx = if (m & 0x08) != 0 {
+            decode_it_effect(last_fx[ch], last_fxp[ch])
+        } else {
+            Effect::None
+        };
+        pattern.data[row][ch] = Cell {
+            note,
+            instrument: inst,
+            volume: vol,
+            volume_effect: vol_effect,
+            effect: fx,
+        };
     }
     Ok(pattern)
 }
@@ -705,8 +919,20 @@ fn decode_it_volume(vol: u8) -> (Option<u8>, Option<Effect>) {
         0..=64 => (Some(vol), None),
         65..=74 => (None, Some(Effect::FineVolumeSlideUp { amount: vol - 64 })),
         75..=84 => (None, Some(Effect::FineVolumeSlideDown { amount: vol - 74 })),
-        85..=94 => (None, Some(Effect::VolumeSlide { up: vol - 84, down: 0 })),
-        95..=104 => (None, Some(Effect::VolumeSlide { up: 0, down: vol - 94 })),
+        85..=94 => (
+            None,
+            Some(Effect::VolumeSlide {
+                up: vol - 84,
+                down: 0,
+            }),
+        ),
+        95..=104 => (
+            None,
+            Some(Effect::VolumeSlide {
+                up: 0,
+                down: vol - 94,
+            }),
+        ),
         105..=114 => (None, Some(Effect::PortamentoDown { speed: vol - 104 })),
         115..=124 => (None, Some(Effect::PortamentoUp { speed: vol - 114 })),
         125 => (None, Some(Effect::TonePortamento { speed: 0 })),
@@ -715,12 +941,33 @@ fn decode_it_volume(vol: u8) -> (Option<u8>, Option<Effect>) {
         128 => (None, Some(Effect::Vibrato { speed: 0, depth: 0 })),
         129..=192 => {
             let pan = vol - 128;
-            (None, Some(Effect::SetPanning { pan: (pan as u16 * 255 / 64) as u8 }))
+            (
+                None,
+                Some(Effect::SetPanning {
+                    pan: (pan as u16 * 255 / 64) as u8,
+                }),
+            )
         }
-        193..=202 => (None, Some(Effect::PanningSlide { speed: -((vol - 192) as i8) })),
-        203..=212 => (None, Some(Effect::PanningSlide { speed: ((vol - 202) as i8) })),
+        193..=202 => (
+            None,
+            Some(Effect::PanningSlide {
+                speed: -((vol - 192) as i8),
+            }),
+        ),
+        203..=212 => (
+            None,
+            Some(Effect::PanningSlide {
+                speed: ((vol - 202) as i8),
+            }),
+        ),
         213..=224 => (None, Some(Effect::TonePortamento { speed: vol - 212 })),
-        225..=246 => (None, Some(Effect::Vibrato { speed: vol - 224, depth: 0 })),
+        225..=246 => (
+            None,
+            Some(Effect::Vibrato {
+                speed: vol - 224,
+                depth: 0,
+            }),
+        ),
         _ => (None, None),
     }
 }
@@ -737,17 +984,31 @@ fn decode_it_note(raw: u8) -> Note {
 
 fn decode_it_effect(fx: u8, p: u8) -> Effect {
     match fx {
-        0 => Effect::Arpeggio { note1: p >> 4, note2: p & 0x0F },
+        0 => Effect::Arpeggio {
+            note1: p >> 4,
+            note2: p & 0x0F,
+        },
         1 => Effect::PortamentoUp { speed: p },
         2 => Effect::PortamentoDown { speed: p },
         3 => Effect::TonePortamento { speed: p },
-        4 => Effect::Vibrato { speed: p >> 4, depth: p & 0x0F },
+        4 => Effect::Vibrato {
+            speed: p >> 4,
+            depth: p & 0x0F,
+        },
         5 => Effect::TonePortamentoVolumeSlide { up: p as i8 },
         6 => Effect::VibratoVolumeSlide { up: p as i8 },
-        7 => Effect::Tremolo { speed: p >> 4, depth: p & 0x0F },
+        7 => Effect::Tremolo {
+            speed: p >> 4,
+            depth: p & 0x0F,
+        },
         8 => Effect::SetPanning { pan: p },
-        9 => Effect::SetSampleOffset { offset: (p as u16) << 8 },
-        10 => Effect::VolumeSlide { up: p >> 4, down: p & 0x0F },
+        9 => Effect::SetSampleOffset {
+            offset: (p as u16) << 8,
+        },
+        10 => Effect::VolumeSlide {
+            up: p >> 4,
+            down: p & 0x0F,
+        },
         11 => Effect::PositionJump { order: p as u16 },
         12 => Effect::SetVolume { volume: p },
         13 => Effect::PatternBreak { row: p as u16 },
@@ -758,10 +1019,14 @@ fn decode_it_effect(fx: u8, p: u8) -> Effect {
                 0x1 => Effect::FinePortamentoUp { speed: val << 4 },
                 0x2 => Effect::FinePortamentoDown { speed: val << 4 },
                 0x3 => Effect::GlissandoControl { on: val != 0 },
-                0x4 => Effect::VibratoWaveform { waveform: val & 0x03 },
+                0x4 => Effect::VibratoWaveform {
+                    waveform: val & 0x03,
+                },
                 0x5 => Effect::SetFineTune { tune: val },
                 0x6 => Effect::PatternLoop { count: val },
-                0x7 => Effect::TremoloWaveform { waveform: val & 0x03 },
+                0x7 => Effect::TremoloWaveform {
+                    waveform: val & 0x03,
+                },
                 0x8 => Effect::SetPanning16 { pan: val << 4 },
                 0x9 => Effect::Retrigger { interval: val },
                 0xA => Effect::FineVolumeSlideUp { amount: val },
@@ -769,15 +1034,30 @@ fn decode_it_effect(fx: u8, p: u8) -> Effect {
                 0xC => Effect::NoteCutAfter { ticks: val },
                 0xD => Effect::NoteDelay { ticks: val },
                 0xE => Effect::PatternDelay { ticks: val },
-                _ if sub > 0 => Effect::FormatSpecific(FormatEffect::It(ItEffect::Raw { effect: 0xE0 | sub, param: val })),
+                _ if sub > 0 => Effect::FormatSpecific(FormatEffect::It(ItEffect::Raw {
+                    effect: 0xE0 | sub,
+                    param: val,
+                })),
                 _ => Effect::None,
             }
         }
-        15 => if p < 32 { Effect::SetSpeed { speed: p } } else { Effect::SetTempo { bpm: p } },
+        15 => {
+            if p < 32 {
+                Effect::SetSpeed { speed: p }
+            } else {
+                Effect::SetTempo { bpm: p }
+            }
+        }
         16 => Effect::SetGlobalVolume { volume: p },
-        17 => Effect::GlobalVolumeSlide { up: (p >> 4) as i8, down: (p & 0x0F) as i8 },
+        17 => Effect::GlobalVolumeSlide {
+            up: (p >> 4) as i8,
+            down: (p & 0x0F) as i8,
+        },
         18 => Effect::SetEnvelopePosition { tick: p as u16 },
-        19 => Effect::Panbrello { speed: p >> 4, depth: p & 0x0F },
+        19 => Effect::Panbrello {
+            speed: p >> 4,
+            depth: p & 0x0F,
+        },
         20 => {
             let hi = p >> 4;
             let lo = p & 0x0F;
@@ -790,7 +1070,10 @@ fn decode_it_effect(fx: u8, p: u8) -> Effect {
                 5 => Effect::FinePortamentoDown { speed: lo },
                 6 => Effect::PortamentoUp { speed: lo },
                 7 => Effect::PortamentoDown { speed: lo },
-                _ => Effect::FormatSpecific(FormatEffect::It(ItEffect::Raw { effect: fx, param: p })),
+                _ => Effect::FormatSpecific(FormatEffect::It(ItEffect::Raw {
+                    effect: fx,
+                    param: p,
+                })),
             }
         }
         21 => Effect::Vibrato { speed: p, depth: 0 },
@@ -799,11 +1082,16 @@ fn decode_it_effect(fx: u8, p: u8) -> Effect {
             let hi = p >> 4;
             let _lo = p & 0x0F;
             match hi {
-                1 => Effect::SetSampleOffset { offset: (p as u16) << 8 },
+                1 => Effect::SetSampleOffset {
+                    offset: (p as u16) << 8,
+                },
                 _ => Effect::SetPanning { pan: p },
             }
         }
-        _ if fx > 0 => Effect::FormatSpecific(FormatEffect::It(ItEffect::Raw { effect: fx, param: p })),
+        _ if fx > 0 => Effect::FormatSpecific(FormatEffect::It(ItEffect::Raw {
+            effect: fx,
+            param: p,
+        })),
         _ => Effect::None,
     }
 }
@@ -812,5 +1100,3 @@ pub fn save_module(_module: &Module) -> Vec<u8> {
     // Placeholder implementation for now
     Vec::new()
 }
-
-

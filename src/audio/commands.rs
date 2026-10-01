@@ -21,7 +21,10 @@ pub enum LimiterMode {
 #[derive(Debug)]
 pub enum AudioCommand {
     Play,
-    PlayFrom { order: u16, row: u16 },
+    PlayFrom {
+        order: u16,
+        row: u16,
+    },
     Stop,
     Pause,
     SetBPM(u16),
@@ -29,8 +32,14 @@ pub enum AudioCommand {
 
     LoadModule(Arc<Module>),
 
-    SetChannelMuted { channel: usize, muted: bool },
-    SetChannelSolo { channel: usize, solo: bool },
+    SetChannelMuted {
+        channel: usize,
+        muted: bool,
+    },
+    SetChannelSolo {
+        channel: usize,
+        solo: bool,
+    },
 
     SetMasterVolume(f32),
     SetPlayMode(PlayMode),
@@ -57,11 +66,28 @@ pub enum AudioCommand {
         panning: f32,
     },
 
-    SetSendLevel { channel: usize, send_index: usize, level: f32 },
-    SetSendReturnLevel { send_index: usize, level: f32 },
-    SetSendFxParam { send_index: usize, param: u32, value: f32 },
-    SetSendEffectType { send_index: usize, effect_type: SendEffectType },
-    SetSendPreFader { send_index: usize, pre_fader: bool },
+    SetSendLevel {
+        channel: usize,
+        send_index: usize,
+        level: f32,
+    },
+    SetSendReturnLevel {
+        send_index: usize,
+        level: f32,
+    },
+    SetSendFxParam {
+        send_index: usize,
+        param: u32,
+        value: f32,
+    },
+    SetSendEffectType {
+        send_index: usize,
+        effect_type: SendEffectType,
+    },
+    SetSendPreFader {
+        send_index: usize,
+        pre_fader: bool,
+    },
 
     /// Install a hosted plugin processor on a send bus, replacing any built-in
     /// SendEffect. The plugin is already activated by the main thread; the

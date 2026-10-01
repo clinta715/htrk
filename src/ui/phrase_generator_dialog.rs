@@ -1,9 +1,56 @@
 use eframe::egui;
 
-use crate::tools::phrase_generator::{self, ChordType, GenMode, PhraseParams, Progression};
-use crate::tools::scale::{Scale, ROOT_NAMES};
 use super::style::FONT_BODY;
 use super::theme::TrackerTheme;
+use crate::tools::phrase_generator::{self, ChordType, GenMode, PhraseParams, Progression};
+use crate::tools::scale::{Scale, ROOT_NAMES};
+
+/// Phrase generator dialog parameters (typed UI state, P3).
+/// Session-only by design (see AGENTS.md §15): not persisted to AppConfig.
+#[derive(Clone, Debug)]
+pub struct PhraseGenState {
+    pub mode_idx: usize,
+    pub scale_idx: usize,
+    pub root: usize,
+    pub oct_min: u8,
+    pub oct_max: u8,
+    pub density: f32,
+    pub step_size: u8,
+    pub pulses: usize,
+    pub rotation: usize,
+    pub instr_str: String,
+    pub seed_str: String,
+    pub kick_ch: usize,
+    pub snare_ch: usize,
+    pub hat_ch: usize,
+    pub chord_type_idx: usize,
+    pub progression_idx: usize,
+    pub bars_per_chord: u8,
+}
+
+impl Default for PhraseGenState {
+    fn default() -> Self {
+        PhraseGenState {
+            mode_idx: 0,
+            scale_idx: 0,
+            root: 0,
+            oct_min: 3,
+            oct_max: 5,
+            density: 0.3,
+            step_size: 3,
+            pulses: 8,
+            rotation: 0,
+            instr_str: String::new(),
+            seed_str: "0".to_string(),
+            kick_ch: 0,
+            snare_ch: 1,
+            hat_ch: 2,
+            chord_type_idx: 0,
+            progression_idx: 0,
+            bars_per_chord: 4,
+        }
+    }
+}
 
 pub fn draw_phrase_generator(
     ctx: &egui::Context,
@@ -12,6 +59,7 @@ pub fn draw_phrase_generator(
     num_channels: usize,
     num_rows: usize,
     _cursor_ch: usize,
+    state: &mut PhraseGenState,
 ) -> Option<PhraseParams> {
     let mut result = None;
     let mut should_close = false;
@@ -23,40 +71,23 @@ pub fn draw_phrase_generator(
         .default_size([280.0, 520.0])
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
-            let mode_id = ui.make_persistent_id("phr_mode");
-            let mut mode_idx = ui.data(|d| d.get_temp::<usize>(mode_id).unwrap_or(0));
-            let scale_id = ui.make_persistent_id("phr_scale");
-            let mut scale_idx = ui.data(|d| d.get_temp::<usize>(scale_id).unwrap_or(0));
-            let root_id = ui.make_persistent_id("phr_root");
-            let mut root = ui.data(|d| d.get_temp::<usize>(root_id).unwrap_or(0));
-            let oct_min_id = ui.make_persistent_id("phr_oct_min");
-            let mut oct_min = ui.data(|d| d.get_temp::<u8>(oct_min_id).unwrap_or(3));
-            let oct_max_id = ui.make_persistent_id("phr_oct_max");
-            let mut oct_max = ui.data(|d| d.get_temp::<u8>(oct_max_id).unwrap_or(5));
-            let density_id = ui.make_persistent_id("phr_density");
-            let mut density = ui.data(|d| d.get_temp::<f32>(density_id).unwrap_or(0.3));
-            let step_id = ui.make_persistent_id("phr_step");
-            let mut step_size = ui.data(|d| d.get_temp::<u8>(step_id).unwrap_or(3));
-            let pulses_id = ui.make_persistent_id("phr_pulses");
-            let mut pulses = ui.data(|d| d.get_temp::<usize>(pulses_id).unwrap_or(8));
-            let rotation_id = ui.make_persistent_id("phr_rotation");
-            let mut rotation = ui.data(|d| d.get_temp::<usize>(rotation_id).unwrap_or(0));
-            let inst_id = ui.make_persistent_id("phr_inst");
-            let mut instr_str: String = ui.data(|d| d.get_temp::<String>(inst_id).unwrap_or_default());
-            let seed_id = ui.make_persistent_id("phr_seed");
-            let mut seed_str: String = ui.data(|d| d.get_temp::<String>(seed_id).unwrap_or_else(|| "0".to_string()));
-            let kick_id = ui.make_persistent_id("phr_kick");
-            let mut kick_ch = ui.data(|d| d.get_temp::<usize>(kick_id).unwrap_or(0));
-            let snare_id = ui.make_persistent_id("phr_snare");
-            let mut snare_ch = ui.data(|d| d.get_temp::<usize>(snare_id).unwrap_or(1));
-            let hat_id = ui.make_persistent_id("phr_hat");
-            let mut hat_ch = ui.data(|d| d.get_temp::<usize>(hat_id).unwrap_or(2));
-            let chord_type_id = ui.make_persistent_id("phr_chord_type");
-            let mut chord_type_idx = ui.data(|d| d.get_temp::<usize>(chord_type_id).unwrap_or(0));
-            let progression_id = ui.make_persistent_id("phr_progression");
-            let mut progression_idx = ui.data(|d| d.get_temp::<usize>(progression_id).unwrap_or(0));
-            let bars_per_chord_id = ui.make_persistent_id("phr_bars_per_chord");
-            let mut bars_per_chord = ui.data(|d| d.get_temp::<u8>(bars_per_chord_id).unwrap_or(4));
+            let mut mode_idx = state.mode_idx;
+            let mut scale_idx = state.scale_idx;
+            let mut root = state.root;
+            let mut oct_min = state.oct_min;
+            let mut oct_max = state.oct_max;
+            let mut density = state.density;
+            let mut step_size = state.step_size;
+            let mut pulses = state.pulses;
+            let mut rotation = state.rotation;
+            let mut instr_str = state.instr_str.clone();
+            let mut seed_str = state.seed_str.clone();
+            let mut kick_ch = state.kick_ch;
+            let mut snare_ch = state.snare_ch;
+            let mut hat_ch = state.hat_ch;
+            let mut chord_type_idx = state.chord_type_idx;
+            let mut progression_idx = state.progression_idx;
+            let mut bars_per_chord = state.bars_per_chord;
 
             let all_scales = Scale::all();
             let mode = GenMode::all().get(mode_idx).copied().unwrap_or(GenMode::Melodic);
@@ -241,7 +272,7 @@ pub fn draw_phrase_generator(
             let progression = progressions.get(progression_idx).copied().unwrap_or(Progression::OneFourFiveOne);
             let max_ch = num_channels.saturating_sub(1);
             let chord_channels = [
-                0.min(max_ch),
+                0,
                 1.min(max_ch),
                 2.min(max_ch),
                 3.min(max_ch),
@@ -348,25 +379,23 @@ pub fn draw_phrase_generator(
                 }
             });
 
-            ui.data_mut(|d| {
-                d.insert_temp(mode_id, mode_idx);
-                d.insert_temp(scale_id, scale_idx);
-                d.insert_temp(root_id, root);
-                d.insert_temp(oct_min_id, oct_min);
-                d.insert_temp(oct_max_id, oct_max);
-                d.insert_temp(density_id, density);
-                d.insert_temp(step_id, step_size);
-                d.insert_temp(pulses_id, pulses);
-                d.insert_temp(rotation_id, rotation);
-                d.insert_temp(inst_id, instr_str);
-                d.insert_temp(seed_id, seed_str);
-                d.insert_temp(kick_id, kick_ch);
-                d.insert_temp(snare_id, snare_ch);
-                d.insert_temp(hat_id, hat_ch);
-                d.insert_temp(chord_type_id, chord_type_idx);
-                d.insert_temp(progression_id, progression_idx);
-                d.insert_temp(bars_per_chord_id, bars_per_chord);
-            });
+            state.mode_idx = mode_idx;
+            state.scale_idx = scale_idx;
+            state.root = root;
+            state.oct_min = oct_min;
+            state.oct_max = oct_max;
+            state.density = density;
+            state.step_size = step_size;
+            state.pulses = pulses;
+            state.rotation = rotation;
+            state.instr_str = instr_str;
+            state.seed_str = seed_str;
+            state.kick_ch = kick_ch;
+            state.snare_ch = snare_ch;
+            state.hat_ch = hat_ch;
+            state.chord_type_idx = chord_type_idx;
+            state.progression_idx = progression_idx;
+            state.bars_per_chord = bars_per_chord;
         });
 
     if should_close {

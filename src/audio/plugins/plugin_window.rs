@@ -20,10 +20,10 @@
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindow, GW_CHILD, IsWindowVisible,
-    MoveWindow, RegisterClassExW, SetWindowLongPtrW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-    GWLP_USERDATA, WM_DESTROY, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_EX_TOOLWINDOW,
-    WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindow, IsWindowVisible, MoveWindow,
+    RegisterClassExW, SetWindowLongPtrW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA,
+    GW_CHILD, WM_DESTROY, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW,
+    WS_VISIBLE,
 };
 
 const HOST_CLASS_NAME: &str = "htrk_plugin_host\0";
@@ -83,7 +83,11 @@ impl PluginHostWindow {
         title_w.push(0);
 
         let (parent_hwnd, style, ex_style) = match mode {
-            WindowMode::TopLevel => (std::ptr::null_mut(), WS_OVERLAPPEDWINDOW | WS_VISIBLE, WS_EX_TOOLWINDOW),
+            WindowMode::TopLevel => (
+                std::ptr::null_mut(),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                WS_EX_TOOLWINDOW,
+            ),
             WindowMode::ChildOf(p) => (p, WS_CHILD | WS_VISIBLE, 0u32),
         };
 
@@ -100,7 +104,10 @@ impl PluginHostWindow {
                 class_name_w.as_ptr(),
                 title_w.as_ptr(),
                 style,
-                x, y, w, h,
+                x,
+                y,
+                w,
+                h,
                 parent_hwnd,
                 std::ptr::null_mut(),
                 hinstance as _,
@@ -178,12 +185,7 @@ impl Drop for PluginHostWindow {
 
 /// Window procedure for the plugin host window. Forwards `WM_SIZE` to the
 /// plugin's child HWND via `MoveWindow`.
-extern "system" fn wnd_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
+extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let handled: LRESULT = match msg {
         WM_SIZE => {
             // On resize, find the plugin's child HWND and resize it to fill

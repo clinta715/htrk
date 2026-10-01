@@ -130,7 +130,11 @@ mod tests {
         lib.add_descriptor(d.clone());
         assert_eq!(lib.descriptor_count(), 1);
 
-        let got = lib.get_descriptor(PluginFormat::Clap, std::path::Path::new("/usr/lib/clap/reverb.clap"), "test.Reverb");
+        let got = lib.get_descriptor(
+            PluginFormat::Clap,
+            std::path::Path::new("/usr/lib/clap/reverb.clap"),
+            "test.Reverb",
+        );
         assert!(got.is_some());
         assert_eq!(got.unwrap().name, "Reverb");
     }

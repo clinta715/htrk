@@ -53,10 +53,7 @@ pub fn scan_paths(paths: &[PathBuf]) -> ScanResult {
     result
 }
 
-fn scan_single_path(
-    root: &Path,
-    seen: &mut HashSet<PathBuf>,
-) -> Result<Vec<PathBuf>, ScanError> {
+fn scan_single_path(root: &Path, seen: &mut HashSet<PathBuf>) -> Result<Vec<PathBuf>, ScanError> {
     let mut found = Vec::new();
     walk_dir(root, &mut |entry| {
         if let Some(ext) = entry.extension().and_then(|e| e.to_str()) {
@@ -111,7 +108,7 @@ mod tests {
     fn test_scan_empty_dir() {
         let tmp = std::env::temp_dir().join(format!("htrk-plugins-test-{}", std::process::id()));
         fs::create_dir_all(&tmp).unwrap();
-        let result = scan_paths(&[tmp.clone()]);
+        let result = scan_paths(std::slice::from_ref(&tmp));
         assert!(result.clap_files.is_empty());
         assert!(result.errors.is_empty());
         let _ = fs::remove_dir_all(&tmp);
@@ -123,7 +120,7 @@ mod tests {
         fs::create_dir_all(&tmp).unwrap();
         fs::write(tmp.join("fake.clap"), b"fake").unwrap();
         fs::write(tmp.join("not_a_plugin.txt"), b"x").unwrap();
-        let result = scan_paths(&[tmp.clone()]);
+        let result = scan_paths(std::slice::from_ref(&tmp));
         assert_eq!(result.clap_files.len(), 1);
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -152,7 +149,7 @@ mod tests {
         let sub = tmp.join("nested");
         fs::create_dir_all(&sub).unwrap();
         fs::write(sub.join("deep.clap"), b"x").unwrap();
-        let result = scan_paths(&[tmp.clone()]);
+        let result = scan_paths(std::slice::from_ref(&tmp));
         assert_eq!(result.clap_files.len(), 1);
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -167,8 +164,14 @@ mod tests {
             return;
         }
         let result = scan_paths(&[system_path.to_path_buf()]);
-        eprintln!("[ok] Found {} .clap entries in system CLAP dir", result.total_found());
+        eprintln!(
+            "[ok] Found {} .clap entries in system CLAP dir",
+            result.total_found()
+        );
         eprintln!("     errors: {}", result.errors.len());
-        assert!(result.total_found() >= 10, "Expected at least 10 .clap files on this system");
+        assert!(
+            result.total_found() >= 10,
+            "Expected at least 10 .clap files on this system"
+        );
     }
 }

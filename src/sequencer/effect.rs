@@ -4,65 +4,181 @@ pub enum Effect {
     #[default]
     None,
 
-    Arpeggio { note1: u8, note2: u8 },
-    PortamentoUp { speed: u8 },
-    PortamentoDown { speed: u8 },
-    TonePortamento { speed: u8 },
-    Vibrato { speed: u8, depth: u8 },
-    TonePortamentoVolumeSlide { up: i8 },
-    VibratoVolumeSlide { up: i8 },
-    Tremolo { speed: u8, depth: u8 },
-    SetPanning { pan: u8 },
-    SetSampleOffset { offset: u16 },
-    VolumeSlide { up: u8, down: u8 },
-    PositionJump { order: u16 },
-    SetVolume { volume: u8 },
-    PatternBreak { row: u16 },
-    ExtendedEffect { param: u8 },
-    SetSpeed { speed: u8 },
-    SetTempo { bpm: u8 },
+    Arpeggio {
+        note1: u8,
+        note2: u8,
+    },
+    PortamentoUp {
+        speed: u8,
+    },
+    PortamentoDown {
+        speed: u8,
+    },
+    TonePortamento {
+        speed: u8,
+    },
+    Vibrato {
+        speed: u8,
+        depth: u8,
+    },
+    TonePortamentoVolumeSlide {
+        up: i8,
+    },
+    VibratoVolumeSlide {
+        up: i8,
+    },
+    Tremolo {
+        speed: u8,
+        depth: u8,
+    },
+    SetPanning {
+        pan: u8,
+    },
+    SetSampleOffset {
+        offset: u16,
+    },
+    VolumeSlide {
+        up: u8,
+        down: u8,
+    },
+    PositionJump {
+        order: u16,
+    },
+    SetVolume {
+        volume: u8,
+    },
+    PatternBreak {
+        row: u16,
+    },
+    ExtendedEffect {
+        param: u8,
+    },
+    SetSpeed {
+        speed: u8,
+    },
+    SetTempo {
+        bpm: u8,
+    },
 
-    SetGlobalVolume { volume: u8 },
-    GlobalVolumeSlide { up: i8, down: i8 },
-    SetEnvelopePosition { tick: u16 },
-    Panbrello { speed: u8, depth: u8 },
-    PatternDelay { ticks: u8 },
-    SetPanPosition { pan: u8 },
-    PanningSlide { speed: i8 },
+    SetGlobalVolume {
+        volume: u8,
+    },
+    GlobalVolumeSlide {
+        up: i8,
+        down: i8,
+    },
+    SetEnvelopePosition {
+        tick: u16,
+    },
+    Panbrello {
+        speed: u8,
+        depth: u8,
+    },
+    PatternDelay {
+        ticks: u8,
+    },
+    SetPanPosition {
+        pan: u8,
+    },
+    PanningSlide {
+        speed: i8,
+    },
 
-    GlissandoControl { on: bool },
-    VibratoWaveform { waveform: u8 },
-    SetFineTune { tune: u8 },
-    PatternLoop { count: u8 },
-    TremoloWaveform { waveform: u8 },
-    SetPanning16 { pan: u8 },
-    Retrigger { interval: u8 },
-    NoteCutAfter { ticks: u8 },
-    NoteDelay { ticks: u8 },
+    GlissandoControl {
+        on: bool,
+    },
+    VibratoWaveform {
+        waveform: u8,
+    },
+    SetFineTune {
+        tune: u8,
+    },
+    PatternLoop {
+        count: u8,
+    },
+    TremoloWaveform {
+        waveform: u8,
+    },
+    SetPanning16 {
+        pan: u8,
+    },
+    Retrigger {
+        interval: u8,
+    },
+    NoteCutAfter {
+        ticks: u8,
+    },
+    NoteDelay {
+        ticks: u8,
+    },
 
-    ExtraFinePortamentoUp { speed: u8 },
-    ExtraFinePortamentoDown { speed: u8 },
-    FinePortamentoUp { speed: u8 },
-    FinePortamentoDown { speed: u8 },
-    FineVolumeSlideUp { amount: u8 },
-    FineVolumeSlideDown { amount: u8 },
-    Tremor { ontime: u8, offtime: u8 },
+    ExtraFinePortamentoUp {
+        speed: u8,
+    },
+    ExtraFinePortamentoDown {
+        speed: u8,
+    },
+    FinePortamentoUp {
+        speed: u8,
+    },
+    FinePortamentoDown {
+        speed: u8,
+    },
+    FineVolumeSlideUp {
+        amount: u8,
+    },
+    FineVolumeSlideDown {
+        amount: u8,
+    },
+    Tremor {
+        ontime: u8,
+        offtime: u8,
+    },
 
-    VolSetVolume { vol: u8 },
-    VolFineSlideUp { amount: u8 },
-    VolFineSlideDown { amount: u8 },
-    VolSlideUp { amount: u8 },
-    VolSlideDown { amount: u8 },
-    VolPortamento { speed: u8 },
-    VolVibrato { speed: u8 },
+    VolSetVolume {
+        vol: u8,
+    },
+    VolFineSlideUp {
+        amount: u8,
+    },
+    VolFineSlideDown {
+        amount: u8,
+    },
+    VolSlideUp {
+        amount: u8,
+    },
+    VolSlideDown {
+        amount: u8,
+    },
+    VolPortamento {
+        speed: u8,
+    },
+    VolVibrato {
+        speed: u8,
+    },
 
-    SetFilterCutoff { cutoff: u16 },
-    SetFilterResonance { resonance: u8 },
-    SetFilterType { filter_type: u8 },
-    FilterCutoffSlide { amount: i16 },
+    SetFilterCutoff {
+        cutoff: u16,
+    },
+    SetFilterResonance {
+        resonance: u8,
+    },
+    SetFilterType {
+        filter_type: u8,
+    },
+    FilterCutoffSlide {
+        amount: i16,
+    },
 
-    SetSendLevel { send_index: u8, level: u8 },
-    SetSendBusParam { bus: u8, param: u8, value: u8 },
+    SetSendLevel {
+        send_index: u8,
+        level: u8,
+    },
+    SetSendBusParam {
+        bus: u8,
+        param: u8,
+        value: u8,
+    },
 
     FormatSpecific(FormatEffect),
 }
@@ -207,7 +323,7 @@ pub enum FormatType {
     Xm,
     S3m,
     It,
-    Htk,  // Native HTRK format
+    Htk, // Native HTRK format
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -229,7 +345,7 @@ impl FilterType {
         }
     }
 
-    pub fn to_u8(&self) -> u8 {
+    pub fn to_u8(self) -> u8 {
         match self {
             FilterType::LowPass => 0,
             FilterType::HighPass => 1,
@@ -293,7 +409,11 @@ pub fn effect_param_value(effect: &Effect) -> Option<u8> {
         Effect::SetFilterType { filter_type } => Some(*filter_type),
         Effect::FilterCutoffSlide { amount } => Some(amount.unsigned_abs() as u8),
         Effect::SetSendLevel { send_index, level } => Some((*send_index << 4) | level),
-        Effect::SetSendBusParam { bus, param, value: _ } => Some((*bus << 4) | param),
+        Effect::SetSendBusParam {
+            bus,
+            param,
+            value: _,
+        } => Some((*bus << 4) | param),
         Effect::None | Effect::FormatSpecific(_) => None,
     }
 }
@@ -332,9 +452,16 @@ pub fn effect_from_param_command(command_kind: u8) -> Effect {
     // The discriminant values are arbitrary but must be stable across
     // the UI and the sequencer. They are NOT persisted.
     match command_kind {
-        0 => Effect::SetSendBusParam { bus: 0, param: 0, value: 0 },
+        0 => Effect::SetSendBusParam {
+            bus: 0,
+            param: 0,
+            value: 0,
+        },
         1 => Effect::SetFilterCutoff { cutoff: 0 },
-        2 => Effect::SetSendLevel { send_index: 0, level: 0 },
+        2 => Effect::SetSendLevel {
+            send_index: 0,
+            level: 0,
+        },
         3 => Effect::SetFilterResonance { resonance: 0 },
         4 => Effect::SetFilterType { filter_type: 0 },
         _ => Effect::None,
@@ -343,17 +470,29 @@ pub fn effect_from_param_command(command_kind: u8) -> Effect {
 
 pub fn set_effect_param_value(mut cell: Cell, val: u8) -> Cell {
     match &mut cell.effect {
-        Effect::Arpeggio { note1, note2 } => { *note1 = val >> 4; *note2 = val & 0x0F; }
+        Effect::Arpeggio { note1, note2 } => {
+            *note1 = val >> 4;
+            *note2 = val & 0x0F;
+        }
         Effect::PortamentoUp { speed } => *speed = val,
         Effect::PortamentoDown { speed } => *speed = val,
         Effect::TonePortamento { speed } => *speed = val,
-        Effect::Vibrato { speed, depth } => { *speed = val >> 4; *depth = val & 0x0F; }
+        Effect::Vibrato { speed, depth } => {
+            *speed = val >> 4;
+            *depth = val & 0x0F;
+        }
         Effect::TonePortamentoVolumeSlide { up } => *up = val as i8,
         Effect::VibratoVolumeSlide { up } => *up = val as i8,
-        Effect::Tremolo { speed, depth } => { *speed = val >> 4; *depth = val & 0x0F; }
+        Effect::Tremolo { speed, depth } => {
+            *speed = val >> 4;
+            *depth = val & 0x0F;
+        }
         Effect::SetPanning { pan } => *pan = val,
         Effect::SetSampleOffset { offset } => *offset = (val as u16) << 8,
-        Effect::VolumeSlide { up, down } => { *up = val >> 4; *down = val & 0x0F; }
+        Effect::VolumeSlide { up, down } => {
+            *up = val >> 4;
+            *down = val & 0x0F;
+        }
         Effect::PositionJump { order } => *order = val as u16,
         Effect::SetVolume { volume } => *volume = val,
         Effect::PatternBreak { row } => *row = val as u16,
@@ -361,9 +500,15 @@ pub fn set_effect_param_value(mut cell: Cell, val: u8) -> Cell {
         Effect::SetSpeed { speed } => *speed = val,
         Effect::SetTempo { bpm } => *bpm = val,
         Effect::SetGlobalVolume { volume } => *volume = val,
-        Effect::GlobalVolumeSlide { up, down } => { *up = (val >> 4) as i8; *down = (val & 0x0F) as i8; }
+        Effect::GlobalVolumeSlide { up, down } => {
+            *up = (val >> 4) as i8;
+            *down = (val & 0x0F) as i8;
+        }
         Effect::SetEnvelopePosition { tick } => *tick = val as u16,
-        Effect::Panbrello { speed, depth } => { *speed = val >> 4; *depth = val & 0x0F; }
+        Effect::Panbrello { speed, depth } => {
+            *speed = val >> 4;
+            *depth = val & 0x0F;
+        }
         Effect::PatternDelay { ticks } => *ticks = val,
         Effect::SetPanPosition { pan } => *pan = val,
         Effect::PanningSlide { speed } => *speed = val as i8,
@@ -382,13 +527,26 @@ pub fn set_effect_param_value(mut cell: Cell, val: u8) -> Cell {
         Effect::FinePortamentoDown { speed } => *speed = val,
         Effect::FineVolumeSlideUp { amount } => *amount = val,
         Effect::FineVolumeSlideDown { amount } => *amount = val,
-        Effect::Tremor { ontime, offtime } => { *ontime = val >> 4; *offtime = val & 0x0F; }
+        Effect::Tremor { ontime, offtime } => {
+            *ontime = val >> 4;
+            *offtime = val & 0x0F;
+        }
         Effect::SetFilterCutoff { cutoff } => *cutoff = (val as u16) << 8,
         Effect::SetFilterResonance { resonance } => *resonance = val,
         Effect::SetFilterType { filter_type } => *filter_type = val,
         Effect::FilterCutoffSlide { amount } => *amount = val as i16,
-        Effect::SetSendLevel { send_index, level } => { *send_index = val >> 4; *level = val & 0x0F; }
-        Effect::SetSendBusParam { bus, param, value: _ } => { *bus = val >> 4; *param = val & 0x0F; }
+        Effect::SetSendLevel { send_index, level } => {
+            *send_index = val >> 4;
+            *level = val & 0x0F;
+        }
+        Effect::SetSendBusParam {
+            bus,
+            param,
+            value: _,
+        } => {
+            *bus = val >> 4;
+            *param = val & 0x0F;
+        }
         _ => {}
     }
     cell
@@ -405,8 +563,14 @@ mod tests {
 
     #[test]
     fn effect_equality() {
-        assert_eq!(Effect::PortamentoUp { speed: 5 }, Effect::PortamentoUp { speed: 5 });
-        assert_ne!(Effect::PortamentoUp { speed: 5 }, Effect::PortamentoUp { speed: 6 });
+        assert_eq!(
+            Effect::PortamentoUp { speed: 5 },
+            Effect::PortamentoUp { speed: 5 }
+        );
+        assert_ne!(
+            Effect::PortamentoUp { speed: 5 },
+            Effect::PortamentoUp { speed: 6 }
+        );
     }
 
     #[test]
@@ -428,7 +592,7 @@ mod tests {
             Effect::VolVibrato { speed: 5 },
         ];
         for e in &effects {
-            let cloned = e.clone();
+            let cloned = *e;
             assert_eq!(*e, cloned);
         }
     }

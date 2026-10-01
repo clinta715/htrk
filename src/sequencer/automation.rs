@@ -17,12 +17,19 @@ pub enum AutomationTarget {
     ChannelPanning,
     FilterCutoff,
     FilterResonance,
-    SendLevel { bus: u8 },
+    SendLevel {
+        bus: u8,
+    },
     GlobalVolume,
     Tempo,
     Speed,
-    SendReturnLevel { bus: u8 },
-    SendBusParam { bus: u8, param: u8 },
+    SendReturnLevel {
+        bus: u8,
+    },
+    SendBusParam {
+        bus: u8,
+        param: u8,
+    },
     /// Automation on a CLAP plugin parameter. The `send_bus` is the
     /// send bus that owns the plugin (0..=3). The `param_id` is the
     /// plugin's stable `ClapId` (assigned by the plugin and stable
@@ -30,7 +37,11 @@ pub enum AutomationTarget {
     /// `Module.send_bus_plugins[bus].param_info` (used by the UI to
     /// resolve the param name and range).
     #[serde(skip)] // not persisted; re-resolved on load from send_bus_plugins
-    PluginParam { send_bus: u8, host_index: u32, param_id: u32 },
+    PluginParam {
+        send_bus: u8,
+        host_index: u32,
+        param_id: u32,
+    },
 
     /// Automation on a CLAP instrument plugin parameter. The
     /// `instrument` is the 1-based instrument index. The `param_id`
@@ -39,7 +50,11 @@ pub enum AutomationTarget {
     /// Re-resolved on load by walking `module.instruments[instrument].plugin`
     /// and re-enumerating the plugin's params.
     #[serde(skip)]
-    InstrumentPluginParam { instrument: u8, host_index: u32, param_id: u32 },
+    InstrumentPluginParam {
+        instrument: u8,
+        host_index: u32,
+        param_id: u32,
+    },
 }
 
 impl AutomationTarget {
@@ -188,7 +203,10 @@ impl AutomationTrack {
     }
 
     pub fn remove_point_at(&mut self, order: u16, row: u16) -> bool {
-        let pos = self.points.iter().position(|p| p.order == order && p.row == row);
+        let pos = self
+            .points
+            .iter()
+            .position(|p| p.order == order && p.row == row);
         match pos {
             Some(i) => {
                 self.points.remove(i);
@@ -200,11 +218,15 @@ impl AutomationTrack {
 
     pub fn evaluate(&self, order: u16, row: u16, tick: u8, speed: u8) -> f32 {
         if self.points.is_empty() {
-            return if self.target.is_multiplier() { 1.0 } else { 0.0 };
+            return if self.target.is_multiplier() {
+                1.0
+            } else {
+                0.0
+            };
         }
 
-        let target_tick = (order as u64 * MAX_ROWS_FOR_TICK + row as u64) * speed as u64
-            + tick as u64;
+        let target_tick =
+            (order as u64 * MAX_ROWS_FOR_TICK + row as u64) * speed as u64 + tick as u64;
 
         if target_tick <= self.points[0].song_tick(speed) {
             return self.points[0].value;
@@ -240,7 +262,9 @@ impl AutomationTrack {
             InterpolationMode::Hold => left.value,
             InterpolationMode::Linear => left.value + (right.value - left.value) * t as f32,
             InterpolationMode::Smooth => {
-                left.value + (right.value - left.value) * ((1.0 - (t * std::f64::consts::PI).cos()) / 2.0) as f32
+                left.value
+                    + (right.value - left.value)
+                        * ((1.0 - (t * std::f64::consts::PI).cos()) / 2.0) as f32
             }
             InterpolationMode::Exponential => {
                 if left.value.abs() < 1e-6 {
@@ -253,11 +277,7 @@ impl AutomationTrack {
     }
 }
 
-pub fn remap_automation_orders(
-    tracks: &mut [AutomationTrack],
-    at_order: u16,
-    shift: i16,
-) {
+pub fn remap_automation_orders(tracks: &mut [AutomationTrack], at_order: u16, shift: i16) {
     for track in tracks.iter_mut() {
         for point in track.points.iter_mut() {
             if point.order >= at_order {

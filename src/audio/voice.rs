@@ -1,8 +1,8 @@
-use crate::sequencer::note::Note;
-use crate::sequencer::sample::{LoopType, VibratoWaveform};
-use crate::sequencer::instrument::{Envelope, NewNoteAction};
 use crate::audio::filter::StateVariableFilter;
 use crate::sequencer::effect::FilterType;
+use crate::sequencer::instrument::{Envelope, NewNoteAction};
+use crate::sequencer::note::Note;
+use crate::sequencer::sample::{LoopType, VibratoWaveform};
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -175,7 +175,7 @@ impl Voice {
         self.pan_env = None;
         self.pitch_env = None;
         self.filter_env = None;
-self.filter_type = FilterType::LowPass;
+        self.filter_type = FilterType::LowPass;
         self.filter_cutoff = 0xFFFF as f32;
         self.auto_cutoff_mult = 1.0;
         self.filter_resonance = 0.0;
@@ -194,7 +194,7 @@ self.filter_type = FilterType::LowPass;
         self.panbrello_phase = 0.0;
         self.panbrello_speed = 0;
         self.panbrello_depth = 0;
-self.tremor_mute = false;
+        self.tremor_mute = false;
         self.portamento_target = None;
         self.fading = false;
         self.note_off = false;
@@ -297,11 +297,11 @@ impl Default for Voice {
             env_sustain_active: false,
             fade_out_amp: 0,
             fade_out_speed_i32: 0,
-        auto_vib_period_base: 0,
-        karplus_strong: false,
-        ks_delay_line: Vec::new(),
-        ks_pos: 0,
-        ks_feedback: 0.5,
+            auto_vib_period_base: 0,
+            karplus_strong: false,
+            ks_delay_line: Vec::new(),
+            ks_pos: 0,
+            ks_feedback: 0.5,
         }
     }
 }

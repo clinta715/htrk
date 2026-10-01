@@ -3,9 +3,9 @@ use eguidev::DevUiExt;
 
 use crate::app_config::SpacingMode;
 use crate::core::HtrkCore;
+use crate::ui::channel_headers::ChannelRenameState;
 use crate::ui::panel_event::PanelEvent;
 use crate::ui::pattern_grid::{ColumnVisibility, GridMetrics, Selection};
-use crate::ui::channel_headers::ChannelRenameState;
 use crate::ui::style::FONT_CAPTION;
 use crate::ui::theme::TrackerTheme;
 
@@ -28,7 +28,9 @@ impl Default for PatternView {
             scroll_channel: 0,
             last_visible_rows: VISIBLE_ROWS,
             last_visible_channels: 16,
-            channel_names: (0..DEFAULT_CHANNELS).map(|i| format!("Ch{}", i + 1)).collect(),
+            channel_names: (0..DEFAULT_CHANNELS)
+                .map(|i| format!("Ch{}", i + 1))
+                .collect(),
             channel_rename_state: ChannelRenameState::default(),
             prev_channel_notes: [0; 64],
         }
@@ -61,7 +63,9 @@ impl PatternView {
             config_col_vis,
         );
         let visible_channels = GridMetrics::calculate_visible_channels(ui, metrics);
-        let visible_channels = visible_channels.min(num_channels - self.scroll_channel).max(1);
+        let visible_channels = visible_channels
+            .min(num_channels - self.scroll_channel)
+            .max(1);
 
         let mut cursor_changed = false;
 
@@ -70,8 +74,11 @@ impl PatternView {
             if ui.dev_button("pattern.add_channel", "+").clicked() {
                 events.push(PanelEvent::AddChannel);
             }
-            let can_remove = core.module.as_ref()
-                .map(|m| m.channel_panning.len() > 1).unwrap_or(false);
+            let can_remove = core
+                .module
+                .as_ref()
+                .map(|m| m.channel_panning.len() > 1)
+                .unwrap_or(false);
             if ui.dev_button("pattern.remove_channel", "−").clicked() && can_remove {
                 events.push(PanelEvent::RemoveChannel);
             }
@@ -82,7 +89,10 @@ impl PatternView {
 
         let note_on_flash = {
             let mut flash = [false; 64];
-            let playing = core.playback_state.playing.load(std::sync::atomic::Ordering::Relaxed);
+            let playing = core
+                .playback_state
+                .playing
+                .load(std::sync::atomic::Ordering::Relaxed);
             if playing {
                 for ch in 0..64 {
                     let current = core.playback_state.channel_note(ch);
@@ -138,30 +148,47 @@ impl PatternView {
             if ch < core.automation_targets.len() {
                 core.automation_targets[ch] = target;
                 if let Some(ref t) = target {
-                    events.push(PanelEvent::SetAutomationTarget { channel: ch, target: *t });
+                    events.push(PanelEvent::SetAutomationTarget {
+                        channel: ch,
+                        target: *t,
+                    });
                 }
             }
         }
 
         if let Some(module) = &core.module {
             if !module.order_list.is_empty() {
-                let order_idx = core.selected_order.min(module.order_list.len().saturating_sub(1));
+                let order_idx = core
+                    .selected_order
+                    .min(module.order_list.len().saturating_sub(1));
                 let pat_idx = module.order_list[order_idx] as usize;
-                let grid_playback_row = if playback_pattern == Some(pat_idx) { playback_row } else { None };
+                let grid_playback_row = if playback_pattern == Some(pat_idx) {
+                    playback_row
+                } else {
+                    None
+                };
                 let pattern = core.current_pattern_or_default();
-                let auto_overlays: Vec<Option<crate::ui::pattern_grid::AutomationOverlayInfo>> = (0..num_channels).map(|ch| {
-                    core.automation_targets.get(ch).and_then(|t| t.as_ref()).map(|target| {
-                        let track = module.automation_tracks.iter()
-                            .find(|tr| tr.channel == Some(ch) && tr.target == *target)
-                            .map(|tr| std::sync::Arc::new(tr.clone()));
-                        crate::ui::pattern_grid::AutomationOverlayInfo {
-                            target: *target,
-                            track,
-                            current_order: core.selected_order as u16,
-                            speed: module.initial_speed,
-                        }
+                let auto_overlays: Vec<Option<crate::ui::pattern_grid::AutomationOverlayInfo>> = (0
+                    ..num_channels)
+                    .map(|ch| {
+                        core.automation_targets
+                            .get(ch)
+                            .and_then(|t| t.as_ref())
+                            .map(|target| {
+                                let track = module
+                                    .automation_tracks
+                                    .iter()
+                                    .find(|tr| tr.channel == Some(ch) && tr.target == *target)
+                                    .map(|tr| std::sync::Arc::new(tr.clone()));
+                                crate::ui::pattern_grid::AutomationOverlayInfo {
+                                    target: *target,
+                                    track,
+                                    current_order: core.selected_order as u16,
+                                    speed: module.initial_speed,
+                                }
+                            })
                     })
-                }).collect();
+                    .collect();
 
                 let grid_resp = crate::ui::pattern_grid::draw_pattern_grid(
                     ui,
@@ -169,7 +196,11 @@ impl PatternView {
                     &core.cursor,
                     core.selection.as_ref(),
                     grid_playback_row,
-                    if grid_playback_row.is_some() { playback_tick } else { None },
+                    if grid_playback_row.is_some() {
+                        playback_tick
+                    } else {
+                        None
+                    },
                     playback_speed,
                     self.scroll_row,
                     self.scroll_channel,
@@ -180,7 +211,7 @@ impl PatternView {
                     config_row_highlight_major,
                     config_sample_length_bg,
                     config_col_vis,
-                    core.module.as_ref().map(|v| &**v),
+                    core.module.as_deref(),
                     &auto_overlays,
                 );
 
@@ -216,7 +247,11 @@ impl PatternView {
                     events.push(PanelEvent::ToggleSampleLengthBg);
                 }
                 if let Some(tooltip) = grid_resp.effect_tooltip {
-                    ui.label(egui::RichText::new(&tooltip).size(FONT_CAPTION).color(theme.fg_dim));
+                    ui.label(
+                        egui::RichText::new(&tooltip)
+                            .size(FONT_CAPTION)
+                            .color(theme.fg_dim),
+                    );
                 }
             }
         }

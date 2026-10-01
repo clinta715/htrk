@@ -15,7 +15,9 @@ pub(super) fn parse_note(s: &str) -> Result<Note, String> {
         "~~~" => return Ok(Note::Fade),
         _ => {}
     }
-    let tone_names = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
+    let tone_names = [
+        "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-",
+    ];
     let s_upper = s.to_uppercase();
     if s_upper.len() < 3 {
         if let Ok(k) = s_upper.parse::<u8>() {
@@ -27,9 +29,13 @@ pub(super) fn parse_note(s: &str) -> Result<Note, String> {
     }
     let tone_str = &s_upper[..2];
     let octave_str = &s_upper[2..];
-    let tone = tone_names.iter().position(|&t| t == tone_str)
+    let tone = tone_names
+        .iter()
+        .position(|&t| t == tone_str)
         .ok_or_else(|| format!("Unknown note name: '{s}'"))?;
-    let octave = octave_str.parse::<u8>().map_err(|_| format!("Invalid octave in '{s}'"))?;
+    let octave = octave_str
+        .parse::<u8>()
+        .map_err(|_| format!("Invalid octave in '{s}'"))?;
     let key = octave * 12 + tone as u8;
     if key > 119 {
         return Err(format!("Note '{s}' out of range (max G-9)"));

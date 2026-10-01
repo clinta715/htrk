@@ -1,16 +1,18 @@
 use super::*;
-use crate::sequencer::Instrument;
-use crate::sequencer::module::ModuleFlags;
-use crate::sequencer::pattern::Pattern;
-use crate::sequencer::note::Note;
-use crate::sequencer::effect::Effect;
+use crate::audio::effects::{
+    advance_single_envelope, compute_playback_frequency, compute_samples_per_tick,
+    evaluate_envelope, FUNK_TRACK, VIBRATO_SINE_TABLE,
+};
 use crate::audio::voice::EnvelopeState;
-use crate::audio::effects::{compute_samples_per_tick, advance_single_envelope, evaluate_envelope, compute_playback_frequency, VIBRATO_SINE_TABLE, FUNK_TRACK};
 use crate::audio::Voice;
+use crate::sequencer::effect::Effect;
+use crate::sequencer::module::ModuleFlags;
 use crate::sequencer::module::MAX_VOICES;
-use crate::sequencer::sample::VibratoWaveform;
+use crate::sequencer::note::Note;
+use crate::sequencer::pattern::Pattern;
 use crate::sequencer::period::get_vib_tab;
-
+use crate::sequencer::sample::VibratoWaveform;
+use crate::sequencer::Instrument;
 
 #[test]
 fn compute_samples_per_tick_default() {
@@ -37,7 +39,10 @@ fn advance_envelope_linear() {
     let env = crate::sequencer::instrument::Envelope {
         points: vec![
             crate::sequencer::instrument::EnvelopePoint { tick: 0, value: 0 },
-            crate::sequencer::instrument::EnvelopePoint { tick: 10, value: 64 },
+            crate::sequencer::instrument::EnvelopePoint {
+                tick: 10,
+                value: 64,
+            },
         ],
         sustain_point: None,
         loop_start: None,
@@ -113,7 +118,7 @@ fn advance_envelope_sustain() {
 #[test]
 fn vibrato_sine_table_range() {
     for &val in &VIBRATO_SINE_TABLE {
-        assert!(val >= -255.0 && val <= 255.0);
+        assert!((-255.0..=255.0).contains(&val));
     }
 }
 
@@ -163,9 +168,16 @@ fn mod_playback_produces_audio() {
 
     let cell = module.patterns[0].cell(0, 0);
     assert!(cell.instrument.is_some(), "MOD cell should have instrument");
-    assert!(matches!(cell.note, Note::On(_)), "MOD cell should have note, got {:?}", cell.note);
+    assert!(
+        matches!(cell.note, Note::On(_)),
+        "MOD cell should have note, got {:?}",
+        cell.note
+    );
 
-    assert!(!module.samples[1].data.is_empty(), "Sample 1 should have data");
+    assert!(
+        !module.samples[1].data.is_empty(),
+        "Sample 1 should have data"
+    );
     assert_eq!(module.samples[1].sample_rate, 8363);
 
     let mut engine = SequencerEngine::new(48000.0);
@@ -176,17 +188,35 @@ fn mod_playback_produces_audio() {
     // We need to call process_tick() or advance() to trigger the notes.
     engine.process_tick();
 
-    assert!(engine.state.playing, "Engine should be playing after play()");
+    assert!(
+        engine.state.playing,
+        "Engine should be playing after play()"
+    );
 
     let active_after_play = engine.voice_pool.voices.iter().filter(|v| v.active).count();
-    assert!(active_after_play > 0, "Should have at least 1 active voice after tick 0, got {}", active_after_play);
+    assert!(
+        active_after_play > 0,
+        "Should have at least 1 active voice after tick 0, got {}",
+        active_after_play
+    );
 
     let voice = engine.voice_pool.voices.iter().find(|v| v.active).unwrap();
-    assert!(voice.sample.is_some(), "Active voice should have sample data");
+    assert!(
+        voice.sample.is_some(),
+        "Active voice should have sample data"
+    );
     let sample_ref = voice.sample.as_ref().unwrap();
     assert!(!sample_ref.is_empty(), "Sample data should not be empty");
-    assert!(voice.sample_delta > 0.0, "Sample delta should be positive, got {}", voice.sample_delta);
-    assert!(voice.final_volume > 0.0, "Final volume should be positive, got {}", voice.final_volume);
+    assert!(
+        voice.sample_delta > 0.0,
+        "Sample delta should be positive, got {}",
+        voice.sample_delta
+    );
+    assert!(
+        voice.final_volume > 0.0,
+        "Final volume should be positive, got {}",
+        voice.final_volume
+    );
 
     engine.advance(4800);
 
@@ -202,8 +232,16 @@ fn mod_playback_produces_audio() {
         48000.0,
     );
 
-    let max_sample = left.iter().chain(right.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);
-    assert!(max_sample > 0.0001, "MOD playback should produce audio output, max sample = {:.6}", max_sample);
+    let max_sample = left
+        .iter()
+        .chain(right.iter())
+        .map(|&s| s.abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_sample > 0.0001,
+        "MOD playback should produce audio output, max sample = {:.6}",
+        max_sample
+    );
 }
 
 #[test]
@@ -234,7 +272,10 @@ fn note_delay_stores_cell() {
 
     assert_eq!(engine.state.channels[0].note_delay_ticks, 3);
     assert!(engine.state.channels[0].delayed_cell.is_some());
-    assert_eq!(engine.state.channels[0].delayed_cell.unwrap().note, Note::On(60));
+    assert_eq!(
+        engine.state.channels[0].delayed_cell.unwrap().note,
+        Note::On(60)
+    );
 }
 
 #[test]
@@ -295,7 +336,10 @@ fn auto_vibrato_period_base_set_on_trigger_note() {
     engine.process_tick_zero_unified();
 
     // Find the active voice on channel 0
-    let voice = engine.voice_pool.voices.iter()
+    let voice = engine
+        .voice_pool
+        .voices
+        .iter()
         .find(|v| v.active && v.channel == Some(0))
         .expect("Should have an active voice on channel 0");
 
@@ -320,9 +364,7 @@ fn auto_vibrato_period_base_set_on_trigger_note() {
 
 #[test]
 fn delayed_note_xm_sets_up_auto_vibrato_and_envelopes() {
-    use crate::sequencer::instrument::{
-        Instrument, Envelope, EnvelopeFlags, EnvelopePoint,
-    };
+    use crate::sequencer::instrument::{Envelope, EnvelopeFlags, EnvelopePoint, Instrument};
     use crate::sequencer::module::ModuleFlags;
     use crate::sequencer::pattern::Pattern;
 
@@ -336,7 +378,10 @@ fn delayed_note_xm_sets_up_auto_vibrato_and_envelopes() {
     let vol_env = Envelope {
         points: vec![
             EnvelopePoint { tick: 0, value: 0 },
-            EnvelopePoint { tick: 10, value: 64 },
+            EnvelopePoint {
+                tick: 10,
+                value: 64,
+            },
         ],
         sustain_point: Some(1),
         loop_start: None,
@@ -394,7 +439,10 @@ fn delayed_note_xm_sets_up_auto_vibrato_and_envelopes() {
     let linear = module.flags.linear_slides;
     engine.trigger_delayed_note_period(0, linear);
 
-    let voice = engine.voice_pool.voices.iter()
+    let voice = engine
+        .voice_pool
+        .voices
+        .iter()
         .find(|v| v.active && v.channel == Some(0))
         .expect("Should have active voice after delayed trigger");
 
@@ -404,8 +452,11 @@ fn delayed_note_xm_sets_up_auto_vibrato_and_envelopes() {
         "Delayed note: auto_vib_period_base should be > 0, got {}",
         voice.auto_vib_period_base
     );
-    assert_eq!(voice.auto_vib_amp, (vib_depth as i32) * 256,
-        "Delayed note: auto_vib_amp should be at full depth");
+    assert_eq!(
+        voice.auto_vib_amp,
+        (vib_depth as i32) * 256,
+        "Delayed note: auto_vib_amp should be at full depth"
+    );
 
     // Verify envelope was set up
     assert!(
@@ -418,7 +469,8 @@ fn delayed_note_xm_sets_up_auto_vibrato_and_envelopes() {
     );
     assert_eq!(
         voice.fade_out_rate, fade_out,
-        "Delayed note: fade_out_rate should be {}", fade_out
+        "Delayed note: fade_out_rate should be {}",
+        fade_out
     );
     assert_eq!(
         voice.fade_out_amp, 32768,
@@ -481,7 +533,10 @@ fn trigger_channel_note_resets_auto_vib_period_on_reuse() {
 
     let period_c5 = crate::sequencer::period::get_note_period(60, 0, true);
 
-    let voice = engine.voice_pool.voices.iter()
+    let voice = engine
+        .voice_pool
+        .voices
+        .iter()
         .find(|v| v.active && v.channel == Some(0))
         .expect("Should have voice after first trigger");
     assert_eq!(
@@ -501,7 +556,10 @@ fn trigger_channel_note_resets_auto_vib_period_on_reuse() {
 
     let period_c6 = crate::sequencer::period::get_note_period(72, 0, true);
 
-    let voice2 = engine.voice_pool.voices.iter()
+    let voice2 = engine
+        .voice_pool
+        .voices
+        .iter()
         .find(|v| v.active && v.channel == Some(0))
         .expect("Should have voice after second trigger");
     assert_eq!(
@@ -570,7 +628,8 @@ fn xm_active_effects_dispatch_volume_slide() {
     assert!(
         vol_after > vol_before || vol_after == 64,
         "VolumeSlide should increase volume on non-zero tick: {} -> {}",
-        vol_before, vol_after
+        vol_before,
+        vol_after
     );
 }
 
@@ -687,7 +746,11 @@ fn xm_note_delay_triggers_on_correct_tick() {
 
     // No voice should be active yet (note is delayed)
     assert!(
-        engine.voice_pool.voices.iter().all(|v| !v.active || v.channel != Some(0)),
+        engine
+            .voice_pool
+            .voices
+            .iter()
+            .all(|v| !v.active || v.channel != Some(0)),
         "No voice on ch0 after tick 0 with NoteDelay"
     );
     assert_eq!(engine.state.channels[0].note_delay_ticks, 3);
@@ -697,7 +760,11 @@ fn xm_note_delay_triggers_on_correct_tick() {
     engine.state.clock.current_tick = 1;
     engine.process_effects_tick_unified();
     assert!(
-        engine.voice_pool.voices.iter().all(|v| !v.active || v.channel != Some(0)),
+        engine
+            .voice_pool
+            .voices
+            .iter()
+            .all(|v| !v.active || v.channel != Some(0)),
         "No voice on ch0 at tick 1"
     );
 
@@ -705,7 +772,11 @@ fn xm_note_delay_triggers_on_correct_tick() {
     engine.state.clock.current_tick = 2;
     engine.process_effects_tick_unified();
     assert!(
-        engine.voice_pool.voices.iter().all(|v| !v.active || v.channel != Some(0)),
+        engine
+            .voice_pool
+            .voices
+            .iter()
+            .all(|v| !v.active || v.channel != Some(0)),
         "No voice on ch0 at tick 2"
     );
 
@@ -713,7 +784,11 @@ fn xm_note_delay_triggers_on_correct_tick() {
     engine.state.clock.current_tick = 3;
     engine.process_effects_tick_unified();
     assert!(
-        engine.voice_pool.voices.iter().any(|v| v.active && v.channel == Some(0)),
+        engine
+            .voice_pool
+            .voices
+            .iter()
+            .any(|v| v.active && v.channel == Some(0)),
         "Voice should be active on ch0 at tick 3 (delayed note trigger)"
     );
 }
@@ -814,10 +889,7 @@ fn mod_pattern_loop_advances_to_next_order() {
     let module = Arc::new(Module {
         format: ModuleFormat::MOD,
         order_list: vec![0, 1],
-        patterns: vec![
-            Pattern::new(64),
-            Pattern::new(64),
-        ],
+        patterns: vec![Pattern::new(64), Pattern::new(64)],
         ..Module::default()
     });
 
@@ -877,10 +949,7 @@ fn mod_pattern_loop_count_3_exits_correctly() {
     let module = Arc::new(Module {
         format: ModuleFormat::MOD,
         order_list: vec![0, 1],
-        patterns: vec![
-            Pattern::new(64),
-            Pattern::new(64),
-        ],
+        patterns: vec![Pattern::new(64), Pattern::new(64)],
         ..Module::default()
     });
 
@@ -939,7 +1008,7 @@ fn mod_pattern_loop_count_3_exits_correctly() {
     engine.advance_row();
     assert_eq!(engine.state.pattern_loop_count, 0);
     assert_eq!(engine.state.pattern_loop_start, None);
-    assert_eq!(engine.state.pattern_loop_final_pass, true);
+    assert!(engine.state.pattern_loop_final_pass);
     assert_eq!(engine.state.current_row, 0);
     assert_eq!(engine.state.current_order, 0);
 
@@ -953,7 +1022,7 @@ fn mod_pattern_loop_count_3_exits_correctly() {
     engine.advance_row();
     assert_eq!(engine.state.current_order, 1);
     assert_eq!(engine.state.current_row, 0);
-    assert_eq!(engine.state.pattern_loop_final_pass, false);
+    assert!(!engine.state.pattern_loop_final_pass);
 }
 
 #[test]
@@ -965,12 +1034,18 @@ fn advance_row_resets_retrigger_state() {
 
     engine.advance_row();
 
-    assert_eq!(engine.state.channels[0].retrig_speed, 0,
-        "retrig_speed should be reset on row advance");
-    assert_eq!(engine.state.channels[0].retrig_cnt, 0,
-        "retrig_cnt should be reset on row advance");
-    assert_eq!(engine.state.channels[0].last_retrigger_interval, 0,
-        "last_retrigger_interval should be reset on row advance");
+    assert_eq!(
+        engine.state.channels[0].retrig_speed, 0,
+        "retrig_speed should be reset on row advance"
+    );
+    assert_eq!(
+        engine.state.channels[0].retrig_cnt, 0,
+        "retrig_cnt should be reset on row advance"
+    );
+    assert_eq!(
+        engine.state.channels[0].last_retrigger_interval, 0,
+        "last_retrigger_interval should be reset on row advance"
+    );
 }
 
 #[test]
@@ -990,10 +1065,35 @@ fn xm_pattern_delay_sets_row_delay_active() {
     engine.state.clock.current_tick = 0;
     engine.process_cell_unified(0, &cell);
 
-    assert!(engine.state.row_delay_active,
-        "PatternDelay should set row_delay_active for XM");
-    assert_eq!(engine.state.pattern_delay_ticks, 2,
-        "PatternDelay should store tick count");
+    assert!(
+        engine.state.row_delay_active,
+        "PatternDelay should set row_delay_active for XM"
+    );
+    assert_eq!(
+        engine.state.pattern_delay_ticks, 2,
+        "PatternDelay should store tick count"
+    );
+}
+
+#[test]
+fn xm_volume_column_pan_right_saturates_at_255() {
+    let mut engine = SequencerEngine::new(48000.0);
+    let mut module = Module::default();
+    module.flags.xm_period_model = true;
+    engine.load_module(Arc::new(module));
+
+    // Panning is already hard right; a pan-right volume-column command must
+    // saturate instead of overflowing the u8 channel_panning field.
+    engine.state.channels[0].channel_panning = 255;
+    engine.state.channels[0].vol_kol = 0xE1;
+    engine.state.clock.current_tick = 1;
+
+    engine.process_effects_tick_unified();
+
+    assert_eq!(
+        engine.state.channels[0].channel_panning, 255,
+        "pan-right at max panning must saturate at 255"
+    );
 }
 
 #[test]
@@ -1003,8 +1103,10 @@ fn advance_row_resets_note_cut_tick() {
 
     engine.advance_row();
 
-    assert_eq!(engine.state.channels[0].note_cut_tick, None,
-        "note_cut_tick should be reset on row advance");
+    assert_eq!(
+        engine.state.channels[0].note_cut_tick, None,
+        "note_cut_tick should be reset on row advance"
+    );
 }
 
 #[test]
@@ -1023,7 +1125,10 @@ fn mod_tone_portamento_slides_toward_target() {
         samples: vec![Sample::default(), sample.clone()],
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: false,
+            ..ModuleFlags::default()
+        },
         ..Module::default()
     });
 
@@ -1033,8 +1138,12 @@ fn mod_tone_portamento_slides_toward_target() {
     engine.state.channels[0].last_instrument = 1;
     engine.state.channels[0].last_sample = 1;
 
-    let (target_period, target_freq) = engine.compute_portamento_target(0, 60, 60, Some(&sample), 1, &module);
-    assert!(target_period > 0, "compute_portamento_target should return a valid period");
+    let (target_period, target_freq) =
+        engine.compute_portamento_target(0, 60, 60, Some(&sample), 1, &module);
+    assert!(
+        target_period > 0,
+        "compute_portamento_target should return a valid period"
+    );
 
     engine.state.channels[0].real_period = 856;
     engine.state.channels[0].out_period = 856;
@@ -1048,7 +1157,10 @@ fn mod_tone_portamento_slides_toward_target() {
     let after = engine.state.channels[0].real_period;
 
     assert_ne!(before, after, "apply_tone_portamento should change period");
-    assert_ne!(after, 856, "apply_tone_portamento should produce a different period");
+    assert_ne!(
+        after, 856,
+        "apply_tone_portamento should produce a different period"
+    );
 }
 
 #[test]
@@ -1069,7 +1181,10 @@ fn mod_vibrato_depth_within_protracker_range() {
         samples: vec![Sample::default(), sample],
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: false,
+            ..ModuleFlags::default()
+        },
         ..Module::default()
     });
     engine.load_module(module);
@@ -1100,7 +1215,11 @@ fn mod_vibrato_depth_within_protracker_range() {
             0 => vib_tab[tmp_vib] as i32,
             1 => {
                 let val = (tmp_vib as i32) << 3;
-                if (ch.vib_pos as i8) < 0 { !val } else { val }
+                if (ch.vib_pos as i8) < 0 {
+                    !val
+                } else {
+                    val
+                }
             }
             _ => 255,
         };
@@ -1115,8 +1234,11 @@ fn mod_vibrato_depth_within_protracker_range() {
 
     let freq_mod = after_freq / initial_freq;
     let semitones = (freq_mod.log2() * 12.0).abs();
-    assert!(semitones < 2.0,
-        "MOD vibrato depth 15 should be < 2 semitones, got {:.1}", semitones);
+    assert!(
+        semitones < 2.0,
+        "MOD vibrato depth 15 should be < 2 semitones, got {:.1}",
+        semitones
+    );
 }
 
 #[test]
@@ -1131,7 +1253,10 @@ fn mod_volume_slide_memory_uses_full_param() {
         format: ModuleFormat::MOD,
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: false,
+            ..ModuleFlags::default()
+        },
         ..Module::default()
     });
     engine.load_module(module);
@@ -1145,8 +1270,10 @@ fn mod_volume_slide_memory_uses_full_param() {
     engine.apply_volume_slide(0);
 
     let vol_after = engine.state.channels[0].channel_volume;
-    assert_eq!(vol_after, 64,
-        "With param=0, should slide 0 (up=0, down=0 from param), ignoring stale up=3");
+    assert_eq!(
+        vol_after, 64,
+        "With param=0, should slide 0 (up=0, down=0 from param), ignoring stale up=3"
+    );
 
     engine.state.channels[0].channel_volume = 64;
     engine.state.channels[0].last_volume_slide_param = 0x30;
@@ -1156,14 +1283,16 @@ fn mod_volume_slide_memory_uses_full_param() {
     engine.apply_volume_slide(0);
 
     let vol_after_param = engine.state.channels[0].channel_volume;
-    assert_eq!(vol_after_param, 64,
-        "With param=0x30, should slide up by 3, but 64+3=67 exceeds max 64, clamped to 64");
+    assert_eq!(
+        vol_after_param, 64,
+        "With param=0x30, should slide up by 3, but 64+3=67 exceeds max 64, clamped to 64"
+    );
 }
 
 #[test]
 fn xm_tone_portamento_still_works() {
-    use crate::sequencer::{Instrument, Module, ModuleFormat, Pattern, Sample};
     use crate::sequencer::module::ModuleFlags;
+    use crate::sequencer::{Instrument, Module, ModuleFormat, Pattern, Sample};
 
     let mut engine = SequencerEngine::new(48000.0);
     engine.use_xm_model = true;
@@ -1202,11 +1331,16 @@ fn xm_tone_portamento_still_works() {
     engine.apply_tone_portamento_period(0, true);
     let after = engine.state.channels[0].real_period;
 
-    assert!(after < before,
+    assert!(
+        after < before,
         "XM portamento (porta_dir=2, slide up = lower period) should decrease period: {} -> {}",
-        before, after);
-    assert!(after >= target_period,
-        "XM portamento should not overshoot target period");
+        before,
+        after
+    );
+    assert!(
+        after >= target_period,
+        "XM portamento should not overshoot target period"
+    );
 }
 
 #[test]
@@ -1218,7 +1352,10 @@ fn portamento_up_memory_preserved_when_param_is_zero() {
         format: ModuleFormat::MOD,
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: false,
+            ..ModuleFlags::default()
+        },
         ..Module::default()
     });
     engine.load_module(module);
@@ -1229,10 +1366,14 @@ fn portamento_up_memory_preserved_when_param_is_zero() {
 
     engine.apply_effect_unified(0, &Effect::PortamentoUp { speed: 0 }, true);
 
-    assert_eq!(engine.state.channels[0].last_portamento_up_speed, 4,
-        "Zero-param portamento up should preserve last speed");
-    assert!(engine.state.channels[0].active_effects.portamento_up,
-        "Zero-param portamento up should keep active flag");
+    assert_eq!(
+        engine.state.channels[0].last_portamento_up_speed, 4,
+        "Zero-param portamento up should preserve last speed"
+    );
+    assert!(
+        engine.state.channels[0].active_effects.portamento_up,
+        "Zero-param portamento up should keep active flag"
+    );
 }
 
 #[test]
@@ -1244,7 +1385,10 @@ fn vibrato_memory_preserved_when_param_is_zero() {
         format: ModuleFormat::MOD,
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: false,
+            ..ModuleFlags::default()
+        },
         ..Module::default()
     });
     engine.load_module(module);
@@ -1256,12 +1400,18 @@ fn vibrato_memory_preserved_when_param_is_zero() {
 
     engine.apply_effect_unified(0, &Effect::Vibrato { speed: 0, depth: 0 }, true);
 
-    assert_eq!(engine.state.channels[0].last_vibrato_speed, 5,
-        "Zero-param vibrato should preserve last speed");
-    assert_eq!(engine.state.channels[0].last_vibrato_depth, 8,
-        "Zero-param vibrato should preserve last depth");
-    assert!(engine.state.channels[0].active_effects.vibrato,
-        "Zero-param vibrato should keep active flag");
+    assert_eq!(
+        engine.state.channels[0].last_vibrato_speed, 5,
+        "Zero-param vibrato should preserve last speed"
+    );
+    assert_eq!(
+        engine.state.channels[0].last_vibrato_depth, 8,
+        "Zero-param vibrato should preserve last depth"
+    );
+    assert!(
+        engine.state.channels[0].active_effects.vibrato,
+        "Zero-param vibrato should keep active flag"
+    );
 }
 
 #[test]
@@ -1273,7 +1423,10 @@ fn panning_slide_memory_preserved_when_param_is_zero() {
         format: ModuleFormat::XM,
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: true, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: true,
+            ..ModuleFlags::default()
+        },
         ..Module::default()
     });
     engine.load_module(module);
@@ -1284,10 +1437,14 @@ fn panning_slide_memory_preserved_when_param_is_zero() {
 
     engine.apply_effect_unified(0, &Effect::PanningSlide { speed: 0 }, true);
 
-    assert_eq!(engine.state.channels[0].last_panning_slide, 3,
-        "Zero-param panning slide should preserve last value");
-    assert!(engine.state.channels[0].active_effects.panning_slide,
-        "Zero-param panning slide should keep active flag");
+    assert_eq!(
+        engine.state.channels[0].last_panning_slide, 3,
+        "Zero-param panning slide should preserve last value"
+    );
+    assert!(
+        engine.state.channels[0].active_effects.panning_slide,
+        "Zero-param panning slide should keep active flag"
+    );
 }
 
 #[test]
@@ -1299,7 +1456,10 @@ fn global_volume_slide_xm_applies_each_tick() {
         format: ModuleFormat::XM,
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: true, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: true,
+            ..ModuleFlags::default()
+        },
         instruments: vec![crate::sequencer::instrument::Instrument::default()],
         ..Module::default()
     });
@@ -1312,7 +1472,10 @@ fn global_volume_slide_xm_applies_each_tick() {
     engine.state.channels[0].active_effects.global_volume_slide = true;
     engine.state.clock.current_tick = 1;
     engine.process_effects_tick_unified();
-    assert_eq!(engine.state.global_volume, 35, "XM global volume should increase by up each tick");
+    assert_eq!(
+        engine.state.global_volume, 35,
+        "XM global volume should increase by up each tick"
+    );
 }
 
 #[test]
@@ -1324,7 +1487,10 @@ fn global_volume_slide_non_xm_applies_each_tick() {
         format: ModuleFormat::MOD,
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: false,
+            ..ModuleFlags::default()
+        },
         ..Module::default()
     });
     engine.load_module(module);
@@ -1336,7 +1502,10 @@ fn global_volume_slide_non_xm_applies_each_tick() {
     engine.state.channels[0].active_effects.global_volume_slide = true;
     engine.state.clock.current_tick = 1;
     engine.process_effects_tick_unified();
-    assert_eq!(engine.state.global_volume, 59, "non-XM global volume should decrease by down each tick");
+    assert_eq!(
+        engine.state.global_volume, 59,
+        "non-XM global volume should decrease by down each tick"
+    );
 }
 
 #[test]
@@ -1348,7 +1517,10 @@ fn global_volume_slide_memory_accumulates_per_tick() {
         format: ModuleFormat::MOD,
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: false,
+            ..ModuleFlags::default()
+        },
         ..Module::default()
     });
     engine.load_module(module);
@@ -1363,7 +1535,10 @@ fn global_volume_slide_memory_accumulates_per_tick() {
     assert_eq!(engine.state.global_volume, 66);
     engine.state.clock.current_tick = 2;
     engine.process_effects_tick_unified();
-    assert_eq!(engine.state.global_volume, 68, "slide should accumulate across ticks");
+    assert_eq!(
+        engine.state.global_volume, 68,
+        "slide should accumulate across ticks"
+    );
 }
 
 #[test]
@@ -1375,7 +1550,10 @@ fn extra_fine_portamento_slows_by_factor_4() {
         format: ModuleFormat::MOD,
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: false,
+            ..ModuleFlags::default()
+        },
         ..Module::default()
     });
     engine.load_module(module);
@@ -1386,8 +1564,12 @@ fn extra_fine_portamento_slows_by_factor_4() {
     engine.state.channels[ch].out_period = 500;
     engine.apply_effect_unified(ch, &Effect::ExtraFinePortamentoDown { speed: 4 }, true);
     let spd = ((4u8 as u16 + 2) >> 2).max(1);
-    assert_eq!(engine.state.channels[ch].real_period, 500 + spd as u16,
-        "ExtraFinePortamentoDown speed 4 -> spd {}, period+spd", spd);
+    assert_eq!(
+        engine.state.channels[ch].real_period,
+        500 + spd,
+        "ExtraFinePortamentoDown speed 4 -> spd {}, period+spd",
+        spd
+    );
 }
 
 #[test]
@@ -1399,7 +1581,10 @@ fn funkit_modulates_voice_position_on_tick() {
         format: ModuleFormat::MOD,
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: false,
+            ..ModuleFlags::default()
+        },
         ..Module::default()
     });
     engine.load_module(module);
@@ -1408,12 +1593,15 @@ fn funkit_modulates_voice_position_on_tick() {
     let ch = 0;
     engine.state.channels[ch].funk_speed = 4;
     engine.state.channels[ch].funk_toggle = true;
-    engine.state.clock.current_tick = FUNK_TRACK[4] as u8;
+    engine.state.clock.current_tick = FUNK_TRACK[4];
     engine.voice_pool.voices[0].active = true;
     engine.voice_pool.voices[0].channel = Some(0);
     engine.voice_pool.voices[0].position = 100.0;
     engine.process_effects_tick_unified();
-    assert!(engine.voice_pool.voices[0].position >= 100.0, "FunkIt should modulate voice position");
+    assert!(
+        engine.voice_pool.voices[0].position >= 100.0,
+        "FunkIt should modulate voice position"
+    );
 }
 
 #[test]
@@ -1425,7 +1613,10 @@ fn funkit_speed_zero_disables_modulation() {
         format: ModuleFormat::MOD,
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: false,
+            ..ModuleFlags::default()
+        },
         ..Module::default()
     });
     engine.load_module(module);
@@ -1435,7 +1626,10 @@ fn funkit_speed_zero_disables_modulation() {
     let pos_before = engine.voice_pool.voices[0].position;
     engine.state.clock.current_tick = 5;
     engine.process_effects_tick_unified();
-    assert_eq!(engine.voice_pool.voices[0].position, pos_before, "funk_speed=0 should not move position");
+    assert_eq!(
+        engine.voice_pool.voices[0].position, pos_before,
+        "funk_speed=0 should not move position"
+    );
 }
 
 #[test]
@@ -1447,7 +1641,10 @@ fn karplus_strong_initializes_buffer_on_trigger() {
         format: ModuleFormat::MOD,
         order_list: vec![0],
         patterns: vec![Pattern::new(64)],
-        flags: ModuleFlags { linear_slides: false, ..ModuleFlags::default() },
+        flags: ModuleFlags {
+            linear_slides: false,
+            ..ModuleFlags::default()
+        },
         ..Module::default()
     });
     engine.load_module(module);
@@ -1471,8 +1668,8 @@ fn karplus_strong_disabled_when_param_zero() {
 
 #[test]
 fn karplus_strong_mixer_produces_output() {
-    use crate::audio::mixer;
     use crate::audio::commands::InterpolationType;
+    use crate::audio::mixer;
 
     let mut voices = vec![crate::audio::voice::Voice::default()];
     let v = &mut voices[0];
@@ -1488,7 +1685,15 @@ fn karplus_strong_mixer_produces_output() {
     let mut left = vec![0.0_f32; 16];
     let mut right = vec![0.0_f32; 16];
     let sample_rate = 44100.0;
-    mixer::mix_voices(&mut voices, &mut left, &mut right, 1.0, InterpolationType::Linear, &[], sample_rate);
+    mixer::mix_voices(
+        &mut voices,
+        &mut left,
+        &mut right,
+        1.0,
+        InterpolationType::Linear,
+        &[],
+        sample_rate,
+    );
     let has_output = left.iter().any(|&s| s != 0.0);
     assert!(has_output, "KS should produce non-zero output");
 }
@@ -1540,17 +1745,28 @@ fn test_plugin_instrument_queues_note_off() {
     );
 
     // Now play a note, then release it. The off must carry the REAL key.
-    let on = Cell { note: Note::On(60), instrument: Some(1), ..Default::default() };
+    let on = Cell {
+        note: Note::On(60),
+        instrument: Some(1),
+        ..Default::default()
+    };
     engine.process_cell_unified(0, &on);
     engine.collect_plugin_note_events(); // drain the note-on
 
-    let off = Cell { note: Note::Off, instrument: Some(1), ..Default::default() };
+    let off = Cell {
+        note: Note::Off,
+        instrument: Some(1),
+        ..Default::default()
+    };
     engine.process_cell_unified(0, &off);
 
     let events = engine.collect_plugin_note_events();
     assert_eq!(events.len(), 1);
     assert!(!events[0].note_on);
-    assert_eq!(events[0].key, 60, "note-off must carry the held note's key, not 0");
+    assert_eq!(
+        events[0].key, 60,
+        "note-off must carry the held note's key, not 0"
+    );
 }
 
 #[test]
@@ -1563,19 +1779,37 @@ fn test_plugin_new_note_interrupts_previous() {
     engine.load_module(Arc::new(module));
 
     // Play C-4 on track 0.
-    let on1 = Cell { note: Note::On(60), instrument: Some(1), ..Default::default() };
+    let on1 = Cell {
+        note: Note::On(60),
+        instrument: Some(1),
+        ..Default::default()
+    };
     engine.process_cell_unified(0, &on1);
     engine.collect_plugin_note_events(); // drain
 
     // Play E-4 on the SAME track. Tracks are monophonic, so this must first
     // release C-4 (note-off for key 60) before queuing the E-4 note-on.
-    let on2 = Cell { note: Note::On(64), instrument: Some(1), ..Default::default() };
+    let on2 = Cell {
+        note: Note::On(64),
+        instrument: Some(1),
+        ..Default::default()
+    };
     engine.process_cell_unified(0, &on2);
 
     let events = engine.collect_plugin_note_events();
-    assert_eq!(events.len(), 2, "interruption must emit note-off then note-on");
-    assert!(!events[0].note_on, "first event must be the release of the old note");
-    assert_eq!(events[0].key, 60, "old note (C-4) must be released by its real key");
+    assert_eq!(
+        events.len(),
+        2,
+        "interruption must emit note-off then note-on"
+    );
+    assert!(
+        !events[0].note_on,
+        "first event must be the release of the old note"
+    );
+    assert_eq!(
+        events[0].key, 60,
+        "old note (C-4) must be released by its real key"
+    );
     assert!(events[1].note_on, "second event must be the new note-on");
     assert_eq!(events[1].key, 64, "new note must be E-4");
 }
@@ -1589,12 +1823,20 @@ fn test_plugin_note_cut_releases_held_note() {
     module.instruments[1].plugin = Some(PluginSlot::new("clap", "/dev/null", "test.plugin"));
     engine.load_module(Arc::new(module));
 
-    let on = Cell { note: Note::On(60), instrument: Some(1), ..Default::default() };
+    let on = Cell {
+        note: Note::On(60),
+        instrument: Some(1),
+        ..Default::default()
+    };
     engine.process_cell_unified(0, &on);
     engine.collect_plugin_note_events(); // drain
 
     // Note::Cut must reach the plugin, releasing the held note by its key.
-    let cut = Cell { note: Note::Cut, instrument: Some(1), ..Default::default() };
+    let cut = Cell {
+        note: Note::Cut,
+        instrument: Some(1),
+        ..Default::default()
+    };
     engine.process_cell_unified(0, &cut);
 
     let events = engine.collect_plugin_note_events();
@@ -1613,9 +1855,17 @@ fn test_plugin_note_off_no_held_note_is_noop() {
     engine.load_module(Arc::new(module));
 
     // Cut and Fade with no held note must not emit spurious events.
-    let cut = Cell { note: Note::Cut, instrument: Some(1), ..Default::default() };
+    let cut = Cell {
+        note: Note::Cut,
+        instrument: Some(1),
+        ..Default::default()
+    };
     engine.process_cell_unified(0, &cut);
-    let fade = Cell { note: Note::Fade, instrument: Some(1), ..Default::default() };
+    let fade = Cell {
+        note: Note::Fade,
+        instrument: Some(1),
+        ..Default::default()
+    };
     engine.process_cell_unified(0, &fade);
 
     assert_eq!(
@@ -1638,18 +1888,29 @@ fn test_plugin_interruption_releases_previous_instrument_note() {
     engine.load_module(Arc::new(module));
 
     // Play on instrument 1.
-    let on1 = Cell { note: Note::On(60), instrument: Some(1), ..Default::default() };
+    let on1 = Cell {
+        note: Note::On(60),
+        instrument: Some(1),
+        ..Default::default()
+    };
     engine.process_cell_unified(0, &on1);
     engine.collect_plugin_note_events(); // drain
 
     // Switch to instrument 2 with a new note: must release inst 1's note.
-    let on2 = Cell { note: Note::On(64), instrument: Some(2), ..Default::default() };
+    let on2 = Cell {
+        note: Note::On(64),
+        instrument: Some(2),
+        ..Default::default()
+    };
     engine.process_cell_unified(0, &on2);
 
     let events = engine.collect_plugin_note_events();
     assert_eq!(events.len(), 2);
     assert!(!events[0].note_on);
-    assert_eq!(events[0].instrument_idx, 1, "release must target the previous instrument");
+    assert_eq!(
+        events[0].instrument_idx, 1,
+        "release must target the previous instrument"
+    );
     assert_eq!(events[0].key, 60);
     assert!(events[1].note_on);
     assert_eq!(events[1].instrument_idx, 2);
@@ -1670,7 +1931,11 @@ fn test_sample_instrument_does_not_queue_plugin_event() {
     engine.process_cell_unified(0, &cell);
 
     let events = engine.collect_plugin_note_events();
-    assert_eq!(events.len(), 0, "sample instruments must not queue plugin events");
+    assert_eq!(
+        events.len(),
+        0,
+        "sample instruments must not queue plugin events"
+    );
 }
 
 #[test]
@@ -1714,7 +1979,9 @@ fn test_instrument_plugin_param_automation_queues_and_drains() {
     let inst_idx: u8 = 1;
     let param_id: u32 = 42;
     let value: f32 = 0.5;
-    engine.pending_instrument_plugin_param_changes.push((inst_idx, param_id, value));
+    engine
+        .pending_instrument_plugin_param_changes
+        .push((inst_idx, param_id, value));
     let drained = engine.collect_instrument_plugin_param_automation();
     assert_eq!(drained.len(), 1, "expected one queued automation value");
     assert_eq!(drained[0].0, inst_idx);
@@ -1776,7 +2043,11 @@ fn test_instrument_parameter_macro_queues_param_value() {
     engine.process_cell_unified(0, &cell_zero);
     let drained2 = engine.collect_instrument_plugin_param_automation();
     assert_eq!(drained2.len(), 1);
-    assert!(drained2[0].2.abs() < 0.001, "vol=0 should map to 0.0, got {}", drained2[0].2);
+    assert!(
+        drained2[0].2.abs() < 0.001,
+        "vol=0 should map to 0.0, got {}",
+        drained2[0].2
+    );
 
     // A cell with volume column = 64 should produce 1.0
     let cell_max = Cell {
@@ -1788,7 +2059,11 @@ fn test_instrument_parameter_macro_queues_param_value() {
     engine.process_cell_unified(0, &cell_max);
     let drained3 = engine.collect_instrument_plugin_param_automation();
     assert_eq!(drained3.len(), 1);
-    assert!((drained3[0].2 - 1.0).abs() < 0.001, "vol=64 should map to 1.0, got {}", drained3[0].2);
+    assert!(
+        (drained3[0].2 - 1.0).abs() < 0.001,
+        "vol=64 should map to 1.0, got {}",
+        drained3[0].2
+    );
 
     // A cell with no volume column should produce no macro values
     let cell_no_vol = Cell {

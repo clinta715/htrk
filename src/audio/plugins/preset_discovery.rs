@@ -77,7 +77,10 @@ impl IndexerImpl for ScanIndexer {
         Ok(())
     }
 
-    fn declare_location(&mut self, info: LocationInfo) -> Result<(), clack_host::prelude::HostError> {
+    fn declare_location(
+        &mut self,
+        info: LocationInfo,
+    ) -> Result<(), clack_host::prelude::HostError> {
         let kind = match info.location {
             Location::Plugin => LocationKind::Plugin,
             Location::File { path } => LocationKind::File(path.to_string_lossy().into_owned()),
@@ -206,7 +209,8 @@ impl MetadataReceiverImpl for ScanReceiver {
     }
 
     fn add_plugin_id(&mut self, pid: clack_common::utils::UniversalPluginId) {
-        self.cur_plugin_ids.push(pid.id.to_string_lossy().into_owned());
+        self.cur_plugin_ids
+            .push(pid.id.to_string_lossy().into_owned());
     }
 
     fn set_soundpack_id(&mut self, id: &CStr) {
@@ -218,7 +222,8 @@ impl MetadataReceiverImpl for ScanReceiver {
     }
 
     fn add_creator(&mut self, creator: &CStr) {
-        self.cur_creators.push(creator.to_string_lossy().into_owned());
+        self.cur_creators
+            .push(creator.to_string_lossy().into_owned());
     }
 
     fn set_description(&mut self, desc: &CStr) {
@@ -235,7 +240,8 @@ impl MetadataReceiverImpl for ScanReceiver {
     }
 
     fn add_feature(&mut self, feature: &CStr) {
-        self.cur_features.push(feature.to_string_lossy().into_owned());
+        self.cur_features
+            .push(feature.to_string_lossy().into_owned());
     }
 
     fn add_extra_info(&mut self, key: &CStr, value: &CStr) {
@@ -253,8 +259,7 @@ impl MetadataReceiverImpl for ScanReceiver {
 pub fn scan_plugin_presets(path: &Path) -> Result<Vec<PresetEntry>, PresetScanError> {
     let load_path = resolve_load_path(path)?;
     let entry = unsafe {
-        PluginEntry::load(&load_path)
-            .map_err(|e| PresetScanError::LoadFailed(e.to_string()))?
+        PluginEntry::load(&load_path).map_err(|e| PresetScanError::LoadFailed(e.to_string()))?
     };
 
     let plugin_factory = entry
@@ -312,9 +317,7 @@ pub fn scan_plugin_presets(path: &Path) -> Result<Vec<PresetEntry>, PresetScanEr
         let mut provider = match Provider::instantiate(indexer, &entry, pid_cstr, &host_info) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!(
-                    "[preset_discovery] Provider '{pid}' for {plugin_name} failed: {e:?}"
-                );
+                eprintln!("[preset_discovery] Provider '{pid}' for {plugin_name} failed: {e:?}");
                 continue;
             }
         };
@@ -368,10 +371,7 @@ pub fn scan_plugin_presets(path: &Path) -> Result<Vec<PresetEntry>, PresetScanEr
                     } else if dir.is_file() || dir.exists() {
                         let fp = dir.to_string_lossy();
                         if let Ok(cpath) = std::ffi::CString::new(fp.as_ref()) {
-                            receiver.set_location(
-                                Some(dir.to_string_lossy().to_string()),
-                                "file",
-                            );
+                            receiver.set_location(Some(dir.to_string_lossy().to_string()), "file");
                             provider.get_metadata(
                                 Location::File {
                                     path: cpath.as_c_str(),
@@ -459,10 +459,7 @@ fn resolve_load_path(path: &Path) -> Result<PathBuf, PresetScanError> {
     }
 }
 
-fn find_matching_files(
-    dir: &Path,
-    filetypes: &[FileTypeOwned],
-) -> Vec<PathBuf> {
+fn find_matching_files(dir: &Path, filetypes: &[FileTypeOwned]) -> Vec<PathBuf> {
     if filetypes.is_empty() {
         eprintln!(
             "[preset_discovery] Provider declared no file types; skipping directory scan of {}",
@@ -486,11 +483,17 @@ fn walk_dir_recursive(
     depth: u32,
 ) {
     if depth > 16 {
-        eprintln!("[preset_discovery] Max directory depth reached at {}", dir.display());
+        eprintln!(
+            "[preset_discovery] Max directory depth reached at {}",
+            dir.display()
+        );
         return;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
-        eprintln!("[preset_discovery] Cannot read directory: {}", dir.display());
+        eprintln!(
+            "[preset_discovery] Cannot read directory: {}",
+            dir.display()
+        );
         return;
     };
     for entry in entries.flatten() {
@@ -518,7 +521,9 @@ fn matches_filetype(path: &Path, filetypes: &[FileTypeOwned]) -> bool {
         .map(|s| s.to_lowercase())
         .unwrap_or_default();
     filetypes.iter().any(|ft| {
-        ft.extension.as_deref().map_or(true, |fe| fe.to_lowercase() == ext)
+        ft.extension
+            .as_deref()
+            .is_none_or(|fe| fe.to_lowercase() == ext)
     })
 }
 
@@ -544,11 +549,15 @@ mod tests {
         receiver.set_location(Some("/presets/file.fxp".into()), "file");
 
         // First preset
-        receiver.begin_preset(Some(c"Preset A"), Some(c"key_a")).unwrap();
+        receiver
+            .begin_preset(Some(c"Preset A"), Some(c"key_a"))
+            .unwrap();
         receiver.add_feature(c"bass");
 
         // Second preset — triggers finalize() for Preset A internally
-        receiver.begin_preset(Some(c"Preset B"), Some(c"key_b")).unwrap();
+        receiver
+            .begin_preset(Some(c"Preset B"), Some(c"key_b"))
+            .unwrap();
         receiver.add_feature(c"lead");
 
         // Finalize Preset B
@@ -556,10 +565,16 @@ mod tests {
 
         assert_eq!(receiver.entries.len(), 2);
         assert_eq!(receiver.entries[0].name, "Preset A");
-        assert_eq!(receiver.entries[0].location_path.as_deref(), Some("/presets/file.fxp"));
+        assert_eq!(
+            receiver.entries[0].location_path.as_deref(),
+            Some("/presets/file.fxp")
+        );
         assert_eq!(receiver.entries[0].location_kind, "file");
         assert_eq!(receiver.entries[1].name, "Preset B");
-        assert_eq!(receiver.entries[1].location_path.as_deref(), Some("/presets/file.fxp"));
+        assert_eq!(
+            receiver.entries[1].location_path.as_deref(),
+            Some("/presets/file.fxp")
+        );
         assert_eq!(receiver.entries[1].location_kind, "file");
     }
 
@@ -568,9 +583,14 @@ mod tests {
     #[test]
     fn test_scan_surge_xt_presets() {
         // Surge XT can be a bundle directory
-        let bundle = Path::new(r"C:\Program Files\Common Files\CLAP\Surge Synth Team\Surge XT.clap");
+        let bundle =
+            Path::new(r"C:\Program Files\Common Files\CLAP\Surge Synth Team\Surge XT.clap");
         let fallback = Path::new(r"C:\Program Files\Common Files\CLAP\Surge XT.clap");
-        let path = if bundle.exists() { bundle } else if fallback.exists() { fallback } else {
+        let path = if bundle.exists() {
+            bundle
+        } else if fallback.exists() {
+            fallback
+        } else {
             eprintln!("[skip] Surge XT not found");
             return;
         };

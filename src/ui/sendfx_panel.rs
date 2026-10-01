@@ -1,7 +1,7 @@
-use eframe::egui;
 use crate::audio::plugins::HostedPluginHandle;
 use crate::audio::CommandSender;
-use crate::sequencer::effect::{NUM_SEND_BUSES, SendEffectType};
+use crate::sequencer::effect::{SendEffectType, NUM_SEND_BUSES};
+use eframe::egui;
 
 /// Opaque token for the eframe main window HWND. Stored as a usize so the
 /// panel struct doesn't need `#[cfg(windows)]` everywhere.
@@ -17,6 +17,10 @@ pub struct SendFxPanel {
     /// Index of the send bus currently showing the plugin browser dialog
     /// (None = no dialog open).
     pub plugin_browser_open_for: Option<usize>,
+    /// CLAP plugin browser search text, send-FX instance (typed UI state, P3).
+    pub plugin_browser_filter: String,
+    /// Plugin parameter grid filter, send-FX instance (P3).
+    pub param_filter: String,
 }
 
 impl Default for SendFxPanel {
@@ -37,6 +41,8 @@ impl Default for SendFxPanel {
             pre_fader: [false; NUM_SEND_BUSES],
             plugin_names: [None, None, None, None],
             plugin_browser_open_for: None,
+            plugin_browser_filter: String::new(),
+            param_filter: String::new(),
         }
     }
 }
@@ -53,11 +59,7 @@ impl SendFxPanel {
         crate::ui::sendfx_editor::draw_sendfx_view(
             ui,
             command_sender,
-            &mut self.effect_types,
-            &mut self.params,
-            &mut self.pre_fader,
-            &mut self.plugin_names,
-            &mut self.plugin_browser_open_for,
+            self,
             plugin_handles,
             eframe_hwnd,
             on_remove_plugin,

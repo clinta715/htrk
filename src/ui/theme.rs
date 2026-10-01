@@ -223,10 +223,22 @@ impl TrackerTheme {
             automation_curve_dim: Color32::from_rgba_premultiplied(60, 120, 160, 80),
             automation_guide_line: Color32::from_rgba_premultiplied(80, 120, 160, 100),
             envelope_colors: [
-                (Color32::from_rgb(80, 220, 80), Color32::from_rgba_premultiplied(40, 140, 40, 40)),
-                (Color32::from_rgb(60, 180, 255), Color32::from_rgba_premultiplied(30, 90, 180, 40)),
-                (Color32::from_rgb(255, 180, 60), Color32::from_rgba_premultiplied(180, 100, 30, 40)),
-                (Color32::from_rgb(200, 100, 255), Color32::from_rgba_premultiplied(120, 50, 160, 40)),
+                (
+                    Color32::from_rgb(80, 220, 80),
+                    Color32::from_rgba_premultiplied(40, 140, 40, 40),
+                ),
+                (
+                    Color32::from_rgb(60, 180, 255),
+                    Color32::from_rgba_premultiplied(30, 90, 180, 40),
+                ),
+                (
+                    Color32::from_rgb(255, 180, 60),
+                    Color32::from_rgba_premultiplied(180, 100, 30, 40),
+                ),
+                (
+                    Color32::from_rgb(200, 100, 255),
+                    Color32::from_rgba_premultiplied(120, 50, 160, 40),
+                ),
             ],
         }
     }
@@ -303,10 +315,22 @@ impl TrackerTheme {
             automation_curve_dim: Color32::from_rgba_premultiplied(0, 120, 120, 80),
             automation_guide_line: Color32::from_rgba_premultiplied(0, 120, 80, 100),
             envelope_colors: [
-                (Color32::from_rgb(0, 255, 0), Color32::from_rgba_premultiplied(0, 80, 0, 40)),
-                (Color32::from_rgb(0, 192, 192), Color32::from_rgba_premultiplied(0, 60, 60, 40)),
-                (Color32::from_rgb(192, 192, 0), Color32::from_rgba_premultiplied(60, 60, 0, 40)),
-                (Color32::from_rgb(128, 128, 255), Color32::from_rgba_premultiplied(40, 40, 90, 40)),
+                (
+                    Color32::from_rgb(0, 255, 0),
+                    Color32::from_rgba_premultiplied(0, 80, 0, 40),
+                ),
+                (
+                    Color32::from_rgb(0, 192, 192),
+                    Color32::from_rgba_premultiplied(0, 60, 60, 40),
+                ),
+                (
+                    Color32::from_rgb(192, 192, 0),
+                    Color32::from_rgba_premultiplied(60, 60, 0, 40),
+                ),
+                (
+                    Color32::from_rgb(128, 128, 255),
+                    Color32::from_rgba_premultiplied(40, 40, 90, 40),
+                ),
             ],
         }
     }
@@ -383,10 +407,22 @@ impl TrackerTheme {
             automation_curve_dim: Color32::from_rgba_premultiplied(40, 90, 160, 80),
             automation_guide_line: Color32::from_rgba_premultiplied(60, 90, 140, 100),
             envelope_colors: [
-                (Color32::from_rgb(0, 140, 40), Color32::from_rgba_premultiplied(40, 180, 80, 40)),
-                (Color32::from_rgb(20, 90, 200), Color32::from_rgba_premultiplied(80, 140, 220, 40)),
-                (Color32::from_rgb(200, 130, 0), Color32::from_rgba_premultiplied(220, 170, 80, 40)),
-                (Color32::from_rgb(150, 60, 200), Color32::from_rgba_premultiplied(200, 130, 230, 40)),
+                (
+                    Color32::from_rgb(0, 140, 40),
+                    Color32::from_rgba_premultiplied(40, 180, 80, 40),
+                ),
+                (
+                    Color32::from_rgb(20, 90, 200),
+                    Color32::from_rgba_premultiplied(80, 140, 220, 40),
+                ),
+                (
+                    Color32::from_rgb(200, 130, 0),
+                    Color32::from_rgba_premultiplied(220, 170, 80, 40),
+                ),
+                (
+                    Color32::from_rgb(150, 60, 200),
+                    Color32::from_rgba_premultiplied(200, 130, 230, 40),
+                ),
             ],
         }
     }
@@ -463,10 +499,22 @@ impl TrackerTheme {
             automation_curve_dim: Color32::from_rgba_premultiplied(180, 140, 40, 80),
             automation_guide_line: Color32::from_rgba_premultiplied(140, 100, 20, 100),
             envelope_colors: [
-                (Color32::from_rgb(255, 176, 0), Color32::from_rgba_premultiplied(180, 120, 0, 40)),
-                (Color32::from_rgb(255, 220, 100), Color32::from_rgba_premultiplied(180, 150, 40, 40)),
-                (Color32::from_rgb(200, 140, 0), Color32::from_rgba_premultiplied(140, 100, 0, 40)),
-                (Color32::from_rgb(255, 200, 80), Color32::from_rgba_premultiplied(180, 140, 40, 40)),
+                (
+                    Color32::from_rgb(255, 176, 0),
+                    Color32::from_rgba_premultiplied(180, 120, 0, 40),
+                ),
+                (
+                    Color32::from_rgb(255, 220, 100),
+                    Color32::from_rgba_premultiplied(180, 150, 40, 40),
+                ),
+                (
+                    Color32::from_rgb(200, 140, 0),
+                    Color32::from_rgba_premultiplied(140, 100, 0, 40),
+                ),
+                (
+                    Color32::from_rgb(255, 200, 80),
+                    Color32::from_rgba_premultiplied(180, 140, 40, 40),
+                ),
             ],
         }
     }
@@ -543,10 +591,22 @@ impl TrackerTheme {
             automation_curve_dim: Color32::from_rgba_premultiplied(0, 120, 160, 80),
             automation_guide_line: Color32::from_rgba_premultiplied(0, 140, 180, 100),
             envelope_colors: [
-                (Color32::from_rgb(0, 255, 200), Color32::from_rgba_premultiplied(0, 120, 90, 40)),
-                (Color32::from_rgb(0, 180, 255), Color32::from_rgba_premultiplied(0, 90, 140, 40)),
-                (Color32::from_rgb(100, 200, 255), Color32::from_rgba_premultiplied(40, 90, 140, 40)),
-                (Color32::from_rgb(120, 80, 255), Color32::from_rgba_premultiplied(60, 40, 120, 40)),
+                (
+                    Color32::from_rgb(0, 255, 200),
+                    Color32::from_rgba_premultiplied(0, 120, 90, 40),
+                ),
+                (
+                    Color32::from_rgb(0, 180, 255),
+                    Color32::from_rgba_premultiplied(0, 90, 140, 40),
+                ),
+                (
+                    Color32::from_rgb(100, 200, 255),
+                    Color32::from_rgba_premultiplied(40, 90, 140, 40),
+                ),
+                (
+                    Color32::from_rgb(120, 80, 255),
+                    Color32::from_rgba_premultiplied(60, 40, 120, 40),
+                ),
             ],
         }
     }
@@ -623,10 +683,22 @@ impl TrackerTheme {
             automation_curve_dim: Color32::from_rgba_premultiplied(0, 120, 160, 120),
             automation_guide_line: Color32::from_rgba_premultiplied(120, 120, 120, 140),
             envelope_colors: [
-                (Color32::from_rgb(0, 255, 0), Color32::from_rgba_premultiplied(0, 80, 0, 60)),
-                (Color32::from_rgb(0, 180, 255), Color32::from_rgba_premultiplied(0, 60, 100, 60)),
-                (Color32::from_rgb(255, 200, 80), Color32::from_rgba_premultiplied(100, 80, 0, 60)),
-                (Color32::from_rgb(255, 0, 255), Color32::from_rgba_premultiplied(80, 0, 80, 60)),
+                (
+                    Color32::from_rgb(0, 255, 0),
+                    Color32::from_rgba_premultiplied(0, 80, 0, 60),
+                ),
+                (
+                    Color32::from_rgb(0, 180, 255),
+                    Color32::from_rgba_premultiplied(0, 60, 100, 60),
+                ),
+                (
+                    Color32::from_rgb(255, 200, 80),
+                    Color32::from_rgba_premultiplied(100, 80, 0, 60),
+                ),
+                (
+                    Color32::from_rgb(255, 0, 255),
+                    Color32::from_rgba_premultiplied(80, 0, 80, 60),
+                ),
             ],
         }
     }
@@ -703,10 +775,22 @@ impl TrackerTheme {
             automation_curve_dim: Color32::from_rgba_premultiplied(0, 120, 60, 80),
             automation_guide_line: Color32::from_rgba_premultiplied(0, 140, 80, 100),
             envelope_colors: [
-                (Color32::from_rgb(0, 255, 0), Color32::from_rgba_premultiplied(0, 100, 0, 40)),
-                (Color32::from_rgb(0, 200, 200), Color32::from_rgba_premultiplied(0, 80, 80, 40)),
-                (Color32::from_rgb(180, 255, 0), Color32::from_rgba_premultiplied(80, 120, 0, 40)),
-                (Color32::from_rgb(120, 255, 120), Color32::from_rgba_premultiplied(40, 100, 40, 40)),
+                (
+                    Color32::from_rgb(0, 255, 0),
+                    Color32::from_rgba_premultiplied(0, 100, 0, 40),
+                ),
+                (
+                    Color32::from_rgb(0, 200, 200),
+                    Color32::from_rgba_premultiplied(0, 80, 80, 40),
+                ),
+                (
+                    Color32::from_rgb(180, 255, 0),
+                    Color32::from_rgba_premultiplied(80, 120, 0, 40),
+                ),
+                (
+                    Color32::from_rgb(120, 255, 120),
+                    Color32::from_rgba_premultiplied(40, 100, 40, 40),
+                ),
             ],
         }
     }
@@ -783,10 +867,22 @@ impl TrackerTheme {
             automation_curve_dim: Color32::from_rgba_premultiplied(0, 120, 160, 80),
             automation_guide_line: Color32::from_rgba_premultiplied(0, 120, 200, 100),
             envelope_colors: [
-                (Color32::from_rgb(0, 255, 0), Color32::from_rgba_premultiplied(0, 80, 0, 40)),
-                (Color32::from_rgb(0, 255, 255), Color32::from_rgba_premultiplied(0, 80, 100, 40)),
-                (Color32::from_rgb(255, 255, 0), Color32::from_rgba_premultiplied(100, 100, 0, 40)),
-                (Color32::from_rgb(255, 0, 255), Color32::from_rgba_premultiplied(100, 0, 100, 40)),
+                (
+                    Color32::from_rgb(0, 255, 0),
+                    Color32::from_rgba_premultiplied(0, 80, 0, 40),
+                ),
+                (
+                    Color32::from_rgb(0, 255, 255),
+                    Color32::from_rgba_premultiplied(0, 80, 100, 40),
+                ),
+                (
+                    Color32::from_rgb(255, 255, 0),
+                    Color32::from_rgba_premultiplied(100, 100, 0, 40),
+                ),
+                (
+                    Color32::from_rgb(255, 0, 255),
+                    Color32::from_rgba_premultiplied(100, 0, 100, 40),
+                ),
             ],
         }
     }
@@ -807,7 +903,11 @@ impl TrackerTheme {
     pub fn to_visuals(&self) -> Visuals {
         let bg = self.bg_default;
         let lum = (bg.r() as f32 * 0.299 + bg.g() as f32 * 0.587 + bg.b() as f32 * 0.114) / 255.0;
-        let mut v = if lum > 0.5 { Visuals::light() } else { Visuals::dark() };
+        let mut v = if lum > 0.5 {
+            Visuals::light()
+        } else {
+            Visuals::dark()
+        };
         v.panel_fill = self.bg_default;
         v.window_fill = self.status_bg;
         v.faint_bg_color = self.bg_highlight;

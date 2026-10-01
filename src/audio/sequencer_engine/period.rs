@@ -1,22 +1,20 @@
 use std::sync::Arc;
 
+use super::helpers::{compute_channel_panning, compute_channel_volume, compute_portamento_target};
 use crate::audio::effects::{
-    VIBRATO_TABLE_SIZE, get_vibrato_value, compute_playback_frequency, quantize_to_semitone,
+    compute_playback_frequency, get_vibrato_value, quantize_to_semitone, VIBRATO_TABLE_SIZE,
 };
-use crate::audio::voice::EnvelopeState;
 use crate::audio::filter::StateVariableFilter;
-use super::helpers::{
-    compute_channel_volume, compute_channel_panning, compute_portamento_target,
-};
 use crate::audio::sequencer_engine::SequencerEngine;
+use crate::audio::voice::EnvelopeState;
 use crate::sequencer::instrument::{DuplicateCheckAction, DuplicateCheckType, NewNoteAction};
 use crate::sequencer::module::Module;
 use crate::sequencer::note::Note;
 use crate::sequencer::pattern::Cell;
-use crate::sequencer::sample::{Sample, VibratoWaveform};
 use crate::sequencer::period::{
     get_arp_tab, get_note_period, get_vib_tab, period_to_frequency, relocate_ton,
 };
+use crate::sequencer::sample::{Sample, VibratoWaveform};
 
 impl SequencerEngine {
     // ─── Tone portamento ───────────────────────────────────────
@@ -27,9 +25,13 @@ impl SequencerEngine {
             None => return,
         };
         let ch = &self.state.channels[channel];
-        if ch.porta_dir == 0 { return; }
+        if ch.porta_dir == 0 {
+            return;
+        }
         let speed = ch.porta_speed_period;
-        if speed == 0 { return; }
+        if speed == 0 {
+            return;
+        }
         let want = ch.want_period;
 
         let ch = &mut self.state.channels[channel];
@@ -68,7 +70,9 @@ impl SequencerEngine {
             let ch = &self.state.channels[channel];
             (ch.vib_pos, ch.vib_speed, ch.vib_depth, ch.wave_ctrl & 0x03)
         };
-        if vib_depth == 0 { return; }
+        if vib_depth == 0 {
+            return;
+        }
 
         let vib_tab = get_vib_tab();
         let tmp_vib = ((vib_pos >> 2) & 0x1F) as usize;
@@ -77,7 +81,11 @@ impl SequencerEngine {
             0 => vib_tab[tmp_vib] as i32,
             1 => {
                 let val = (tmp_vib as i32) << 3;
-                if (vib_pos as i8) < 0 { !val } else { val }
+                if (vib_pos as i8) < 0 {
+                    !val
+                } else {
+                    val
+                }
             }
             _ => 255,
         };
@@ -90,7 +98,9 @@ impl SequencerEngine {
         } else {
             ch.out_period = ch.real_period.saturating_add(offset as u16).min(31999);
         }
-        if ch.out_period == 0 { ch.out_period = 1; }
+        if ch.out_period == 0 {
+            ch.out_period = 1;
+        }
 
         ch.vib_pos = vib_pos.wrapping_add(vib_speed);
 
@@ -103,9 +113,16 @@ impl SequencerEngine {
     pub(crate) fn apply_tremolo_period(&mut self, channel: usize) {
         let (trem_pos, trem_speed, trem_depth, wave_ctrl) = {
             let ch = &self.state.channels[channel];
-            (ch.trem_pos, ch.trem_speed, ch.trem_depth, (ch.wave_ctrl >> 4) & 0x03)
+            (
+                ch.trem_pos,
+                ch.trem_speed,
+                ch.trem_depth,
+                (ch.wave_ctrl >> 4) & 0x03,
+            )
         };
-        if trem_depth == 0 { return; }
+        if trem_depth == 0 {
+            return;
+        }
 
         let vib_tab = get_vib_tab();
         let tmp_trem = ((trem_pos >> 2) & 0x1F) as usize;
@@ -115,7 +132,11 @@ impl SequencerEngine {
             1 => {
                 let val = (tmp_trem as i32) << 3;
                 let ch = &self.state.channels[channel];
-                if (ch.vib_pos as i8) < 0 { !val } else { val }
+                if (ch.vib_pos as i8) < 0 {
+                    !val
+                } else {
+                    val
+                }
             }
             _ => 255,
         };
@@ -126,10 +147,14 @@ impl SequencerEngine {
         let ch = &mut self.state.channels[channel];
         if (trem_pos as i8) < 0 {
             vol -= offset;
-            if vol < 0 { vol = 0; }
+            if vol < 0 {
+                vol = 0;
+            }
         } else {
             vol += offset;
-            if vol > 64 { vol = 64; }
+            if vol > 64 {
+                vol = 64;
+            }
         }
 
         ch.channel_volume = vol as u8;
@@ -156,7 +181,8 @@ impl SequencerEngine {
             let note = if arp_tick == 1 { arp1 } else { arp2 };
             let real_period = self.state.channels[channel].real_period;
             let fine_tune = self.state.channels[channel].fine_tune_offset;
-            self.state.channels[channel].out_period = relocate_ton(real_period, note, fine_tune, linear);
+            self.state.channels[channel].out_period =
+                relocate_ton(real_period, note, fine_tune, linear);
         }
         self.update_voices_from_period(channel, linear);
     }
@@ -249,11 +275,11 @@ impl SequencerEngine {
             ch.channel_volume = vol as u8;
 
             let vk = ch.vol_kol;
-            if vk >= 0x10 && vk <= 0x50 {
+            if (0x10..=0x50).contains(&vk) {
                 ch.real_vol = vk - 0x10;
                 ch.channel_volume = ch.real_vol;
             }
-            if vk >= 0xC0 && vk <= 0xCF {
+            if (0xC0..=0xCF).contains(&vk) {
                 ch.channel_panning = (vk & 0x0F) << 4;
             }
 
@@ -299,10 +325,21 @@ impl SequencerEngine {
         let voice_idx = self.allocate_voice(channel);
         let sample_offset = self.calculate_sample_offset(channel, &Cell::default(), sample);
         self.voice_pool.voices[voice_idx].trigger(
-            sample.data.clone(), sample.sample_rate as f64, sample.loop_type,
-            sample.loop_start, sample.loop_end, playback_freq, self.output_sample_rate,
-            vol, pan, sample_offset, Some(self.state.channels[channel].last_instrument), Some(sample_idx),
-            note, NewNoteAction::NoteCut, 0,
+            sample.data.clone(),
+            sample.sample_rate as f64,
+            sample.loop_type,
+            sample.loop_start,
+            sample.loop_end,
+            playback_freq,
+            self.output_sample_rate,
+            vol,
+            pan,
+            sample_offset,
+            Some(self.state.channels[channel].last_instrument),
+            Some(sample_idx),
+            note,
+            NewNoteAction::NoteCut,
+            0,
         );
         self.voice_pool.voices[voice_idx].channel = Some(channel);
     }
@@ -320,19 +357,20 @@ impl SequencerEngine {
         };
         let ch = &mut self.state.channels[channel];
 
-        if cell.instrument.is_some() {
-            ch.last_instrument = cell.instrument.unwrap();
+        if let Some(inst) = cell.instrument {
+            ch.last_instrument = inst;
         }
         if let Note::On(key) = cell.note {
             ch.last_note = Note::On(key);
 
             let inst_idx = ch.last_instrument as usize;
-            let sample_idx = if inst_idx > 0 && inst_idx < module.instruments.len() && (key as usize) < 120 {
-                let inst = &module.instruments[inst_idx];
-                inst.sample_map[key as usize] as usize
-            } else {
-                inst_idx
-            };
+            let sample_idx =
+                if inst_idx > 0 && inst_idx < module.instruments.len() && (key as usize) < 120 {
+                    let inst = &module.instruments[inst_idx];
+                    inst.sample_map[key as usize] as usize
+                } else {
+                    inst_idx
+                };
             let sample = if sample_idx > 0 && sample_idx < module.samples.len() {
                 Some(&module.samples[sample_idx])
             } else {
@@ -341,7 +379,11 @@ impl SequencerEngine {
 
             if let Some(s) = sample {
                 let (period, linear, vol_kol_val) = {
-                    let period = get_note_period(key.saturating_add(s.relative_note as u8), ch.fine_tune_offset, linear);
+                    let period = get_note_period(
+                        key.saturating_add(s.relative_note as u8),
+                        ch.fine_tune_offset,
+                        linear,
+                    );
                     ch.real_period = period;
                     ch.out_period = period;
                     (period, linear, ch.vol_kol)
@@ -360,20 +402,31 @@ impl SequencerEngine {
                 let voice_idx = self.allocate_voice(channel);
                 let sample_offset = self.calculate_sample_offset(channel, &cell, s);
                 self.voice_pool.voices[voice_idx].trigger(
-                    s.data.clone(), s.sample_rate as f64, s.loop_type,
-                    s.loop_start, s.loop_end, playback_freq, self.output_sample_rate,
-                    vol, pan, sample_offset, Some(inst_idx as u8), Some(sample_idx as u8),
-                    Note::On(key), NewNoteAction::NoteCut, fade_out,
+                    s.data.clone(),
+                    s.sample_rate as f64,
+                    s.loop_type,
+                    s.loop_start,
+                    s.loop_end,
+                    playback_freq,
+                    self.output_sample_rate,
+                    vol,
+                    pan,
+                    sample_offset,
+                    Some(inst_idx as u8),
+                    Some(sample_idx as u8),
+                    Note::On(key),
+                    NewNoteAction::NoteCut,
+                    fade_out,
                 );
                 self.voice_pool.voices[voice_idx].channel = Some(channel);
 
                 {
                     let ch = &mut self.state.channels[channel];
-                    if vol_kol_val >= 0x10 && vol_kol_val <= 0x50 {
+                    if (0x10..=0x50).contains(&vol_kol_val) {
                         ch.real_vol = vol_kol_val - 0x10;
                         ch.channel_volume = ch.real_vol;
                     }
-                    if vol_kol_val >= 0xC0 && vol_kol_val <= 0xCF {
+                    if (0xC0..=0xCF).contains(&vol_kol_val) {
                         ch.channel_panning = (vol_kol_val & 0xF) << 4;
                     }
                 }
@@ -424,7 +477,12 @@ impl SequencerEngine {
                     voice.filter_cutoff = inst.filter_cutoff as f32;
                     voice.filter_resonance = inst.filter_resonance as f32 / 128.0;
                     voice.filter_type = inst.filter_type;
-                    voice.svf = StateVariableFilter { low: 0.0, band: 0.0, high: 0.0, filter_type: inst.filter_type };
+                    voice.svf = StateVariableFilter {
+                        low: 0.0,
+                        band: 0.0,
+                        high: 0.0,
+                        filter_type: inst.filter_type,
+                    };
                     voice.envelope_filter_cutoff = 1.0;
 
                     if inst.vib_depth > 0 {
@@ -432,7 +490,8 @@ impl SequencerEngine {
                         voice.auto_vib_period_base = period;
                         if inst.vib_sweep > 0 {
                             voice.auto_vib_amp = 0;
-                            voice.auto_vib_sweep = (inst.vib_depth as i32) * 256 / (inst.vib_sweep as i32).max(1);
+                            voice.auto_vib_sweep =
+                                (inst.vib_depth as i32) * 256 / (inst.vib_sweep as i32).max(1);
                         } else {
                             voice.auto_vib_amp = (inst.vib_depth as i32) * 256;
                             voice.auto_vib_sweep = 0;
@@ -459,13 +518,21 @@ impl SequencerEngine {
         } else {
             0.0
         };
-        self.voice_pool.update_voices_from_period(channel, freq, delta);
+        self.voice_pool
+            .update_voices_from_period(channel, freq, delta);
     }
 
-    pub(crate) fn handle_nna(&mut self, channel: usize, nna: NewNoteAction,
-        dct: DuplicateCheckType, dca: DuplicateCheckAction,
-        instr_idx: usize, sample_idx: usize) {
-        self.voice_pool.handle_nna(channel, nna, dct, dca, instr_idx, sample_idx, &self.state);
+    pub(crate) fn handle_nna(
+        &mut self,
+        channel: usize,
+        nna: NewNoteAction,
+        dct: DuplicateCheckType,
+        dca: DuplicateCheckAction,
+        instr_idx: usize,
+        sample_idx: usize,
+    ) {
+        self.voice_pool
+            .handle_nna(channel, nna, dct, dca, instr_idx, sample_idx, &self.state);
     }
 
     pub(crate) fn cut_channel_voices(&mut self, channel: usize) {
@@ -570,11 +637,15 @@ impl SequencerEngine {
             if (current - tf).abs() < 0.5 {
                 voice.current_frequency = tf;
             } else if current < tf {
-                current = current * 2.0_f64.powf(slide);
-                if current > tf { current = tf; }
+                current *= 2.0_f64.powf(slide);
+                if current > tf {
+                    current = tf;
+                }
             } else {
-                current = current / 2.0_f64.powf(slide);
-                if current < tf { current = tf; }
+                current /= 2.0_f64.powf(slide);
+                if current < tf {
+                    current = tf;
+                }
             }
             if glissando {
                 current = quantize_to_semitone(current);
@@ -590,7 +661,10 @@ impl SequencerEngine {
         let (up, down) = {
             let ch = &self.state.channels[channel];
             if !self.use_xm_model && ch.last_volume_slide_param > 0 {
-                ((ch.last_volume_slide_param >> 4) as u8, (ch.last_volume_slide_param & 0x0F) as u8)
+                (
+                    (ch.last_volume_slide_param >> 4),
+                    (ch.last_volume_slide_param & 0x0F),
+                )
             } else {
                 (ch.last_volume_slide_up, ch.last_volume_slide_down)
             }
@@ -635,7 +709,9 @@ impl SequencerEngine {
     // ─── Vibrato / Tremolo / Arpeggio (frequency-based) ───────
 
     pub(crate) fn apply_vibrato(&mut self, channel: usize, speed: u8, depth: u8) {
-        if depth == 0 { return; }
+        if depth == 0 {
+            return;
+        }
 
         if !self.use_xm_model {
             let ch = &mut self.state.channels[channel];
@@ -647,7 +723,11 @@ impl SequencerEngine {
                 0 => vib_tab[tmp_vib] as i32,
                 1 => {
                     let val = (tmp_vib as i32) << 3;
-                    if (ch.vib_pos as i8) < 0 { !val } else { val }
+                    if (ch.vib_pos as i8) < 0 {
+                        !val
+                    } else {
+                        val
+                    }
                 }
                 _ => 255,
             };
@@ -658,7 +738,7 @@ impl SequencerEngine {
             } else {
                 ch.out_period = ch.real_period.saturating_add(offset).min(31999);
             }
-            ch.vib_pos = ch.vib_pos.wrapping_add(speed as u8);
+            ch.vib_pos = ch.vib_pos.wrapping_add(speed);
 
             self.update_voices_from_period(channel, false);
             return;
@@ -681,7 +761,9 @@ impl SequencerEngine {
     }
 
     pub(crate) fn apply_tremolo(&mut self, channel: usize, speed: u8, depth: u8) {
-        if depth == 0 { return; }
+        if depth == 0 {
+            return;
+        }
         let depth_f = depth as f32 / 64.0;
 
         for voice in &mut self.voice_pool.voices {
@@ -704,7 +786,9 @@ impl SequencerEngine {
             2 => note2,
             _ => 0,
         };
-        if semitone_offset == 0 { return; }
+        if semitone_offset == 0 {
+            return;
+        }
         for voice in &mut self.voice_pool.voices {
             if voice.active && voice.channel == Some(channel) {
                 let freq_mod = 2.0_f64.powf(semitone_offset as f64 / 12.0);
@@ -716,7 +800,9 @@ impl SequencerEngine {
     // ─── Panbrello / Tremor / Retrigger ───────────────────────
 
     pub(crate) fn apply_panbrello(&mut self, channel: usize, speed: u8, depth: u8) {
-        if depth == 0 { return; }
+        if depth == 0 {
+            return;
+        }
         let depth_f = depth as f32 / 64.0;
 
         for voice in &mut self.voice_pool.voices {
@@ -725,7 +811,8 @@ impl SequencerEngine {
             }
             let table_val = get_vibrato_value(VibratoWaveform::Sine, voice.panbrello_phase);
             let pan_offset = table_val * depth_f / 255.0;
-            voice.panbrello_phase = (voice.panbrello_phase + speed as f32) % VIBRATO_TABLE_SIZE as f32;
+            voice.panbrello_phase =
+                (voice.panbrello_phase + speed as f32) % VIBRATO_TABLE_SIZE as f32;
             voice.panbrello_speed = speed;
             voice.panbrello_depth = depth;
             voice.final_panning = (voice.base_panning + pan_offset).clamp(0.0, 1.0);
@@ -733,9 +820,13 @@ impl SequencerEngine {
     }
 
     pub(crate) fn apply_tremor(&mut self, channel: usize, _tick: u8, ontime: u8, offtime: u8) {
-        if ontime == 0 && offtime == 0 { return; }
+        if ontime == 0 && offtime == 0 {
+            return;
+        }
         let cycle = ontime as u16 + offtime as u16;
-        if cycle == 0 { return; }
+        if cycle == 0 {
+            return;
+        }
         let counter = self.state.channels[channel].tremor_counter as u16;
         let phase = counter % cycle;
         let mute = phase >= ontime as u16;
@@ -744,7 +835,8 @@ impl SequencerEngine {
                 voice.tremor_mute = mute;
             }
         }
-        self.state.channels[channel].tremor_counter = self.state.channels[channel].tremor_counter.wrapping_add(1);
+        self.state.channels[channel].tremor_counter =
+            self.state.channels[channel].tremor_counter.wrapping_add(1);
     }
 
     pub(crate) fn retrigger_channel_note(&mut self, channel: usize) {
@@ -770,20 +862,41 @@ impl SequencerEngine {
             Some(f) => f,
             None => return,
         };
-        let playback_freq = compute_playback_frequency(freq, sample.sample_rate, sample.relative_note, sample.fine_tune);
+        let playback_freq = compute_playback_frequency(
+            freq,
+            sample.sample_rate,
+            sample.relative_note,
+            sample.fine_tune,
+        );
         let vol = self.compute_channel_volume(channel);
         let pan = self.compute_channel_panning(channel);
 
-        self.handle_nna(channel, NewNoteAction::NoteCut,
-            DuplicateCheckType::Disabled, DuplicateCheckAction::NoteCut,
-            instrument_idx as usize, sample_idx as usize);
+        self.handle_nna(
+            channel,
+            NewNoteAction::NoteCut,
+            DuplicateCheckType::Disabled,
+            DuplicateCheckAction::NoteCut,
+            instrument_idx as usize,
+            sample_idx as usize,
+        );
 
         let voice_idx = self.allocate_voice(channel);
         self.voice_pool.voices[voice_idx].trigger(
-            sample.data.clone(), sample.sample_rate as f64, sample.loop_type,
-            sample.loop_start, sample.loop_end, playback_freq, self.output_sample_rate,
-            vol, pan, 0, Some(instrument_idx), Some(sample_idx),
-            note, NewNoteAction::NoteCut, 0,
+            sample.data.clone(),
+            sample.sample_rate as f64,
+            sample.loop_type,
+            sample.loop_start,
+            sample.loop_end,
+            playback_freq,
+            self.output_sample_rate,
+            vol,
+            pan,
+            0,
+            Some(instrument_idx),
+            Some(sample_idx),
+            note,
+            NewNoteAction::NoteCut,
+            0,
         );
         self.voice_pool.voices[voice_idx].channel = Some(channel);
     }
@@ -840,44 +953,73 @@ impl SequencerEngine {
             None => return,
         };
 
-        if cell.instrument.is_some() {
-            self.state.channels[channel].last_instrument = cell.instrument.unwrap();
+        if let Some(inst) = cell.instrument {
+            self.state.channels[channel].last_instrument = inst;
         }
 
-        let (note, instrument_idx) = (cell.note, self.state.channels[channel].last_instrument as usize);
+        let (note, instrument_idx) = (
+            cell.note,
+            self.state.channels[channel].last_instrument as usize,
+        );
 
-        let (sample_idx, remapped_key) = if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-            let inst = &module.instruments[instrument_idx];
-            match note {
-                Note::On(key) if (key as usize) < 120 => {
-                    let idx = inst.sample_map[key as usize] as usize;
-                    let rk = inst.note_map[key as usize];
-                    (idx, if rk < 120 { rk } else { key })
+        let (sample_idx, remapped_key) =
+            if instrument_idx > 0 && instrument_idx < module.instruments.len() {
+                let inst = &module.instruments[instrument_idx];
+                match note {
+                    Note::On(key) if (key as usize) < 120 => {
+                        let idx = inst.sample_map[key as usize] as usize;
+                        let rk = inst.note_map[key as usize];
+                        (idx, if rk < 120 { rk } else { key })
+                    }
+                    _ => (self.state.channels[channel].last_sample as usize, {
+                        match note {
+                            Note::On(k) => k,
+                            _ => 0,
+                        }
+                    }),
                 }
-                _ => (self.state.channels[channel].last_sample as usize, {
-                    match note { Note::On(k) => k, _ => 0 }
-                }),
-            }
-        } else {
-            (instrument_idx, match note { Note::On(k) => k, _ => 0 })
-        };
+            } else {
+                (
+                    instrument_idx,
+                    match note {
+                        Note::On(k) => k,
+                        _ => 0,
+                    },
+                )
+            };
 
         if sample_idx == 0 || sample_idx >= module.samples.len() {
             return;
         }
 
         if cell.instrument.is_some() {
-            self.state.channels[channel].channel_volume = module.samples[sample_idx].default_volume.min(64);
+            self.state.channels[channel].channel_volume =
+                module.samples[sample_idx].default_volume.min(64);
         }
 
         self.state.channels[channel].note_delay_ticks = 0;
 
         if let Note::On(key) = note {
             let module_ref = &module;
-            self.with_processor_mut(|processor, engine| processor.trigger_note(engine, channel, key, remapped_key, Some(&module_ref.samples[sample_idx]), sample_idx, &cell, instrument_idx));
+            self.with_processor_mut(|processor, engine| {
+                processor.trigger_note(
+                    engine,
+                    channel,
+                    key,
+                    remapped_key,
+                    Some(&module_ref.samples[sample_idx]),
+                    sample_idx,
+                    &cell,
+                    instrument_idx,
+                )
+            });
 
             if instrument_idx > 0 && instrument_idx < module.instruments.len() {
-                let voice = self.voice_pool.voices.iter_mut().find(|v| v.active && v.channel == Some(channel));
+                let voice = self
+                    .voice_pool
+                    .voices
+                    .iter_mut()
+                    .find(|v| v.active && v.channel == Some(channel));
                 if let Some(voice) = voice {
                     let fade_out = module.instruments[instrument_idx].fade_out;
                     voice.fade_out_rate = fade_out;
@@ -916,6 +1058,13 @@ impl SequencerEngine {
         sample_idx: usize,
         module: &Module,
     ) -> (u16, f64) {
-        compute_portamento_target(_channel, _note_key, remapped_key, sample, sample_idx, module)
+        compute_portamento_target(
+            _channel,
+            _note_key,
+            remapped_key,
+            sample,
+            sample_idx,
+            module,
+        )
     }
 }

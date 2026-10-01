@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use crate::app::HtrkApp;
 use crate::edit::{
-    AddEnvelopePointCommand, EnvelopeType, InstrumentProperty,
-    MapNoteToSampleCommand, MapNoteToNoteCommand, RemoveEnvelopePointCommand,
-    SetEnvelopeFlagsCommand, SetEnvelopeLoopCommand, SetEnvelopePointCommand,
-    SetEnvelopePointsCommand, SetEnvelopeSustainCommand, SetInstrumentPropertyCommand,
+    AddEnvelopePointCommand, EnvelopeType, InstrumentProperty, MapNoteToNoteCommand,
+    MapNoteToSampleCommand, RemoveEnvelopePointCommand, SetEnvelopeFlagsCommand,
+    SetEnvelopeLoopCommand, SetEnvelopePointCommand, SetEnvelopePointsCommand,
+    SetEnvelopeSustainCommand, SetInstrumentPropertyCommand,
 };
 use crate::sequencer::instrument::EnvelopePoint;
 use crate::ui::instrument_editor::InstrumentEditEvent;
@@ -33,16 +33,20 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
             property: InstrumentProperty::Nna(n),
             old_property: InstrumentProperty::Nna(inst.nna),
         }),
-        InstrumentEditEvent::DuplicateCheckTypeChanged(t) => Box::new(SetInstrumentPropertyCommand {
-            instrument_index: inst_idx,
-            property: InstrumentProperty::DuplicateCheckType(t),
-            old_property: InstrumentProperty::DuplicateCheckType(inst.duplicate_check_type),
-        }),
-        InstrumentEditEvent::DuplicateCheckActionChanged(a) => Box::new(SetInstrumentPropertyCommand {
-            instrument_index: inst_idx,
-            property: InstrumentProperty::DuplicateCheckAction(a),
-            old_property: InstrumentProperty::DuplicateCheckAction(inst.duplicate_check_action),
-        }),
+        InstrumentEditEvent::DuplicateCheckTypeChanged(t) => {
+            Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::DuplicateCheckType(t),
+                old_property: InstrumentProperty::DuplicateCheckType(inst.duplicate_check_type),
+            })
+        }
+        InstrumentEditEvent::DuplicateCheckActionChanged(a) => {
+            Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::DuplicateCheckAction(a),
+                old_property: InstrumentProperty::DuplicateCheckAction(inst.duplicate_check_action),
+            })
+        }
         InstrumentEditEvent::FadeoutChanged(f) => Box::new(SetInstrumentPropertyCommand {
             instrument_index: inst_idx,
             property: InstrumentProperty::Fadeout(f),
@@ -53,11 +57,13 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
             property: InstrumentProperty::GlobalVolume(v),
             old_property: InstrumentProperty::GlobalVolume(inst.global_volume),
         }),
-        InstrumentEditEvent::PitchPanSeparationChanged(s) => Box::new(SetInstrumentPropertyCommand {
-            instrument_index: inst_idx,
-            property: InstrumentProperty::PitchPanSeparation(s),
-            old_property: InstrumentProperty::PitchPanSeparation(inst.pitch_pan_separation),
-        }),
+        InstrumentEditEvent::PitchPanSeparationChanged(s) => {
+            Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::PitchPanSeparation(s),
+                old_property: InstrumentProperty::PitchPanSeparation(inst.pitch_pan_separation),
+            })
+        }
         InstrumentEditEvent::PitchPanCenterChanged(c) => Box::new(SetInstrumentPropertyCommand {
             instrument_index: inst_idx,
             property: InstrumentProperty::PitchPanCenter(c),
@@ -88,11 +94,13 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
             property: InstrumentProperty::FilterType(t),
             old_property: InstrumentProperty::FilterType(inst.filter_type),
         }),
-        InstrumentEditEvent::FilterRandomCutoffChanged(c) => Box::new(SetInstrumentPropertyCommand {
-            instrument_index: inst_idx,
-            property: InstrumentProperty::FilterRandomCutoff(c),
-            old_property: InstrumentProperty::FilterRandomCutoff(inst.filter_random_cutoff),
-        }),
+        InstrumentEditEvent::FilterRandomCutoffChanged(c) => {
+            Box::new(SetInstrumentPropertyCommand {
+                instrument_index: inst_idx,
+                property: InstrumentProperty::FilterRandomCutoff(c),
+                old_property: InstrumentProperty::FilterRandomCutoff(inst.filter_random_cutoff),
+            })
+        }
         InstrumentEditEvent::EnvelopePointMoved(env_type, idx, t, v) => {
             let env = inst.envelope(env_type);
             let old_pt = env.as_ref().map(|e| e.points[idx]).unwrap_or_default();
@@ -104,11 +112,13 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
                 new_point: EnvelopePoint { tick: t, value: v },
             })
         }
-        InstrumentEditEvent::EnvelopePointAdded(env_type, t, v) => Box::new(AddEnvelopePointCommand {
-            instrument_index: inst_idx,
-            envelope_type: env_type,
-            point: EnvelopePoint { tick: t, value: v },
-        }),
+        InstrumentEditEvent::EnvelopePointAdded(env_type, t, v) => {
+            Box::new(AddEnvelopePointCommand {
+                instrument_index: inst_idx,
+                envelope_type: env_type,
+                point: EnvelopePoint { tick: t, value: v },
+            })
+        }
         InstrumentEditEvent::EnvelopePointRemoved(env_type, idx) => {
             let env = inst.envelope(env_type);
             let old_pt = env.as_ref().map(|e| e.points[idx]).unwrap_or_default();
@@ -133,7 +143,7 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
             Box::new(SetEnvelopeLoopCommand {
                 instrument_index: inst_idx,
                 envelope_type: env_type,
-                old_loop_enabled: env.as_ref().map_or(false, |e| e.flags.loop_),
+                old_loop_enabled: env.as_ref().is_some_and(|e| e.flags.loop_),
                 new_loop_enabled: new_enabled,
                 old_loop_start: env.as_ref().and_then(|e| e.loop_start),
                 new_loop_start: new_start,
@@ -161,7 +171,10 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
                 instrument_index: inst_idx,
                 envelope_type: env_type,
                 new_points: points,
-                old_points: envelope.as_ref().map(|e| e.points.clone()).unwrap_or_default(),
+                old_points: envelope
+                    .as_ref()
+                    .map(|e| e.points.clone())
+                    .unwrap_or_default(),
                 old_envelope: envelope.as_ref().cloned(),
             })
         }
@@ -197,13 +210,13 @@ pub(crate) fn handle_instrument_edit(app: &mut HtrkApp, event: InstrumentEditEve
             property: InstrumentProperty::VibRate(v),
             old_property: InstrumentProperty::VibRate(inst.vib_rate),
         }),
-        InstrumentEditEvent::SampleMapFillAll(sample_idx) => Box::new(
-            crate::edit::SetSampleMapCommand {
+        InstrumentEditEvent::SampleMapFillAll(sample_idx) => {
+            Box::new(crate::edit::SetSampleMapCommand {
                 instrument_index: inst_idx,
                 new_sample_index: sample_idx,
                 old_map: inst.sample_map,
-            },
-        ),
+            })
+        }
         InstrumentEditEvent::SaveInstrument => {
             return;
         }
@@ -239,8 +252,9 @@ pub(crate) fn save_instrument_to_file(app: &mut HtrkApp, inst_idx: usize, path: 
         Some(i) => i,
         None => return,
     };
-    let sample_indices: Vec<u8> = inst.sample_map.iter().cloned().collect();
-    let samples: Vec<_> = sample_indices.iter()
+    let sample_indices: Vec<u8> = inst.sample_map.to_vec();
+    let samples: Vec<_> = sample_indices
+        .iter()
         .filter_map(|&idx| {
             if idx > 0 && (idx as usize) < module.samples.len() {
                 Some(module.samples[idx as usize].clone())
@@ -284,9 +298,10 @@ pub(crate) fn load_instrument_from_file(app: &mut HtrkApp, path: &str) {
     if let Some(ref mut module_arc) = app.core.module {
         if let Some(m) = Arc::get_mut(module_arc) {
             if inst_idx >= m.instruments.len() {
-                m.instruments.resize(inst_idx + 1, crate::sequencer::Instrument::default());
+                m.instruments
+                    .resize(inst_idx + 1, crate::sequencer::Instrument::default());
             }
-            let sample_map = loaded_inst.sample_map.clone();
+            let sample_map = loaded_inst.sample_map;
             m.instruments[inst_idx] = loaded_inst;
             let mut available_slots: Vec<usize> = (1..m.samples.len())
                 .filter(|&i| m.samples[i].data.is_empty())

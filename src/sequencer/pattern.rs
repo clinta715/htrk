@@ -57,14 +57,21 @@ impl<'de> Deserialize<'de> for Pattern {
             data: Vec<Vec<Cell>>,
         }
         let pd = PatternData::deserialize(deserializer)?;
-        let data = pd.data.into_iter().map(|row| {
-            let mut arr = [Cell::default(); MAX_CHANNELS];
-            for (i, cell) in row.into_iter().enumerate().take(MAX_CHANNELS) {
-                arr[i] = cell;
-            }
-            arr
-        }).collect();
-        Ok(Pattern { num_rows: pd.num_rows, data })
+        let data = pd
+            .data
+            .into_iter()
+            .map(|row| {
+                let mut arr = [Cell::default(); MAX_CHANNELS];
+                for (i, cell) in row.into_iter().enumerate().take(MAX_CHANNELS) {
+                    arr[i] = cell;
+                }
+                arr
+            })
+            .collect();
+        Ok(Pattern {
+            num_rows: pd.num_rows,
+            data,
+        })
     }
 }
 
@@ -77,15 +84,33 @@ impl Pattern {
     }
 
     pub fn cell(&self, row: usize, channel: usize) -> &Cell {
-        debug_assert!(row < self.num_rows, "cell: row {} out of bounds (max {})", row, self.num_rows);
-        debug_assert!(channel < MAX_CHANNELS, "cell: channel {} out of bounds", channel);
+        debug_assert!(
+            row < self.num_rows,
+            "cell: row {} out of bounds (max {})",
+            row,
+            self.num_rows
+        );
+        debug_assert!(
+            channel < MAX_CHANNELS,
+            "cell: channel {} out of bounds",
+            channel
+        );
         &self.data[row][channel]
     }
 
     #[allow(dead_code)]
     pub fn cell_mut(&mut self, row: usize, channel: usize) -> &mut Cell {
-        debug_assert!(row < self.num_rows, "cell_mut: row {} out of bounds (max {})", row, self.num_rows);
-        debug_assert!(channel < MAX_CHANNELS, "cell_mut: channel {} out of bounds", channel);
+        debug_assert!(
+            row < self.num_rows,
+            "cell_mut: row {} out of bounds (max {})",
+            row,
+            self.num_rows
+        );
+        debug_assert!(
+            channel < MAX_CHANNELS,
+            "cell_mut: channel {} out of bounds",
+            channel
+        );
         &mut self.data[row][channel]
     }
 

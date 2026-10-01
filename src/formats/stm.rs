@@ -74,35 +74,37 @@ impl FormatHandler for StmHandler {
 
             let inst_name = read_string(&data[offset..], 0, 13)?;
             let _disk = data[offset + 13];
-            let _reserved1 = u16_at(&data, offset + 14);
-            let _reserved2 = u16_at(&data, offset + 16);
+            let _reserved1 = u16_at(data, offset + 14);
+            let _reserved2 = u16_at(data, offset + 16);
 
-            let sample_length = u16_at(&data, offset + 18) as usize;
-            let loop_begin = u16_at(&data, offset + 20) as usize;
-            let loop_end = u16_at(&data, offset + 22) as usize;
+            let sample_length = u16_at(data, offset + 18) as usize;
+            let loop_begin = u16_at(data, offset + 20) as usize;
+            let loop_end = u16_at(data, offset + 22) as usize;
             let volume = data[offset + 24].min(64);
             let _reserved3 = data[offset + 25];
-            let c4_speed = u16_at(&data, offset + 26) as u32;
+            let c4_speed = u16_at(data, offset + 26) as u32;
 
             offset += 31;
 
             let sample_data_offset = offset;
             offset += sample_length;
 
-            if c4_speed == 0 {
-            }
-
             let has_loop = loop_end > loop_begin && loop_end <= sample_length;
-            let loop_type = if has_loop { LoopType::Forward } else { LoopType::None };
-
-            let sample_data = if sample_length > 0 && sample_data_offset + sample_length <= data.len() {
-                data[sample_data_offset..sample_data_offset + sample_length]
-                    .iter()
-                    .map(|&b| (b as i8 as f32) / 128.0)
-                    .collect()
+            let loop_type = if has_loop {
+                LoopType::Forward
             } else {
-                Vec::new()
+                LoopType::None
             };
+
+            let sample_data =
+                if sample_length > 0 && sample_data_offset + sample_length <= data.len() {
+                    data[sample_data_offset..sample_data_offset + sample_length]
+                        .iter()
+                        .map(|&b| (b as i8 as f32) / 128.0)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
 
             let sample = Sample {
                 name: inst_name.clone(),
@@ -253,7 +255,9 @@ impl FormatHandler for StmHandler {
 fn convert_stm_effect(effect_code: u8, param: u8) -> Effect {
     match effect_code {
         10 => Effect::SetTempo { bpm: param },
-        11 => Effect::PositionJump { order: param as u16 },
+        11 => Effect::PositionJump {
+            order: param as u16,
+        },
         12 => Effect::PatternBreak { row: param as u16 },
         13 => Effect::VolumeSlide {
             up: param >> 4,
@@ -266,7 +270,10 @@ fn convert_stm_effect(effect_code: u8, param: u8) -> Effect {
             speed: param >> 4,
             depth: param & 0x0F,
         },
-        18 => Effect::Tremor { ontime: param >> 4, offtime: param & 0x0F },
+        18 => Effect::Tremor {
+            ontime: param >> 4,
+            offtime: param & 0x0F,
+        },
         19 => Effect::Arpeggio {
             note1: param >> 4,
             note2: param & 0x0F,

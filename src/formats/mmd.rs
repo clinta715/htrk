@@ -54,7 +54,8 @@ impl FormatHandler for MmdHandler {
         let mut instruments = vec![Instrument::default()];
 
         for i in 0..63 {
-            let sample_offset = (sample_arr_offset as usize + i * 29).min(data.len().saturating_sub(29));
+            let sample_offset =
+                (sample_arr_offset as usize + i * 29).min(data.len().saturating_sub(29));
             if sample_offset >= data.len() {
                 samples.push(Sample::default());
                 instruments.push(Instrument::default());
@@ -95,7 +96,10 @@ impl FormatHandler for MmdHandler {
                 let start = addr as usize;
                 let end = start + sample_len;
                 if end <= data.len() {
-                    data[start..end].iter().map(|&b| (b as i8 as f32) / 128.0).collect()
+                    data[start..end]
+                        .iter()
+                        .map(|&b| (b as i8 as f32) / 128.0)
+                        .collect()
                 } else {
                     Vec::new()
                 }
@@ -141,7 +145,11 @@ impl FormatHandler for MmdHandler {
             }
         }
 
-        let default_tempo = if offset < data.len() { data[offset] } else { 125 };
+        let default_tempo = if offset < data.len() {
+            data[offset]
+        } else {
+            125
+        };
         // offset = offset.saturating_add(2); // Unused
 
         let mut patterns = Vec::new();
@@ -166,10 +174,18 @@ impl FormatHandler for MmdHandler {
 
                 let mut block_offset = block_ptr as usize;
 
-                let num_tracks = if block_offset < data.len() { data[block_offset] as usize } else { 0 };
+                let num_tracks = if block_offset < data.len() {
+                    data[block_offset] as usize
+                } else {
+                    0
+                };
                 block_offset = block_offset.saturating_add(1);
 
-                let num_lines = if block_offset < data.len() { data[block_offset] as usize } else { 64 };
+                let num_lines = if block_offset < data.len() {
+                    data[block_offset] as usize
+                } else {
+                    64
+                };
                 block_offset = block_offset.saturating_add(1);
 
                 if is_mmd1 {
@@ -215,7 +231,15 @@ impl FormatHandler for MmdHandler {
                                 if line_offset + 2 > data.len() {
                                     break;
                                 }
-                                (u32::from_be_bytes([0, 0, data[line_offset], data[line_offset + 1]]), 2)
+                                (
+                                    u32::from_be_bytes([
+                                        0,
+                                        0,
+                                        data[line_offset],
+                                        data[line_offset + 1],
+                                    ]),
+                                    2,
+                                )
                             };
                             line_offset += bytes_read;
 
@@ -249,11 +273,7 @@ impl FormatHandler for MmdHandler {
             }
         }
 
-        let num_channels = patterns.iter()
-            .map(|p| p.data.iter().any(|row| row.iter().any(|c| !c.is_empty())))
-            .count()
-            .max(4)
-            .min(32);
+        let num_channels = patterns.len().clamp(4, 32);
 
         let channel_panning = vec![32u8; num_channels];
 
@@ -262,7 +282,11 @@ impl FormatHandler for MmdHandler {
             message: None,
             format: ModuleFormat::Mmd,
             _version: if is_mmd1 { 1 } else { 0 },
-            tracker_name: if is_mmd1 { String::from("OctaMED Professional") } else { String::from("OctaMED") },
+            tracker_name: if is_mmd1 {
+                String::from("OctaMED Professional")
+            } else {
+                String::from("OctaMED")
+            },
             order_list,
             patterns,
             instruments,
@@ -311,7 +335,12 @@ fn read_be_u32(data: &[u8], offset: usize) -> u32 {
     if offset + 4 > data.len() {
         return 0;
     }
-    u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+    u32::from_be_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ])
 }
 
 fn read_be_u16(data: &[u8], offset: usize) -> u16 {

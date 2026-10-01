@@ -94,7 +94,9 @@ fn strip_prefix<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 }
 
 fn as_usize(idx_str: &str) -> Result<usize, String> {
-    idx_str.parse::<usize>().map_err(|e| format!("Invalid index '{idx_str}': {e}"))
+    idx_str
+        .parse::<usize>()
+        .map_err(|e| format!("Invalid index '{idx_str}': {e}"))
 }
 
 fn read_state(ctx: &ToolContext) -> CmdResult {
@@ -116,14 +118,20 @@ fn read_state(ctx: &ToolContext) -> CmdResult {
 }
 
 fn read_order(ctx: &ToolContext) -> CmdResult {
-    let order = ctx.module_snapshot.module_json.as_ref()
+    let order = ctx
+        .module_snapshot
+        .module_json
+        .as_ref()
         .and_then(|j| j.get("order_list").cloned())
         .unwrap_or(serde_json::Value::Array(vec![]));
     Ok(order)
 }
 
 fn read_all_patterns(ctx: &ToolContext) -> CmdResult {
-    let arr: Vec<serde_json::Value> = ctx.module_snapshot.patterns_json.iter()
+    let arr: Vec<serde_json::Value> = ctx
+        .module_snapshot
+        .patterns_json
+        .iter()
         .map(|(idx, data)| serde_json::json!({"index": idx, "data": data}))
         .collect();
     Ok(serde_json::Value::Array(arr))
@@ -131,14 +139,19 @@ fn read_all_patterns(ctx: &ToolContext) -> CmdResult {
 
 fn read_pattern(idx_str: &str, ctx: &ToolContext) -> CmdResult {
     let idx = as_usize(idx_str)?;
-    ctx.module_snapshot.patterns_json.iter()
+    ctx.module_snapshot
+        .patterns_json
+        .iter()
         .find(|(i, _)| *i == idx)
         .map(|(_, data)| data.clone())
         .ok_or_else(|| format!("Pattern {idx} not found"))
 }
 
 fn read_all_instruments(ctx: &ToolContext) -> CmdResult {
-    let arr: Vec<serde_json::Value> = ctx.module_snapshot.instruments_json.iter()
+    let arr: Vec<serde_json::Value> = ctx
+        .module_snapshot
+        .instruments_json
+        .iter()
         .map(|(idx, data)| serde_json::json!({"index": idx, "data": data}))
         .collect();
     Ok(serde_json::Value::Array(arr))
@@ -146,14 +159,19 @@ fn read_all_instruments(ctx: &ToolContext) -> CmdResult {
 
 fn read_instrument(idx_str: &str, ctx: &ToolContext) -> CmdResult {
     let idx = as_usize(idx_str)?;
-    ctx.module_snapshot.instruments_json.iter()
+    ctx.module_snapshot
+        .instruments_json
+        .iter()
         .find(|(i, _)| *i == idx)
         .map(|(_, data)| data.clone())
         .ok_or_else(|| format!("Instrument {idx} not found"))
 }
 
 fn read_all_samples(ctx: &ToolContext) -> CmdResult {
-    let arr: Vec<serde_json::Value> = ctx.module_snapshot.samples_json.iter()
+    let arr: Vec<serde_json::Value> = ctx
+        .module_snapshot
+        .samples_json
+        .iter()
         .map(|(idx, data)| serde_json::json!({"index": idx, "data": data}))
         .collect();
     Ok(serde_json::Value::Array(arr))
@@ -161,7 +179,9 @@ fn read_all_samples(ctx: &ToolContext) -> CmdResult {
 
 fn read_sample(idx_str: &str, ctx: &ToolContext) -> CmdResult {
     let idx = as_usize(idx_str)?;
-    ctx.module_snapshot.samples_json.iter()
+    ctx.module_snapshot
+        .samples_json
+        .iter()
         .find(|(i, _)| *i == idx)
         .map(|(_, data)| data.clone())
         .ok_or_else(|| format!("Sample {idx} not found"))
@@ -184,14 +204,16 @@ fn read_playback(ctx: &ToolContext) -> CmdResult {
 
 fn read_channels(ctx: &ToolContext) -> CmdResult {
     let ch = &ctx.channels_snapshot;
-    let items: Vec<serde_json::Value> = (0..ch.panning.len()).map(|i| {
-        serde_json::json!({
-            "channel": i,
-            "panning": ch.panning.get(i).copied().unwrap_or(32),
-            "volume": ch.volume.get(i).copied().unwrap_or(64),
-            "muted": ch.muted.get(i).copied().unwrap_or(false),
-            "solo": ch.solo.get(i).copied().unwrap_or(false),
+    let items: Vec<serde_json::Value> = (0..ch.panning.len())
+        .map(|i| {
+            serde_json::json!({
+                "channel": i,
+                "panning": ch.panning.get(i).copied().unwrap_or(32),
+                "volume": ch.volume.get(i).copied().unwrap_or(64),
+                "muted": ch.muted.get(i).copied().unwrap_or(false),
+                "solo": ch.solo.get(i).copied().unwrap_or(false),
+            })
         })
-    }).collect();
+        .collect();
     Ok(serde_json::Value::Array(items))
 }

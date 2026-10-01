@@ -10,9 +10,15 @@ pub fn resample(
     loop_type: LoopType,
 ) -> f32 {
     match interpolation {
-        InterpolationType::Nearest => resample_nearest(sample_data, position, loop_start, loop_end, loop_type),
-        InterpolationType::Linear => resample_linear(sample_data, position, loop_start, loop_end, loop_type),
-        InterpolationType::Cubic => resample_cubic(sample_data, position, loop_start, loop_end, loop_type),
+        InterpolationType::Nearest => {
+            resample_nearest(sample_data, position, loop_start, loop_end, loop_type)
+        }
+        InterpolationType::Linear => {
+            resample_linear(sample_data, position, loop_start, loop_end, loop_type)
+        }
+        InterpolationType::Cubic => {
+            resample_cubic(sample_data, position, loop_start, loop_end, loop_type)
+        }
     }
 }
 
@@ -61,7 +67,9 @@ fn get_sample_looped(
     let wrapped = match loop_type {
         LoopType::Forward => wrap_index_forward(index, loop_start, loop_end),
         LoopType::PingPong => wrap_index_pingpong(index, loop_start, loop_end),
-        LoopType::Backward if loop_end > loop_start => wrap_index_backward(index, loop_start, loop_end),
+        LoopType::Backward if loop_end > loop_start => {
+            wrap_index_backward(index, loop_start, loop_end)
+        }
         _ => index,
     };
     if wrapped < sample_data.len() {
@@ -81,20 +89,40 @@ fn resample_nearest(
     let index = position as usize;
     if index >= sample_data.len() {
         let idx = match loop_type {
-            LoopType::Forward if loop_end > loop_start => wrap_index_forward(index, loop_start, loop_end),
-            LoopType::PingPong if loop_end > loop_start => wrap_index_pingpong(index, loop_start, loop_end),
-            LoopType::Backward if loop_end > loop_start => wrap_index_backward(index, loop_start, loop_end),
+            LoopType::Forward if loop_end > loop_start => {
+                wrap_index_forward(index, loop_start, loop_end)
+            }
+            LoopType::PingPong if loop_end > loop_start => {
+                wrap_index_pingpong(index, loop_start, loop_end)
+            }
+            LoopType::Backward if loop_end > loop_start => {
+                wrap_index_backward(index, loop_start, loop_end)
+            }
             _ => return 0.0,
         };
-        if idx < sample_data.len() { sample_data[idx] } else { 0.0 }
+        if idx < sample_data.len() {
+            sample_data[idx]
+        } else {
+            0.0
+        }
     } else {
         let idx = match loop_type {
-            LoopType::Forward if loop_end > loop_start && index >= loop_end => wrap_index_forward(index, loop_start, loop_end),
-            LoopType::PingPong if loop_end > loop_start && index >= loop_end => wrap_index_pingpong(index, loop_start, loop_end),
-            LoopType::Backward if loop_end > loop_start && index >= loop_end => wrap_index_backward(index, loop_start, loop_end),
+            LoopType::Forward if loop_end > loop_start && index >= loop_end => {
+                wrap_index_forward(index, loop_start, loop_end)
+            }
+            LoopType::PingPong if loop_end > loop_start && index >= loop_end => {
+                wrap_index_pingpong(index, loop_start, loop_end)
+            }
+            LoopType::Backward if loop_end > loop_start && index >= loop_end => {
+                wrap_index_backward(index, loop_start, loop_end)
+            }
             _ => index,
         };
-        if idx < sample_data.len() { sample_data[idx] } else { 0.0 }
+        if idx < sample_data.len() {
+            sample_data[idx]
+        } else {
+            0.0
+        }
     }
 }
 
@@ -110,12 +138,22 @@ fn resample_linear(
 
     if index0 >= sample_data.len() {
         let i0 = match loop_type {
-            LoopType::Forward if loop_end > loop_start => wrap_index_forward(index0, loop_start, loop_end),
-            LoopType::PingPong if loop_end > loop_start => wrap_index_pingpong(index0, loop_start, loop_end),
-            LoopType::Backward if loop_end > loop_start => wrap_index_backward(index0, loop_start, loop_end),
+            LoopType::Forward if loop_end > loop_start => {
+                wrap_index_forward(index0, loop_start, loop_end)
+            }
+            LoopType::PingPong if loop_end > loop_start => {
+                wrap_index_pingpong(index0, loop_start, loop_end)
+            }
+            LoopType::Backward if loop_end > loop_start => {
+                wrap_index_backward(index0, loop_start, loop_end)
+            }
             _ => return 0.0,
         };
-        let s0 = if i0 < sample_data.len() { sample_data[i0] as f64 } else { 0.0 };
+        let s0 = if i0 < sample_data.len() {
+            sample_data[i0] as f64
+        } else {
+            0.0
+        };
         let i1 = i0 + 1;
         let s1 = get_sample_looped(sample_data, i1, loop_start, loop_end, loop_type) as f64;
         return (s0 + (s1 - s0) * frac) as f32;
@@ -141,7 +179,13 @@ fn resample_cubic(
     let frac = position - index1 as f64;
     let len = sample_data.len();
 
-    if index1 >= len && !(loop_end > loop_start && matches!(loop_type, LoopType::Forward | LoopType::PingPong | LoopType::Backward)) {
+    if index1 >= len
+        && !(loop_end > loop_start
+            && matches!(
+                loop_type,
+                LoopType::Forward | LoopType::PingPong | LoopType::Backward
+            ))
+    {
         return 0.0;
     }
 
@@ -224,8 +268,10 @@ mod tests {
         let s0 = data[2];
         let s1 = data[3];
         let expected = s0 + (s1 - s0) * 0.5;
-        assert!((result - expected).abs() < 0.001,
-            "index0=6 should wrap to 2, index1=7 wraps to 3");
+        assert!(
+            (result - expected).abs() < 0.001,
+            "index0=6 should wrap to 2, index1=7 wraps to 3"
+        );
     }
 
     #[test]
@@ -239,7 +285,10 @@ mod tests {
     fn loop_wrap_does_not_affect_non_looped() {
         let data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let result = resample_linear(&data, 2.0, 0, 0, LoopType::None);
-        assert!((result - 3.0).abs() < 0.001, "Non-looped sample at index 2 should read value 3.0");
+        assert!(
+            (result - 3.0).abs() < 0.001,
+            "Non-looped sample at index 2 should read value 3.0"
+        );
     }
 
     #[test]
@@ -266,58 +315,76 @@ mod tests {
     fn pingpong_backward_wraps_below_loop_start() {
         let data = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0];
         let result = resample_linear(&data, 2.5, 2, 6, LoopType::PingPong);
-        assert!((result - 35.0).abs() < 0.001,
-            "index1=1 should clamp to loop_start=2 for PingPong backward, got {result}");
+        assert!(
+            (result - 35.0).abs() < 0.001,
+            "index1=1 should clamp to loop_start=2 for PingPong backward, got {result}"
+        );
     }
 
     #[test]
     fn forward_pre_loop_indices_not_wrapped() {
         let data = [111.0, 222.0, 10.0, 20.0, 30.0, 40.0, 50.0];
         let result = resample_linear(&data, 0.0, 2, 6, LoopType::Forward);
-        assert!((result - 111.0).abs() < 0.001,
-            "index 0 before loop_start=2 should read data[0]=111, got {result}");
+        assert!(
+            (result - 111.0).abs() < 0.001,
+            "index 0 before loop_start=2 should read data[0]=111, got {result}"
+        );
         let result = resample_linear(&data, 1.0, 2, 6, LoopType::Forward);
-        assert!((result - 222.0).abs() < 0.001,
-            "index 1 before loop_start=2 should read data[1]=222, got {result}");
+        assert!(
+            (result - 222.0).abs() < 0.001,
+            "index 1 before loop_start=2 should read data[1]=222, got {result}"
+        );
     }
 
     #[test]
     fn forward_loop_wrap_only_at_or_after_loop_end() {
         let data = [111.0, 222.0, 10.0, 20.0, 30.0, 40.0];
         let result = resample_linear(&data, 2.0, 2, 5, LoopType::Forward);
-        assert!((result - 10.0).abs() < 0.001,
-            "loop start index 2 should read data[2]=10, got {result}");
+        assert!(
+            (result - 10.0).abs() < 0.001,
+            "loop start index 2 should read data[2]=10, got {result}"
+        );
         let result = resample_linear(&data, 4.0, 2, 5, LoopType::Forward);
-        assert!((result - 30.0).abs() < 0.001,
-            "index 4 within loop should read data[4]=30, got {result}");
+        assert!(
+            (result - 30.0).abs() < 0.001,
+            "index 4 within loop should read data[4]=30, got {result}"
+        );
         let result = resample_linear(&data, 5.0, 2, 5, LoopType::Forward);
         let expected = 10.0;
-        assert!((result - expected).abs() < 0.001,
-            "index 5 >= loop_end=5 should wrap to loop_start data[2]=10, got {result}");
+        assert!(
+            (result - expected).abs() < 0.001,
+            "index 5 >= loop_end=5 should wrap to loop_start data[2]=10, got {result}"
+        );
     }
 
     #[test]
     fn pingpong_pre_loop_not_wrapped() {
         let data = [111.0, 222.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0];
         let result = resample_linear(&data, 0.0, 2, 6, LoopType::PingPong);
-        assert!((result - 111.0).abs() < 0.001,
-            "pingpong index 0 before loop_start=2 should read data[0]=111, got {result}");
+        assert!(
+            (result - 111.0).abs() < 0.001,
+            "pingpong index 0 before loop_start=2 should read data[0]=111, got {result}"
+        );
     }
 
     #[test]
     fn cubic_pre_loop_not_wrapped() {
         let data = [111.0, 222.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0];
         let result = resample_cubic(&data, 0.0, 2, 6, LoopType::Forward);
-        assert!((result - 111.0).abs() < 0.001,
-            "cubic index 0 before loop_start=2 should read data[0]=111, got {result}");
+        assert!(
+            (result - 111.0).abs() < 0.001,
+            "cubic index 0 before loop_start=2 should read data[0]=111, got {result}"
+        );
     }
 
     #[test]
     fn nearest_pre_loop_not_wrapped() {
         let data = [111.0, 222.0, 10.0, 20.0, 30.0, 40.0, 50.0];
         let result = resample_nearest(&data, 0.0, 2, 6, LoopType::Forward);
-        assert!((result - 111.0).abs() < 0.001,
-            "nearest index 0 before loop_start=2 should read data[0]=111, got {result}");
+        assert!(
+            (result - 111.0).abs() < 0.001,
+            "nearest index 0 before loop_start=2 should read data[0]=111, got {result}"
+        );
     }
 
     #[test]
@@ -327,8 +394,10 @@ mod tests {
         let s0 = 30.0;
         let s1 = 10.0;
         let expected = s0 + (s1 - s0) * 0.5;
-        assert!((result - expected).abs() < 0.001,
-            "position 4.5 should correctly lerp across loop boundary, got {result}");
+        assert!(
+            (result - expected).abs() < 0.001,
+            "position 4.5 should correctly lerp across loop boundary, got {result}"
+        );
     }
 
     #[test]
@@ -354,15 +423,19 @@ mod tests {
     fn backward_loop_beyond_end_wraps() {
         let data = [99.0, 88.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0];
         let result = resample_nearest(&data, 7.0, 2, 6, LoopType::Backward);
-        assert!((result - 30.0).abs() < 0.001,
-            "Backward index 7 should wrap into loop body, got {result}");
+        assert!(
+            (result - 30.0).abs() < 0.001,
+            "Backward index 7 should wrap into loop body, got {result}"
+        );
     }
 
     #[test]
     fn backward_linear_beyond_end_wraps() {
         let data = [99.0, 88.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0];
         let result = resample_linear(&data, 6.0, 2, 6, LoopType::Backward);
-        assert!((result - 40.0).abs() < 0.001,
-            "Backward linear index 6 should wrap to data[5]=40, got {result}");
+        assert!(
+            (result - 40.0).abs() < 0.001,
+            "Backward linear index 6 should wrap to data[5]=40, got {result}"
+        );
     }
 }

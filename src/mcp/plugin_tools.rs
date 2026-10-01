@@ -4,48 +4,53 @@
 
 use serde_json::json;
 
-use crate::mcp::protocol::{ToolContext, *};
 use crate::audio::plugins::{PluginDescriptor, PluginFormat};
+use crate::mcp::protocol::{ToolContext, *};
 
 /// List all discovered plugins, optionally filtered by name substring.
 pub fn cmd_plugin_list(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
-    let name_filter = params.get("name_contains")
+    let name_filter = params
+        .get("name_contains")
         .and_then(|v| v.as_str())
         .map(str::to_lowercase);
 
-    let library = ctx.plugin_library.read().map_err(|e| format!("Library lock poisoned: {e}"))?;
-    let descriptors: Vec<&PluginDescriptor> = library.list_descriptors()
+    let library = ctx
+        .plugin_library
+        .read()
+        .map_err(|e| format!("Library lock poisoned: {e}"))?;
+    let descriptors: Vec<&PluginDescriptor> = library
+        .list_descriptors()
         .into_iter()
-        .filter(|d| {
-            match &name_filter {
-                Some(f) => d.name.to_lowercase().contains(f) ||
-                          d.plugin_id.to_lowercase().contains(f),
-                None => true,
-            }
+        .filter(|d| match &name_filter {
+            Some(f) => d.name.to_lowercase().contains(f) || d.plugin_id.to_lowercase().contains(f),
+            None => true,
         })
         .collect();
 
-    let result: Vec<serde_json::Value> = descriptors.iter().map(|d| {
-        json!({
-            "format": d.format.as_str(),
-            "path": d.path.display().to_string(),
-            "plugin_id": d.plugin_id,
-            "name": d.name,
-            "vendor": d.vendor,
-            "version": d.version,
-            "description": d.description,
-            "plugin_type": match d.plugin_type {
-                crate::audio::plugins::PluginType::Instrument => "instrument",
-                crate::audio::plugins::PluginType::Effect => "effect",
-                crate::audio::plugins::PluginType::Both => "both",
-                crate::audio::plugins::PluginType::Analyzer => "analyzer",
-            },
-            "audio_inputs": d.audio_inputs,
-            "audio_outputs": d.audio_outputs,
-            "has_editor": d.has_editor,
-            "supports_state": d.supports_state,
+    let result: Vec<serde_json::Value> = descriptors
+        .iter()
+        .map(|d| {
+            json!({
+                "format": d.format.as_str(),
+                "path": d.path.display().to_string(),
+                "plugin_id": d.plugin_id,
+                "name": d.name,
+                "vendor": d.vendor,
+                "version": d.version,
+                "description": d.description,
+                "plugin_type": match d.plugin_type {
+                    crate::audio::plugins::PluginType::Instrument => "instrument",
+                    crate::audio::plugins::PluginType::Effect => "effect",
+                    crate::audio::plugins::PluginType::Both => "both",
+                    crate::audio::plugins::PluginType::Analyzer => "analyzer",
+                },
+                "audio_inputs": d.audio_inputs,
+                "audio_outputs": d.audio_outputs,
+                "has_editor": d.has_editor,
+                "supports_state": d.supports_state,
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(json!({
         "total": result.len(),
@@ -55,11 +60,17 @@ pub fn cmd_plugin_list(params: serde_json::Value, ctx: &ToolContext) -> CmdResul
 
 /// Get detailed information about a specific plugin by (format, path, plugin_id).
 pub fn cmd_plugin_info(params: serde_json::Value, ctx: &ToolContext) -> CmdResult {
-    let path = params.get("path").and_then(|v| v.as_str())
+    let path = params
+        .get("path")
+        .and_then(|v| v.as_str())
         .ok_or("Missing 'path'")?;
-    let plugin_id = params.get("plugin_id").and_then(|v| v.as_str())
+    let plugin_id = params
+        .get("plugin_id")
+        .and_then(|v| v.as_str())
         .ok_or("Missing 'plugin_id'")?;
-    let format_str = params.get("format").and_then(|v| v.as_str())
+    let format_str = params
+        .get("format")
+        .and_then(|v| v.as_str())
         .ok_or("Missing 'format'")?;
 
     let format = match format_str {
@@ -67,7 +78,10 @@ pub fn cmd_plugin_info(params: serde_json::Value, ctx: &ToolContext) -> CmdResul
         _ => return Err(format!("Unsupported format: {format_str}")),
     };
 
-    let library = ctx.plugin_library.read().map_err(|e| format!("Library lock poisoned: {e}"))?;
+    let library = ctx
+        .plugin_library
+        .read()
+        .map_err(|e| format!("Library lock poisoned: {e}"))?;
     let path_buf = std::path::PathBuf::from(path);
     match library.get_descriptor(format, &path_buf, plugin_id) {
         Some(d) => Ok(json!({
@@ -116,7 +130,10 @@ pub fn cmd_plugin_scan(params: serde_json::Value, ctx: &ToolContext) -> CmdResul
     // metadata (name, vendor, version, plugin_id, audio I/O counts,
     // has_editor, supports_state). This is the same path the UI uses,
     // so MCP and UI see consistent data.
-    let mut library = ctx.plugin_library.write().map_err(|e| format!("Library lock poisoned: {e}"))?;
+    let mut library = ctx
+        .plugin_library
+        .write()
+        .map_err(|e| format!("Library lock poisoned: {e}"))?;
     library.clear_cache();
     let mut found_count = 0;
     let mut error_count = 0;
@@ -127,7 +144,11 @@ pub fn cmd_plugin_scan(params: serde_json::Value, ctx: &ToolContext) -> CmdResul
                 found_count += 1;
             }
             Err(e) => {
-                eprintln!("[mcp plugin.scan] Failed to probe {}: {}", path.display(), e);
+                eprintln!(
+                    "[mcp plugin.scan] Failed to probe {}: {}",
+                    path.display(),
+                    e
+                );
                 error_count += 1;
             }
         }
@@ -179,11 +200,14 @@ mod tests {
             preset_library: std::sync::Arc::new(std::sync::RwLock::new(preset_library)),
             preset_scan_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
-        let result = cmd_plugin_info(json!({
-            "format": "clap",
-            "path": "/nonexistent.clap",
-            "plugin_id": "com.example.missing"
-        }), &ctx);
+        let result = cmd_plugin_info(
+            json!({
+                "format": "clap",
+                "path": "/nonexistent.clap",
+                "plugin_id": "com.example.missing"
+            }),
+            &ctx,
+        );
         assert!(result.is_err());
     }
 }

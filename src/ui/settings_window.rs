@@ -253,7 +253,11 @@ fn draw_paths_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerT
     let mut remove_idx = None;
     for (i, path) in state.default_sample_paths.iter_mut().enumerate() {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(format!("{:>2}.", i + 1)).monospace().size(FONT_BODY));
+            ui.label(
+                egui::RichText::new(format!("{:>2}.", i + 1))
+                    .monospace()
+                    .size(FONT_BODY),
+            );
             let resp = ui.add_sized(
                 [ui.available_width() - 90.0, 20.0],
                 egui::TextEdit::singleline(path).font(egui::FontId::monospace(11.0)),
@@ -277,9 +281,11 @@ fn draw_paths_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerT
 
     ui.horizontal(|ui| {
         ui.add_space(20.0);
-        ui.add(egui::TextEdit::singleline(&mut state.new_sample_path)
-            .font(egui::FontId::monospace(11.0))
-            .hint_text("Add path..."));
+        ui.add(
+            egui::TextEdit::singleline(&mut state.new_sample_path)
+                .font(egui::FontId::monospace(11.0))
+                .hint_text("Add path..."),
+        );
         if ui.button("+ Add").clicked() {
             let p = state.new_sample_path.trim().to_string();
             if !p.is_empty() {
@@ -289,7 +295,9 @@ fn draw_paths_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerT
         }
         if ui.button("... Browse").clicked() {
             if let Some(p) = pick_folder() {
-                state.default_sample_paths.push(p.to_string_lossy().into_owned());
+                state
+                    .default_sample_paths
+                    .push(p.to_string_lossy().into_owned());
             }
         }
     });
@@ -306,15 +314,23 @@ fn draw_paths_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerT
     ui.add_space(12.0);
     super::style::section_header(ui, "Plugin Scan Paths (CLAP)", theme);
     ui.add_space(2.0);
-    ui.label(egui::RichText::new(
-        "Additional directories to scan for CLAP plugins. The system defaults \
-         (e.g. C:\\Program Files\\Common Files\\CLAP) are always included."
-    ).size(FONT_BODY).weak());
+    ui.label(
+        egui::RichText::new(
+            "Additional directories to scan for CLAP plugins. The system defaults \
+         (e.g. C:\\Program Files\\Common Files\\CLAP) are always included.",
+        )
+        .size(FONT_BODY)
+        .weak(),
+    );
 
     let mut remove_idx = None;
     for (i, path) in state.plugin_scan_paths.iter_mut().enumerate() {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(format!("{:>2}.", i + 1)).monospace().size(FONT_BODY));
+            ui.label(
+                egui::RichText::new(format!("{:>2}.", i + 1))
+                    .monospace()
+                    .size(FONT_BODY),
+            );
             let resp = ui.add_sized(
                 [ui.available_width() - 90.0, 20.0],
                 egui::TextEdit::singleline(path).font(egui::FontId::monospace(11.0)),
@@ -338,9 +354,11 @@ fn draw_paths_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerT
 
     ui.horizontal(|ui| {
         ui.add_space(20.0);
-        ui.add(egui::TextEdit::singleline(&mut state.new_plugin_path)
-            .font(egui::FontId::monospace(11.0))
-            .hint_text("Add plugin path..."));
+        ui.add(
+            egui::TextEdit::singleline(&mut state.new_plugin_path)
+                .font(egui::FontId::monospace(11.0))
+                .hint_text("Add plugin path..."),
+        );
         if ui.button("+ Add").clicked() {
             let p = state.new_plugin_path.trim().to_string();
             if !p.is_empty() {
@@ -350,7 +368,9 @@ fn draw_paths_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerT
         }
         if ui.button("... Browse").clicked() {
             if let Some(p) = pick_folder() {
-                state.plugin_scan_paths.push(p.to_string_lossy().into_owned());
+                state
+                    .plugin_scan_paths
+                    .push(p.to_string_lossy().into_owned());
             }
         }
     });
@@ -386,7 +406,11 @@ fn draw_editor_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &Tracker
 
     ui.horizontal(|ui| {
         ui.label("Font Size:");
-        ui.add(egui::DragValue::new(&mut state.editor_font_size).range(8..=24).speed(1));
+        ui.add(
+            egui::DragValue::new(&mut state.editor_font_size)
+                .range(8..=24)
+                .speed(1),
+        );
     });
     ui.add_space(4.0);
 
@@ -431,7 +455,10 @@ fn draw_editor_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &Tracker
             .show_ui(ui, |ui| {
                 for &ch in &ch_options {
                     let label = format!("{}", ch);
-                    if ui.selectable_label(state.visible_channels == ch, &label).clicked() {
+                    if ui
+                        .selectable_label(state.visible_channels == ch, &label)
+                        .clicked()
+                    {
                         state.visible_channels = ch;
                     }
                 }
@@ -442,22 +469,36 @@ fn draw_editor_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &Tracker
     ui.checkbox(&mut state.show_row_numbers, "Show Row Numbers");
     ui.checkbox(&mut state.show_hex_row_numbers, "Hex Row Numbers");
     ui.checkbox(&mut state.snap_to_grid, "Snap Selection to Grid");
-    ui.checkbox(&mut state.follow_playback_default, "Follow Playback (default)");
+    ui.checkbox(
+        &mut state.follow_playback_default,
+        "Follow Playback (default)",
+    );
 
     ui.add_space(8.0);
     super::style::section_header(ui, "General", theme);
     ui.add_space(4.0);
-    ui.checkbox(&mut state.confirm_on_exit, "Confirm before exiting with unsaved changes");
+    ui.checkbox(
+        &mut state.confirm_on_exit,
+        "Confirm before exiting with unsaved changes",
+    );
 
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.label("Minor Row Highlight:");
-        ui.add(egui::DragValue::new(&mut state.editor_highlight_minor).range(1..=32).speed(1));
+        ui.add(
+            egui::DragValue::new(&mut state.editor_highlight_minor)
+                .range(1..=32)
+                .speed(1),
+        );
     });
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.label("Major Row Highlight:");
-        ui.add(egui::DragValue::new(&mut state.editor_highlight_major).range(1..=32).speed(1));
+        ui.add(
+            egui::DragValue::new(&mut state.editor_highlight_major)
+                .range(1..=32)
+                .speed(1),
+        );
     });
 }
 
@@ -477,7 +518,11 @@ fn draw_audio_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerT
 
     let current_device = state.selected_device_name.clone().unwrap_or_default();
     egui::ComboBox::from_id_salt("settings_output_device")
-        .selected_text(if current_device.is_empty() { "Default".to_string() } else { current_device.clone() })
+        .selected_text(if current_device.is_empty() {
+            "Default".to_string()
+        } else {
+            current_device.clone()
+        })
         .show_ui(ui, |ui| {
             for name in &state.output_device_names {
                 let is_selected = state.selected_device_name.as_deref() == Some(name.as_str());
@@ -543,7 +588,8 @@ fn draw_audio_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &TrackerT
         ("48000 Hz", Some(48000)),
         ("96000 Hz", Some(96000)),
     ];
-    let current_rate_label = rate_options.iter()
+    let current_rate_label = rate_options
+        .iter()
         .find(|(_, v)| *v == state.preferred_sample_rate)
         .map(|(l, _)| *l)
         .unwrap_or("Auto (device default)");
@@ -566,7 +612,11 @@ fn draw_backup_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &Tracker
 
     ui.horizontal(|ui| {
         ui.label("Interval (seconds):");
-        ui.add(egui::DragValue::new(&mut state.auto_backup_interval_secs).range(0..=3600).speed(10));
+        ui.add(
+            egui::DragValue::new(&mut state.auto_backup_interval_secs)
+                .range(0..=3600)
+                .speed(10),
+        );
         ui.label("(0 = off)");
     });
     ui.add_space(4.0);
@@ -597,15 +647,18 @@ fn draw_backup_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &Tracker
     }
 
     ui.add_space(8.0);
-    let backup_dir = if state.backup_directory.is_some() {
-        PathBuf::from(state.backup_directory.as_ref().unwrap())
+    let backup_dir = if let Some(dir) = state.backup_directory.as_ref() {
+        PathBuf::from(dir)
     } else {
         default_dir
     };
     ui.label(
-        egui::RichText::new(format!("Backups will be saved to: {}", backup_dir.to_string_lossy()))
-            .size(FONT_BODY)
-            .color(theme.fg_dim),
+        egui::RichText::new(format!(
+            "Backups will be saved to: {}",
+            backup_dir.to_string_lossy()
+        ))
+        .size(FONT_BODY)
+        .color(theme.fg_dim),
     );
 }
 
@@ -627,12 +680,17 @@ fn draw_advanced_tab(ui: &mut egui::Ui, state: &mut SettingsState, theme: &Track
     super::style::section_header(ui, "Debugging", theme);
     ui.add_space(4.0);
 
-    ui.checkbox(&mut state.debug_enabled, "Enable debug logging (performance impact)");
+    ui.checkbox(
+        &mut state.debug_enabled,
+        "Enable debug logging (performance impact)",
+    );
     if state.debug_enabled {
         ui.label(
-            egui::RichText::new("Debug logs are written to the config directory. May cause audio stuttering.")
-                .size(FONT_BODY)
-                .color(egui::Color32::GRAY),
+            egui::RichText::new(
+                "Debug logs are written to the config directory. May cause audio stuttering.",
+            )
+            .size(FONT_BODY)
+            .color(egui::Color32::GRAY),
         );
     }
 }

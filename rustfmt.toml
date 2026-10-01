@@ -1,0 +1,10 @@
+# rustfmt configuration.
+#
+# Deliberately close to rustfmt's own defaults so the one-time reformat does
+# not introduce stylistic changes beyond whitespace/line breaking.
+#
+# The repository is normalized to LF via .gitattributes, so the formatter is
+# pinned to Unix newlines to match.
+edition = "2021"
+max_width = 100
+newline_style = "Unix"

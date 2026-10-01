@@ -18,7 +18,12 @@ struct ScopeLayout {
 
 fn compute_scope_layout(panel_width: f32, num_channels: usize) -> ScopeLayout {
     if num_channels == 0 {
-        return ScopeLayout { cols: 0, rows: 0, cell_width: 0.0, cell_height: 0.0 };
+        return ScopeLayout {
+            cols: 0,
+            rows: 0,
+            cell_width: 0.0,
+            cell_height: 0.0,
+        };
     }
     let cols = if num_channels <= 4 {
         num_channels
@@ -27,10 +32,16 @@ fn compute_scope_layout(panel_width: f32, num_channels: usize) -> ScopeLayout {
         ideal.max(1).min(num_channels).min(MAX_SCOPE_COLS)
     };
     let total_gap = (cols - 1) as f32 * CELL_GAP;
-    let cell_width = ((panel_width - total_gap) / cols as f32).clamp(MIN_CELL_WIDTH, MAX_CELL_WIDTH);
+    let cell_width =
+        ((panel_width - total_gap) / cols as f32).clamp(MIN_CELL_WIDTH, MAX_CELL_WIDTH);
     let cell_height = 42.0;
-    let rows = (num_channels + cols - 1) / cols;
-    ScopeLayout { cols, rows, cell_width, cell_height }
+    let rows = num_channels.div_ceil(cols);
+    ScopeLayout {
+        cols,
+        rows,
+        cell_width,
+        cell_height,
+    }
 }
 
 fn channel_color(ch: usize) -> egui::Color32 {
@@ -86,10 +97,8 @@ pub fn draw_oscilloscope(
     let layout = compute_scope_layout(panel_width, num_channels);
     let total_height = layout.rows as f32 * layout.cell_height;
 
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(panel_width, total_height),
-        egui::Sense::hover(),
-    );
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(panel_width, total_height), egui::Sense::hover());
 
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme.scope_bg);
@@ -111,8 +120,11 @@ pub fn draw_oscilloscope(
         let mid_y = cell_rect.center().y;
 
         cell_painter.line_segment(
-            [egui::pos2(cell_rect.left(), mid_y), egui::pos2(cell_rect.right(), mid_y)],
-            egui::Stroke::new(0.5, theme.grid_line),
+            [
+                egui::pos2(cell_rect.left(), mid_y),
+                egui::pos2(cell_rect.right(), mid_y),
+            ],
+            egui::Stroke::new(0.5_f32, theme.grid_line),
         );
 
         let label = format!("{}", ch + 1);
@@ -197,7 +209,7 @@ fn draw_channel_waveform(
                 egui::pos2(x_pos, mid_y - max * half_h),
                 egui::pos2(x_pos, mid_y - min * half_h),
             ],
-            egui::Stroke::new(1.0, color),
+            egui::Stroke::new(1.0_f32, color),
         );
     }
 }

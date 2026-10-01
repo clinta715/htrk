@@ -2,7 +2,10 @@ use eframe::egui::{self, Pos2, Rect, Stroke};
 
 use crate::app_config::SpacingMode;
 use crate::sequencer::automation::{AutomationTarget, AutomationTrack, InterpolationMode};
-use crate::sequencer::effect::{Effect, FormatEffect, XmEffect, ModEffect, S3mEffect, ItEffect, C669Effect, MmdEffect, UltEffect, StmEffect};
+use crate::sequencer::effect::{
+    C669Effect, Effect, FormatEffect, ItEffect, MmdEffect, ModEffect, S3mEffect, StmEffect,
+    UltEffect, XmEffect,
+};
 use crate::sequencer::note::{Note, TONE_NAMES};
 use crate::sequencer::pattern::Cell;
 
@@ -13,8 +16,7 @@ use super::theme::TrackerTheme;
 /// legacy `Raw` effect codes avoid a `format!("{:X}", n)` heap allocation
 /// per cell per frame.
 const HEX_DIGITS: [&str; 16] = [
-    "0", "1", "2", "3", "4", "5", "6", "7",
-    "8", "9", "A", "B", "C", "D", "E", "F",
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F",
 ];
 
 pub struct AutomationOverlayInfo {
@@ -26,9 +28,22 @@ pub struct AutomationOverlayInfo {
 
 #[derive(Debug, Clone)]
 pub enum AutomationInteraction {
-    PointCreated { channel: usize, order: u16, row: u16, value: f32 },
-    PointMoved { channel: usize, order: u16, row: u16, value: f32 },
-    FreehandDraw { channel: usize, points: Vec<(u16, u16, f32)> },
+    PointCreated {
+        channel: usize,
+        order: u16,
+        row: u16,
+        value: f32,
+    },
+    PointMoved {
+        channel: usize,
+        order: u16,
+        row: u16,
+        value: f32,
+    },
+    FreehandDraw {
+        channel: usize,
+        points: Vec<(u16, u16, f32)>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -41,7 +56,12 @@ pub struct ColumnVisibility {
 
 impl ColumnVisibility {
     pub fn all() -> Self {
-        ColumnVisibility { note: true, instrument: true, volume: true, effect: true }
+        ColumnVisibility {
+            note: true,
+            instrument: true,
+            volume: true,
+            effect: true,
+        }
     }
 }
 
@@ -76,15 +96,45 @@ impl GridMetrics {
         };
 
         let note_width = if col_vis.note { char_width * 3.5 } else { 0.0 };
-        let inst_width = if col_vis.instrument { char_width * 2.5 } else { 0.0 };
-        let vol_width = if col_vis.volume { char_width * 2.5 } else { 0.0 };
-        let effect_width = if col_vis.effect { char_width * 3.0 } else { 0.0 };
+        let inst_width = if col_vis.instrument {
+            char_width * 2.5
+        } else {
+            0.0
+        };
+        let vol_width = if col_vis.volume {
+            char_width * 2.5
+        } else {
+            0.0
+        };
+        let effect_width = if col_vis.effect {
+            char_width * 3.0
+        } else {
+            0.0
+        };
 
-        let note_to_inst_gap = if col_vis.note && col_vis.instrument { char_width * col_gap } else { 0.0 };
-        let inst_to_vol_gap = if col_vis.instrument && col_vis.volume { char_width * col_gap } else { 0.0 };
-        let vol_to_effect_gap = if col_vis.volume && col_vis.effect { char_width * col_gap } else { 0.0 };
+        let note_to_inst_gap = if col_vis.note && col_vis.instrument {
+            char_width * col_gap
+        } else {
+            0.0
+        };
+        let inst_to_vol_gap = if col_vis.instrument && col_vis.volume {
+            char_width * col_gap
+        } else {
+            0.0
+        };
+        let vol_to_effect_gap = if col_vis.volume && col_vis.effect {
+            char_width * col_gap
+        } else {
+            0.0
+        };
 
-        let channel_width = note_width + note_to_inst_gap + inst_width + inst_to_vol_gap + vol_width + vol_to_effect_gap + effect_width;
+        let channel_width = note_width
+            + note_to_inst_gap
+            + inst_width
+            + inst_to_vol_gap
+            + vol_width
+            + vol_to_effect_gap
+            + effect_width;
 
         let inst_x = note_width + note_to_inst_gap;
         let vol_x = inst_x + inst_width + inst_to_vol_gap;
@@ -129,8 +179,9 @@ impl GridMetrics {
 
 pub const VISIBLE_ROWS: usize = 32; // Kept as default/fallback
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SubColumn {
+    #[default]
     Note,
     InstrumentTens,
     InstrumentOnes,
@@ -183,11 +234,20 @@ impl SubColumn {
     }
 
     pub fn accepts_hex(self) -> bool {
-        matches!(self, SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow)
+        matches!(
+            self,
+            SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow
+        )
     }
 
     pub fn accepts_decimal(self) -> bool {
-        matches!(self, SubColumn::InstrumentTens | SubColumn::InstrumentOnes | SubColumn::VolumeTens | SubColumn::VolumeOnes)
+        matches!(
+            self,
+            SubColumn::InstrumentTens
+                | SubColumn::InstrumentOnes
+                | SubColumn::VolumeTens
+                | SubColumn::VolumeOnes
+        )
     }
 
     pub fn accepts_note(self) -> bool {
@@ -199,7 +259,9 @@ impl SubColumn {
             SubColumn::Note => col_vis.note,
             SubColumn::InstrumentTens | SubColumn::InstrumentOnes => col_vis.instrument,
             SubColumn::VolumeTens | SubColumn::VolumeOnes => col_vis.volume,
-            SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => col_vis.effect,
+            SubColumn::EffectType | SubColumn::EffectParamHigh | SubColumn::EffectParamLow => {
+                col_vis.effect
+            }
         }
     }
 
@@ -223,12 +285,6 @@ impl SubColumn {
             current = sc.prev();
         }
         None
-    }
-}
-
-impl Default for SubColumn {
-    fn default() -> Self {
-        SubColumn::Note
     }
 }
 
@@ -296,10 +352,14 @@ pub enum ContextMenuAction {
     Randomize,
     /// Insert an effect command at the cursor position. `hex` is the
     /// effect type digit (0-15). Used by the "Set Effect" submenu.
-    SetEffect { hex: u8 },
+    SetEffect {
+        hex: u8,
+    },
     /// Set the effect to one of the named CLAP-style commands: P, Z, S, R, X.
     /// Maps to the Effect::SetSendBusParam / SetFilterCutoff / etc.
-    SetParamEffect { command: ParamEffectCommand },
+    SetParamEffect {
+        command: ParamEffectCommand,
+    },
     /// Clear the effect command at the cursor position (or all selected
     /// cells if a selection is active).
     ClearEffect,
@@ -359,10 +419,10 @@ pub fn draw_pattern_grid(
     automation_overlays: &[Option<AutomationOverlayInfo>],
 ) -> PatternGridResponse {
     let available_size = ui.available_size();
-    
+
     let visible_rows = (available_size.y / metrics.row_height).floor() as usize;
     let visible_channels = GridMetrics::calculate_visible_channels(ui, metrics);
-    
+
     let visible_rows = visible_rows.min(pattern.num_rows).max(1);
     let visible_channels = visible_channels.min(num_channels - scroll_channel).max(1);
 
@@ -383,20 +443,41 @@ pub fn draw_pattern_grid(
         Pos2::new(rect.left(), rect.top()),
         egui::vec2(metrics.row_num_width, metrics.row_height),
     );
-    if toggle_btn_rect.contains(response.interact_pointer_pos().unwrap_or(Pos2::ZERO)) && response.clicked() {
+    if toggle_btn_rect.contains(response.interact_pointer_pos().unwrap_or(Pos2::ZERO))
+        && response.clicked()
+    {
         if let Some(pos) = response.interact_pointer_pos() {
-            if pos.y < rect.top() + metrics.row_height && pos.x < rect.left() + metrics.row_num_width {
+            if pos.y < rect.top() + metrics.row_height
+                && pos.x < rect.left() + metrics.row_num_width
+            {
                 toggle_sample_length_bg = true;
             }
         }
     }
-    let toggle_rect = Rect::from_min_max(rect.min, Pos2::new(rect.min.x + metrics.row_num_width, rect.min.y + metrics.row_height));
-    let toggle_resp = ui.interact(toggle_rect, egui::Id::new("sample_len_bg_toggle"), egui::Sense::hover());
+    let toggle_rect = Rect::from_min_max(
+        rect.min,
+        Pos2::new(
+            rect.min.x + metrics.row_num_width,
+            rect.min.y + metrics.row_height,
+        ),
+    );
+    let toggle_resp = ui.interact(
+        toggle_rect,
+        egui::Id::new("sample_len_bg_toggle"),
+        egui::Sense::hover(),
+    );
     toggle_resp.on_hover_text("Sample Length BG (Ctrl+Shift+L)");
     let toggle_icon = if sample_length_bg { "▣" } else { "□" };
-    let toggle_color = if sample_length_bg { theme.fg_instrument } else { theme.fg_note_empty };
+    let toggle_color = if sample_length_bg {
+        theme.fg_instrument
+    } else {
+        theme.fg_note_empty
+    };
     painter.text(
-        Pos2::new(toggle_btn_rect.left() + 2.0, toggle_btn_rect.top() + metrics.row_height * 0.5),
+        Pos2::new(
+            toggle_btn_rect.left() + 2.0,
+            toggle_btn_rect.top() + metrics.row_height * 0.5,
+        ),
         egui::Align2::LEFT_CENTER,
         toggle_icon,
         egui::FontId::monospace(metrics.font_size),
@@ -409,14 +490,7 @@ pub fn draw_pattern_grid(
     // header shows a one-line description of that column and how to
     // edit it, so first-time users can discover the volume column
     // without reading the manual.
-    draw_column_header(
-        &painter,
-        ui,
-        rect,
-        metrics,
-        col_vis,
-        theme,
-    );
+    draw_column_header(&painter, ui, rect, metrics, col_vis, theme);
 
     let first_row = scroll_row;
     let last_row = (first_row + visible_rows).min(pattern.num_rows);
@@ -428,25 +502,28 @@ pub fn draw_pattern_grid(
         if let Some(m) = module {
             let bpm = m.initial_bpm as f32;
             let speed = m.initial_speed as f32;
-            m.samples.iter().map(|sample| {
-                if !sample.data.is_empty() && sample.sample_rate > 0 {
-                    let samples_per_row = (sample.sample_rate as f32 * 60.0 / bpm) / speed;
-                    let row_duration = sample.data.len() as f32 / samples_per_row;
-                    if row_duration < 1.0 {
-                        0.0
-                    } else if row_duration < 4.0 {
-                        theme.sample_len_shift * 0.3
-                    } else if row_duration < 16.0 {
-                        theme.sample_len_shift * 0.6
-                    } else if row_duration < 64.0 {
-                        theme.sample_len_shift * 0.9
+            m.samples
+                .iter()
+                .map(|sample| {
+                    if !sample.data.is_empty() && sample.sample_rate > 0 {
+                        let samples_per_row = (sample.sample_rate as f32 * 60.0 / bpm) / speed;
+                        let row_duration = sample.data.len() as f32 / samples_per_row;
+                        if row_duration < 1.0 {
+                            0.0
+                        } else if row_duration < 4.0 {
+                            theme.sample_len_shift * 0.3
+                        } else if row_duration < 16.0 {
+                            theme.sample_len_shift * 0.6
+                        } else if row_duration < 64.0 {
+                            theme.sample_len_shift * 0.9
+                        } else {
+                            theme.sample_len_shift
+                        }
                     } else {
-                        theme.sample_len_shift
+                        0.0
                     }
-                } else {
-                    0.0
-                }
-            }).collect()
+                })
+                .collect()
         } else {
             Vec::new()
         }
@@ -474,7 +551,9 @@ pub fn draw_pattern_grid(
             let pulse = (t * std::f32::consts::PI).sin() * 0.15 + 0.85;
             let base = theme.bg_playback;
             egui::Color32::from_rgba_premultiplied(
-                base.r(), base.g(), base.b(),
+                base.r(),
+                base.g(),
+                base.b(),
                 ((base.a() as f32 * pulse) as u8).max(base.a()),
             )
         } else if is_measure {
@@ -485,7 +564,10 @@ pub fn draw_pattern_grid(
             theme.bg_default
         };
         painter.rect_filled(
-            Rect::from_min_max(Pos2::new(rect.left(), y), Pos2::new(rect.right(), y + metrics.row_height)),
+            Rect::from_min_max(
+                Pos2::new(rect.left(), y),
+                Pos2::new(rect.right(), y + metrics.row_height),
+            ),
             0.0,
             bg,
         );
@@ -518,7 +600,7 @@ pub fn draw_pattern_grid(
                 painter.rect_filled(ch_rect, 0.0, theme.bg_channel_alt);
             }
 
-            let in_selection = selection.map_or(false, |s| s.contains(row, ch));
+            let in_selection = selection.is_some_and(|s| s.contains(row, ch));
             if in_selection {
                 let sel_rect = Rect::from_min_max(
                     Pos2::new(x, y),
@@ -538,7 +620,10 @@ pub fn draw_pattern_grid(
                                 if shift > 0.0 {
                                     let r = Rect::from_min_max(
                                         Pos2::new(x + metrics.channel_width - shift, y),
-                                        Pos2::new(x + metrics.channel_width, y + metrics.row_height),
+                                        Pos2::new(
+                                            x + metrics.channel_width,
+                                            y + metrics.row_height,
+                                        ),
                                     );
                                     painter.rect_filled(r, 0.0, theme.bg_sample_len);
                                 }
@@ -549,12 +634,19 @@ pub fn draw_pattern_grid(
             }
 
             let auto_overlay = automation_overlays.get(ch).and_then(|o| o.as_ref());
-            draw_cell(&painter, x, y, cell, metrics, theme, col_vis, auto_overlay.is_some());
+            draw_cell(
+                &painter,
+                x,
+                y,
+                cell,
+                metrics,
+                theme,
+                col_vis,
+                auto_overlay.is_some(),
+            );
 
             if let Some(info) = auto_overlay {
-                draw_automation_cell(
-                    &painter, x, y, row, ch, metrics, theme, info,
-                );
+                draw_automation_cell(&painter, x, y, row, ch, metrics, theme, info);
             }
 
             if let Some(hover_pos) = hover_pos {
@@ -576,13 +668,19 @@ pub fn draw_pattern_grid(
     let display_row = cursor.row.saturating_sub(first_row);
     let display_ch = cursor.channel.saturating_sub(first_ch);
     if display_row < visible_rows && display_ch < visible_channels {
-        let cursor_x = rect.left() + metrics.row_num_width + display_ch as f32 * metrics.channel_width;
+        let cursor_x =
+            rect.left() + metrics.row_num_width + display_ch as f32 * metrics.channel_width;
         let cursor_y = rect.top() + display_row as f32 * metrics.row_height;
         let cursor_rect = Rect::from_min_size(
             Pos2::new(cursor_x, cursor_y),
             egui::vec2(metrics.channel_width - 2.0, metrics.row_height),
         );
-        painter.rect_stroke(cursor_rect, 0.0, Stroke::new(1.5, theme.cursor_outline), egui::StrokeKind::Outside);
+        painter.rect_stroke(
+            cursor_rect,
+            0.0,
+            Stroke::new(1.5_f32, theme.cursor_outline),
+            egui::StrokeKind::Outside,
+        );
 
         // Sub-column indicator: a bright bar at the bottom of the cursor
         // showing exactly which digit/field is active.
@@ -590,7 +688,10 @@ pub fn draw_pattern_grid(
             let (sub_x, sub_w) = sub_column_rect(cursor.sub_column, metrics, col_vis);
             let indicator_h = 2.5;
             let indicator_rect = Rect::from_min_size(
-                Pos2::new(cursor_x + sub_x, cursor_y + metrics.row_height - indicator_h),
+                Pos2::new(
+                    cursor_x + sub_x,
+                    cursor_y + metrics.row_height - indicator_h,
+                ),
                 egui::vec2(sub_w, indicator_h),
             );
             painter.rect_filled(indicator_rect, 0.0, theme.cursor_outline);
@@ -605,14 +706,22 @@ pub fn draw_pattern_grid(
                 Pos2::new(rect.left(), cursor_y),
                 Pos2::new(rect.right(), cursor_y + metrics.row_height),
             );
-            painter.rect_stroke(line_rect, 0.0, Stroke::new(1.5, theme.playback_cursor), egui::StrokeKind::Outside);
+            painter.rect_stroke(
+                line_rect,
+                0.0,
+                Stroke::new(1.5_f32, theme.playback_cursor),
+                egui::StrokeKind::Outside,
+            );
 
             if let Some(tick) = playback_tick {
                 let progress = tick as f32 / playback_speed.max(1) as f32;
                 let bar_h = 2.0;
                 let bar_rect = Rect::from_min_max(
                     Pos2::new(rect.left(), cursor_y + metrics.row_height - bar_h),
-                    Pos2::new(rect.left() + rect.width() * progress, cursor_y + metrics.row_height),
+                    Pos2::new(
+                        rect.left() + rect.width() * progress,
+                        cursor_y + metrics.row_height,
+                    ),
                 );
                 painter.rect_filled(bar_rect, 0.0, theme.playback_cursor);
             }
@@ -663,7 +772,11 @@ pub fn draw_pattern_grid(
                     if response.clicked() && modifiers.ctrl {
                         // Ctrl+click: treat as a normal effect value click
                         let sub_column = position_to_sub_column(sub_col_x, metrics, col_vis);
-                        let cursor_pos = CursorPosition { row, channel: ch, sub_column };
+                        let cursor_pos = CursorPosition {
+                            row,
+                            channel: ch,
+                            sub_column,
+                        };
                         clicked_position = Some(cursor_pos);
                     } else if response.clicked() && !modifiers.shift {
                         automation_interaction = Some(AutomationInteraction::PointCreated {
@@ -680,15 +793,31 @@ pub fn draw_pattern_grid(
                     }
                 } else {
                     let sub_column = position_to_sub_column(sub_col_x, metrics, col_vis);
-                    let cursor_pos = CursorPosition { row, channel: ch, sub_column };
-                    if response.clicked() { clicked_position = Some(cursor_pos); }
-                    if response.dragged() { drag_position = Some(cursor_pos); }
+                    let cursor_pos = CursorPosition {
+                        row,
+                        channel: ch,
+                        sub_column,
+                    };
+                    if response.clicked() {
+                        clicked_position = Some(cursor_pos);
+                    }
+                    if response.dragged() {
+                        drag_position = Some(cursor_pos);
+                    }
                 }
             } else {
                 let sub_column = position_to_sub_column(sub_col_x, metrics, col_vis);
-                let cursor_pos = CursorPosition { row, channel: ch, sub_column };
-                if response.clicked() { clicked_position = Some(cursor_pos); }
-                if response.dragged() { drag_position = Some(cursor_pos); }
+                let cursor_pos = CursorPosition {
+                    row,
+                    channel: ch,
+                    sub_column,
+                };
+                if response.clicked() {
+                    clicked_position = Some(cursor_pos);
+                }
+                if response.dragged() {
+                    drag_position = Some(cursor_pos);
+                }
             }
         }
     }
@@ -732,11 +861,14 @@ pub fn draw_pattern_grid(
         });
         ui.menu_button("Set Param (P/Z/S/R/X)", |ui| {
             const PARAM_NAMES: &[(&str, ParamEffectCommand)] = &[
-                ("P  Set Send Bus Param",  ParamEffectCommand::SetSendBusParam),
-                ("Z  Set Filter Cutoff",   ParamEffectCommand::SetFilterCutoff),
-                ("S  Set Send Level",      ParamEffectCommand::SetSendLevel),
-                ("R  Set Filter Resonance",ParamEffectCommand::SetFilterResonance),
-                ("X  Set Filter Type",     ParamEffectCommand::SetFilterType),
+                ("P  Set Send Bus Param", ParamEffectCommand::SetSendBusParam),
+                ("Z  Set Filter Cutoff", ParamEffectCommand::SetFilterCutoff),
+                ("S  Set Send Level", ParamEffectCommand::SetSendLevel),
+                (
+                    "R  Set Filter Resonance",
+                    ParamEffectCommand::SetFilterResonance,
+                ),
+                ("X  Set Filter Type", ParamEffectCommand::SetFilterType),
             ];
             for (label, cmd) in PARAM_NAMES {
                 if ui.button(*label).clicked() {
@@ -770,23 +902,38 @@ pub fn draw_pattern_grid(
         // ── Block operations (selection-only) ──
         ui.label(egui::RichText::new("Block Operations").strong());
         ui.separator();
-        if ui.add_enabled(has_selection, egui::Button::new("Fill Instrument")).clicked() {
+        if ui
+            .add_enabled(has_selection, egui::Button::new("Fill Instrument"))
+            .clicked()
+        {
             context_menu_action = Some(ContextMenuAction::FillInstrument);
             ui.close();
         }
-        if ui.add_enabled(has_selection, egui::Button::new("Interpolate Volume")).clicked() {
+        if ui
+            .add_enabled(has_selection, egui::Button::new("Interpolate Volume"))
+            .clicked()
+        {
             context_menu_action = Some(ContextMenuAction::InterpolateVolume);
             ui.close();
         }
-        if ui.add_enabled(has_selection, egui::Button::new("Interpolate Effect")).clicked() {
+        if ui
+            .add_enabled(has_selection, egui::Button::new("Interpolate Effect"))
+            .clicked()
+        {
             context_menu_action = Some(ContextMenuAction::InterpolateEffect);
             ui.close();
         }
-        if ui.add_enabled(has_selection, egui::Button::new("Reverse")).clicked() {
+        if ui
+            .add_enabled(has_selection, egui::Button::new("Reverse"))
+            .clicked()
+        {
             context_menu_action = Some(ContextMenuAction::Reverse);
             ui.close();
         }
-        if ui.add_enabled(has_selection, egui::Button::new("Randomize")).clicked() {
+        if ui
+            .add_enabled(has_selection, egui::Button::new("Randomize"))
+            .clicked()
+        {
             context_menu_action = Some(ContextMenuAction::Randomize);
             ui.close();
         }
@@ -796,11 +943,17 @@ pub fn draw_pattern_grid(
             context_menu_action = Some(ContextMenuAction::SelectAll);
             ui.close();
         }
-        if ui.add_enabled(has_selection, egui::Button::new("Transpose +1")).clicked() {
+        if ui
+            .add_enabled(has_selection, egui::Button::new("Transpose +1"))
+            .clicked()
+        {
             context_menu_action = Some(ContextMenuAction::TransposeUp);
             ui.close();
         }
-        if ui.add_enabled(has_selection, egui::Button::new("Transpose -1")).clicked() {
+        if ui
+            .add_enabled(has_selection, egui::Button::new("Transpose -1"))
+            .clicked()
+        {
             context_menu_action = Some(ContextMenuAction::TransposeDown);
             ui.close();
         }
@@ -861,7 +1014,16 @@ fn position_to_sub_column(x: f32, metrics: GridMetrics, col_vis: ColumnVisibilit
     SubColumn::Note
 }
 
-fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: GridMetrics, theme: &TrackerTheme, col_vis: ColumnVisibility, suppress_effect: bool) {
+fn draw_cell(
+    painter: &egui::Painter,
+    x: f32,
+    y: f32,
+    cell: &Cell,
+    metrics: GridMetrics,
+    theme: &TrackerTheme,
+    col_vis: ColumnVisibility,
+    suppress_effect: bool,
+) {
     let font = egui::FontId::monospace(metrics.font_size);
     let center_y = y + metrics.row_height * 0.5;
 
@@ -887,7 +1049,13 @@ fn draw_cell(painter: &egui::Painter, x: f32, y: f32, cell: &Cell, metrics: Grid
             Note::Fade => theme.fg_note_off,
             Note::None => theme.fg_note_empty,
         };
-        painter.text(Pos2::new(x, center_y), egui::Align2::LEFT_CENTER, note_text, font.clone(), note_color);
+        painter.text(
+            Pos2::new(x, center_y),
+            egui::Align2::LEFT_CENTER,
+            note_text,
+            font.clone(),
+            note_color,
+        );
     }
 
     if col_vis.instrument {
@@ -977,10 +1145,17 @@ fn draw_automation_cell(
 
     let (has_point, point_value, interp) = match &info.track {
         Some(track) => {
-            let pt = track.points.iter().find(|p| p.order == order && p.row == row_u16);
+            let pt = track
+                .points
+                .iter()
+                .find(|p| p.order == order && p.row == row_u16);
             match pt {
                 Some(p) => (true, p.value, p.interp_to_next),
-                None => (false, track.evaluate(order, row_u16, 0, info.speed), InterpolationMode::Hold),
+                None => (
+                    false,
+                    track.evaluate(order, row_u16, 0, info.speed),
+                    InterpolationMode::Hold,
+                ),
             }
         }
         None => (false, 0.5, InterpolationMode::Hold),
@@ -992,7 +1167,11 @@ fn draw_automation_cell(
     painter.rect_filled(cell_rect, 0.0, theme.automation_overlay_bg);
 
     if has_point {
-        painter.circle_filled(Pos2::new(fx_x + fx_w * 0.5, dot_y), 3.0, theme.automation_point);
+        painter.circle_filled(
+            Pos2::new(fx_x + fx_w * 0.5, dot_y),
+            3.0,
+            theme.automation_point,
+        );
         let hex_val = (normalized * 255.0) as u8;
         let val_text = format!("{:02X}", hex_val);
         let val_color = theme.automation_value_text;
@@ -1021,8 +1200,11 @@ fn draw_automation_cell(
         let line_x = fx_x + fx_w * 0.5;
         let line_color = theme.automation_guide_line;
         painter.line_segment(
-            [Pos2::new(line_x, y), Pos2::new(line_x, y + metrics.row_height)],
-            Stroke::new(0.5, line_color),
+            [
+                Pos2::new(line_x, y),
+                Pos2::new(line_x, y + metrics.row_height),
+            ],
+            Stroke::new(0.5_f32, line_color),
         );
         painter.circle_filled(Pos2::new(line_x, dot_y), 1.5, theme.automation_guide_line);
     }
@@ -1062,7 +1244,7 @@ fn draw_column_header(
 
     let tooltips = sub_column_tooltips(col_vis);
 
-        // Note column: single label centered.
+    // Note column: single label centered.
     if col_vis.note {
         let cx = x + metrics.note_width * 0.5;
         let label_rect = egui::Rect::from_min_size(
@@ -1091,7 +1273,11 @@ fn draw_column_header(
                 egui::pos2(cx - half * 0.5, rect.top()),
                 egui::vec2(half, header_h),
             );
-            let r = ui.interact(label_rect, egui::Id::new(("hdr_inst", suffix)), egui::Sense::hover());
+            let r = ui.interact(
+                label_rect,
+                egui::Id::new(("hdr_inst", suffix)),
+                egui::Sense::hover(),
+            );
             r.on_hover_text(&tooltips.inst);
             painter.text(
                 egui::pos2(cx, y),
@@ -1114,7 +1300,11 @@ fn draw_column_header(
                 egui::pos2(cx - half * 0.5, rect.top()),
                 egui::vec2(half, header_h),
             );
-            let r = ui.interact(label_rect, egui::Id::new(("hdr_vol", suffix)), egui::Sense::hover());
+            let r = ui.interact(
+                label_rect,
+                egui::Id::new(("hdr_vol", suffix)),
+                egui::Sense::hover(),
+            );
             r.on_hover_text(&tooltips.vol);
             painter.text(
                 egui::pos2(cx, y),
@@ -1142,7 +1332,11 @@ fn draw_column_header(
                 egui::pos2(cx - third * 0.5, rect.top()),
                 egui::vec2(third, header_h),
             );
-            let r = ui.interact(label_rect, egui::Id::new(("hdr_fx", kind)), egui::Sense::hover());
+            let r = ui.interact(
+                label_rect,
+                egui::Id::new(("hdr_fx", kind)),
+                egui::Sense::hover(),
+            );
             r.on_hover_text(&tooltips.fx);
             painter.text(
                 egui::pos2(cx, y),
@@ -1172,13 +1366,20 @@ fn sub_column_tooltips(col_vis: ColumnVisibility) -> ColumnHeaderTooltips {
     // If a column is hidden, swap the tooltip for a "this column is
     // hidden" hint so the user has a chance to find it via the header
     // even after toggling it off.
-    if !col_vis.note { s.note = "Note column hidden. Toggle with Ctrl+1.".to_string(); }
-    if !col_vis.instrument { s.inst = "Instrument column hidden. Toggle with Ctrl+2.".to_string(); }
-    if !col_vis.volume { s.vol = "Volume column hidden. Toggle with Ctrl+3.".to_string(); }
-    if !col_vis.effect { s.fx = "Effect column hidden. Toggle with Ctrl+4.".to_string(); }
+    if !col_vis.note {
+        s.note = "Note column hidden. Toggle with Ctrl+1.".to_string();
+    }
+    if !col_vis.instrument {
+        s.inst = "Instrument column hidden. Toggle with Ctrl+2.".to_string();
+    }
+    if !col_vis.volume {
+        s.vol = "Volume column hidden. Toggle with Ctrl+3.".to_string();
+    }
+    if !col_vis.effect {
+        s.fx = "Effect column hidden. Toggle with Ctrl+4.".to_string();
+    }
     s
 }
-
 
 fn format_effect(effect: &Effect) -> (&'static str, String) {
     match effect {
@@ -1202,12 +1403,24 @@ fn format_effect(effect: &Effect) -> (&'static str, String) {
         Effect::SetSpeed { speed } => ("F", format!("{:02X}", speed)),
         Effect::SetTempo { bpm } => ("F", format!("{:02X}", bpm)),
         Effect::SetGlobalVolume { volume } => ("G", format!("{:02X}", volume)),
-        Effect::GlobalVolumeSlide { up, down } => ("H", format!("{:X}{:X}", (*up).max(0) as u8, (*down).unsigned_abs().min(15) as u8)),
+        Effect::GlobalVolumeSlide { up, down } => (
+            "H",
+            format!("{:X}{:X}", (*up).max(0) as u8, {
+                (*down).unsigned_abs().min(15)
+            }),
+        ),
         Effect::SetEnvelopePosition { tick } => ("L", format!("{:02X}", tick)),
         Effect::Panbrello { speed, depth } => ("Y", format!("{:X}{:X}", speed, depth)),
         Effect::PatternDelay { ticks } => ("E", format!("E{:X}", ticks)),
         Effect::SetPanPosition { pan } => ("E", format!("8{:X}", pan >> 4)),
-        Effect::GlissandoControl { on } => ("E", if *on { "3F".to_string() } else { "30".to_string() }),
+        Effect::GlissandoControl { on } => (
+            "E",
+            if *on {
+                "3F".to_string()
+            } else {
+                "30".to_string()
+            },
+        ),
         Effect::VibratoWaveform { waveform } => ("E", format!("4{:X}", waveform & 0x03)),
         Effect::SetFineTune { tune } => ("E", format!("5{:X}", tune)),
         Effect::PatternLoop { count } => ("E", format!("6{:X}", count)),
@@ -1235,44 +1448,79 @@ fn format_effect(effect: &Effect) -> (&'static str, String) {
         Effect::SetFilterType { filter_type } => ("X", format!("{:02X}", filter_type)),
         Effect::FilterCutoffSlide { amount } => ("Y", format!("{:+03}", amount)),
         Effect::SetSendLevel { send_index, level } => ("S", format!("{:X}{:X}", send_index, level)),
-        Effect::SetSendBusParam { bus, param, value: _ } => ("P", format!("{:X}{:X}", bus, param)),
+        Effect::SetSendBusParam {
+            bus,
+            param,
+            value: _,
+        } => ("P", format!("{:X}{:X}", bus, param)),
         Effect::FormatSpecific(fe) => {
             match fe {
                 FormatEffect::Xm(xe) => match xe {
                     XmEffect::SetSampleOffset(o) => ("9", format!("{:02X}", o >> 8)),
                     XmEffect::KeyOff { .. } => ("K", "00".to_string()),
                     // Dynamic hex digit — rare, accept the allocation.
-                    XmEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    XmEffect::Raw { effect, param } => (
+                        HEX_DIGITS[(*effect as usize) & 0xF],
+                        format!("{:02X}", param),
+                    ),
                     _ => ("x", "??".to_string()),
                 },
                 FormatEffect::It(ie) => match ie {
-                    ItEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    ItEffect::Raw { effect, param } => (
+                        HEX_DIGITS[(*effect as usize) & 0xF],
+                        format!("{:02X}", param),
+                    ),
                     _ => ("i", "??".to_string()),
                 },
                 FormatEffect::Mod(me) => match me {
-                    ModEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
-                    ModEffect::Filter(enabled) => ("E", if *enabled { "00".to_string() } else { "01".to_string() }),
+                    ModEffect::Raw { effect, param } => (
+                        HEX_DIGITS[(*effect as usize) & 0xF],
+                        format!("{:02X}", param),
+                    ),
+                    ModEffect::Filter(enabled) => (
+                        "E",
+                        if *enabled {
+                            "00".to_string()
+                        } else {
+                            "01".to_string()
+                        },
+                    ),
                     ModEffect::FunkIt { speed } => ("EF", format!("{:01X}", speed)),
                     ModEffect::KarplusStrong { param } => ("E8", format!("{:01X}", param)),
                 },
                 FormatEffect::S3m(se) => match se {
-                    S3mEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    S3mEffect::Raw { effect, param } => (
+                        HEX_DIGITS[(*effect as usize) & 0xF],
+                        format!("{:02X}", param),
+                    ),
                     _ => ("s", "??".to_string()),
                 },
                 FormatEffect::C669(ce) => match ce {
-                    C669Effect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    C669Effect::Raw { effect, param } => (
+                        HEX_DIGITS[(*effect as usize) & 0xF],
+                        format!("{:02X}", param),
+                    ),
                     _ => ("?", "??".to_string()),
                 },
                 FormatEffect::Mmd(me) => match me {
-                    MmdEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    MmdEffect::Raw { effect, param } => (
+                        HEX_DIGITS[(*effect as usize) & 0xF],
+                        format!("{:02X}", param),
+                    ),
                     _ => ("?", "??".to_string()),
                 },
                 FormatEffect::Ult(ue) => match ue {
-                    UltEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    UltEffect::Raw { effect, param } => (
+                        HEX_DIGITS[(*effect as usize) & 0xF],
+                        format!("{:02X}", param),
+                    ),
                     _ => ("?", "??".to_string()),
                 },
                 FormatEffect::Stm(se) => match se {
-                    StmEffect::Raw { effect, param } => (HEX_DIGITS[(*effect as usize) & 0xF], format!("{:02X}", param)),
+                    StmEffect::Raw { effect, param } => (
+                        HEX_DIGITS[(*effect as usize) & 0xF],
+                        format!("{:02X}", param),
+                    ),
                 },
             }
         }
@@ -1288,68 +1536,122 @@ fn format_effect(effect: &Effect) -> (&'static str, String) {
 fn effect_tooltip_text(effect: &Effect) -> String {
     let (hex, name, range, detail) = match effect {
         Effect::Arpeggio { note1, note2 } => (
-            "0", "Arpeggio", "XY = two semitone offsets",
-            format!("cycle through note, +{} semitones, +{} semitones", note1, note2),
+            "0",
+            "Arpeggio",
+            "XY = two semitone offsets",
+            format!(
+                "cycle through note, +{} semitones, +{} semitones",
+                note1, note2
+            ),
         ),
         Effect::PortamentoUp { speed } => (
-            "1", "Portamento Up", "XX = speed (00-FF)",
+            "1",
+            "Portamento Up",
+            "XX = speed (00-FF)",
             format!("pitch slides up; current speed = {}", speed),
         ),
         Effect::PortamentoDown { speed } => (
-            "2", "Portamento Down", "XX = speed (00-FF)",
+            "2",
+            "Portamento Down",
+            "XX = speed (00-FF)",
             format!("pitch slides down; current speed = {}", speed),
         ),
         Effect::TonePortamento { speed } => (
-            "3", "Tone Portamento", "XX = speed (00-FF)",
-            format!("slides toward the next note's pitch; current speed = {}", speed),
+            "3",
+            "Tone Portamento",
+            "XX = speed (00-FF)",
+            format!(
+                "slides toward the next note's pitch; current speed = {}",
+                speed
+            ),
         ),
         Effect::Vibrato { speed, depth } => (
-            "4", "Vibrato", "X = speed (0-F), Y = depth (0-F)",
+            "4",
+            "Vibrato",
+            "X = speed (0-F), Y = depth (0-F)",
             format!("current: speed={} depth={}", speed, depth),
         ),
         Effect::TonePortamentoVolumeSlide { up } => (
-            "5", "Tone Porta + Vol Slide", "X = porta speed, Y = vol slide",
-            format!("up/down = {}/{}", up.max(&0), (up.unsigned_abs() as i8).min(15)),
+            "5",
+            "Tone Porta + Vol Slide",
+            "X = porta speed, Y = vol slide",
+            format!(
+                "up/down = {}/{}",
+                up.max(&0),
+                (up.unsigned_abs() as i8).min(15)
+            ),
         ),
         Effect::VibratoVolumeSlide { up } => (
-            "6", "Vibrato + Vol Slide", "X = vib speed, Y = vol slide",
-            format!("up/down = {}/{}", up.max(&0), (up.unsigned_abs() as i8).min(15)),
+            "6",
+            "Vibrato + Vol Slide",
+            "X = vib speed, Y = vol slide",
+            format!(
+                "up/down = {}/{}",
+                up.max(&0),
+                (up.unsigned_abs() as i8).min(15)
+            ),
         ),
         Effect::Tremolo { speed, depth } => (
-            "7", "Tremolo", "X = speed (0-F), Y = depth (0-F)",
+            "7",
+            "Tremolo",
+            "X = speed (0-F), Y = depth (0-F)",
             format!("current: speed={} depth={}", speed, depth),
         ),
         Effect::SetPanning { pan } => {
             let pct = (*pan as f32 / 255.0 * 100.0) as u8;
-            let side = if *pan < 85 { "left" } else if *pan > 170 { "right" } else { "center" };
+            let side = if *pan < 85 {
+                "left"
+            } else if *pan > 170 {
+                "right"
+            } else {
+                "center"
+            };
             (
-                "8", "Set Panning", "XX = 00-FF (00=L, 80=center, FF=R)",
+                "8",
+                "Set Panning",
+                "XX = 00-FF (00=L, 80=center, FF=R)",
                 format!("current: {:02X} ({} {}%)", pan, side, pct),
             )
         }
         Effect::SetSampleOffset { offset } => (
-            "9", "Set Sample Offset", "XX = high byte of offset (× 65536)",
+            "9",
+            "Set Sample Offset",
+            "XX = high byte of offset (× 65536)",
             format!("current: {} (high byte = {:02X})", offset, offset >> 8),
         ),
         Effect::VolumeSlide { up, down } => {
             if *up > 0 {
-                ("A", "Volume Slide", "X = up per tick, Y = down per tick",
-                 format!("current: up = {}", up))
+                (
+                    "A",
+                    "Volume Slide",
+                    "X = up per tick, Y = down per tick",
+                    format!("current: up = {}", up),
+                )
             } else {
-                ("A", "Volume Slide", "X = up per tick, Y = down per tick",
-                 format!("current: down = {}", down))
+                (
+                    "A",
+                    "Volume Slide",
+                    "X = up per tick, Y = down per tick",
+                    format!("current: down = {}", down),
+                )
             }
         }
         Effect::PositionJump { order } => (
-            "B", "Position Jump", "XX = order index",
+            "B",
+            "Position Jump",
+            "XX = order index",
             format!("current: order {}", order),
         ),
         Effect::SetVolume { volume } => (
-            "C", "Set Volume", "XX = 00-40 (00=silent, 40=full, >40 clamp)",
+            "C",
+            "Set Volume",
+            "XX = 00-40 (00=silent, 40=full, >40 clamp)",
             format!("current: {}/64", (*volume).min(64)),
         ),
         Effect::PatternBreak { row } => (
-            "D", "Pattern Break", "XX = row in next order (00-3F)",
+            "D",
+            "Pattern Break",
+            "XX = row in next order (00-3F)",
             format!("current: row {}", row),
         ),
         Effect::ExtendedEffect { param } => {
@@ -1374,134 +1676,257 @@ fn effect_tooltip_text(effect: &Effect) -> String {
                 _ => ("Reserved", ""),
             };
             let detail = if sub == 4 || sub == 7 {
-                let w = match val { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" };
+                let w = match val {
+                    0 => "Sine",
+                    1 => "Ramp",
+                    2 => "Square",
+                    _ => "Random",
+                };
                 format!("E{}{}: {} (current = {})", sub, val, sub_name, w)
             } else if sub == 3 {
-                format!("E{}{}: {} (current = {})", sub, val, sub_name, if val > 0 { "On" } else { "Off" })
+                format!(
+                    "E{}{}: {} (current = {})",
+                    sub,
+                    val,
+                    sub_name,
+                    if val > 0 { "On" } else { "Off" }
+                )
             } else if sub == 6 {
-                format!("E{}{}: {} (current = {})", sub, val, sub_name,
-                        if val == 0 { "Set marker".to_string() } else { format!("Loop {}x", val) })
+                format!(
+                    "E{}{}: {} (current = {})",
+                    sub,
+                    val,
+                    sub_name,
+                    if val == 0 {
+                        "Set marker".to_string()
+                    } else {
+                        format!("Loop {}x", val)
+                    }
+                )
             } else if sub == 0 {
-                format!("E{}{}: {} (current = {})", sub, val, sub_name, if val == 0 { "Off" } else { "On" })
+                format!(
+                    "E{}{}: {} (current = {})",
+                    sub,
+                    val,
+                    sub_name,
+                    if val == 0 { "Off" } else { "On" }
+                )
             } else {
                 format!("E{}{}: {} (current val = {})", sub, val, sub_name, val)
             };
             return format!("E  Extended Effects\n{}\n{}", sub_range, detail);
         }
         Effect::SetSpeed { speed } => (
-            "F", "Set Speed", "XX < 20 = ticks/row, XX >= 20 = BPM",
+            "F",
+            "Set Speed",
+            "XX < 20 = ticks/row, XX >= 20 = BPM",
             format!("current: {} ticks/row", speed),
         ),
         Effect::SetTempo { bpm } => (
-            "F", "Set Tempo", "XX >= 20 = BPM",
+            "F",
+            "Set Tempo",
+            "XX >= 20 = BPM",
             format!("current: {} BPM", bpm),
         ),
         Effect::SetGlobalVolume { volume } => (
-            "G", "Global Volume", "XX = 00-80",
+            "G",
+            "Global Volume",
+            "XX = 00-80",
             format!("current: {}", volume),
         ),
         Effect::GlobalVolumeSlide { up, down } => (
-            "H", "Global Vol Slide", "X = up per tick, Y = down per tick",
-            format!("up/down = {}/{}", up.max(&0), (down.unsigned_abs() as i8).min(15)),
+            "H",
+            "Global Vol Slide",
+            "X = up per tick, Y = down per tick",
+            format!(
+                "up/down = {}/{}",
+                up.max(&0),
+                (down.unsigned_abs() as i8).min(15)
+            ),
         ),
         Effect::Tremor { ontime, offtime } => (
-            "I", "Tremor", "X = on-ticks, Y = off-ticks",
+            "I",
+            "Tremor",
+            "X = on-ticks, Y = off-ticks",
             format!("current: on={} off={}", ontime, offtime),
         ),
         Effect::SetEnvelopePosition { tick } => (
-            "L", "Envelope Position", "XX = envelope tick",
+            "L",
+            "Envelope Position",
+            "XX = envelope tick",
             format!("current: tick {}", tick),
         ),
         Effect::Panbrello { speed, depth } => (
-            "Y", "Panbrello", "X = speed (0-F), Y = depth (0-F)",
+            "Y",
+            "Panbrello",
+            "X = speed (0-F), Y = depth (0-F)",
             format!("current: speed={} depth={}", speed, depth),
         ),
         Effect::SetPanning16 { pan } => (
-            "P", "Panning Slide (16x)", "X = slide (signed), Y = unused",
+            "P",
+            "Panning Slide (16x)",
+            "X = slide (signed), Y = unused",
             format!("current: pan shift = {:+}", pan),
         ),
         Effect::GlissandoControl { on } => (
-            "E3", "Glissando", "30 = off, 3F = on",
+            "E3",
+            "Glissando",
+            "30 = off, 3F = on",
             format!("current: {}", if *on { "On" } else { "Off" }),
         ),
         Effect::VibratoWaveform { waveform } => (
-            "E4", "Vibrato Waveform", "40=sine 41=ramp 42=square 43=random",
-            format!("current: {}", match waveform & 3 { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
+            "E4",
+            "Vibrato Waveform",
+            "40=sine 41=ramp 42=square 43=random",
+            format!(
+                "current: {}",
+                match waveform & 3 {
+                    0 => "Sine",
+                    1 => "Ramp",
+                    2 => "Square",
+                    _ => "Random",
+                }
+            ),
         ),
         Effect::SetFineTune { tune } => (
-            "E5", "Set Fine Tune", "Y = fine tune (signed nibble)",
+            "E5",
+            "Set Fine Tune",
+            "Y = fine tune (signed nibble)",
             format!("current: {:+}", tune),
         ),
         Effect::PatternLoop { count } => (
-            "E6", "Pattern Loop", "60 = set marker, 61-6F = loop count",
-            if *count == 0 { "current: Set marker".to_string() } else { format!("current: Loop {}x", count) },
+            "E6",
+            "Pattern Loop",
+            "60 = set marker, 61-6F = loop count",
+            if *count == 0 {
+                "current: Set marker".to_string()
+            } else {
+                format!("current: Loop {}x", count)
+            },
         ),
         Effect::TremoloWaveform { waveform } => (
-            "E7", "Tremolo Waveform", "70=sine 71=ramp 72=square 73=random",
-            format!("current: {}", match waveform & 3 { 0 => "Sine", 1 => "Ramp", 2 => "Square", _ => "Random" }),
+            "E7",
+            "Tremolo Waveform",
+            "70=sine 71=ramp 72=square 73=random",
+            format!(
+                "current: {}",
+                match waveform & 3 {
+                    0 => "Sine",
+                    1 => "Ramp",
+                    2 => "Square",
+                    _ => "Random",
+                }
+            ),
         ),
         Effect::Retrigger { interval } => (
-            "E9", "Retrigger", "Y = ticks between retriggers",
+            "E9",
+            "Retrigger",
+            "Y = ticks between retriggers",
             format!("current: every {} ticks", interval),
         ),
         Effect::NoteCutAfter { ticks } => (
-            "EC", "Note Cut", "Y = ticks before cut (1-F)",
+            "EC",
+            "Note Cut",
+            "Y = ticks before cut (1-F)",
             format!("current: cut after {} ticks", ticks),
         ),
         Effect::NoteDelay { ticks } => (
-            "ED", "Note Delay", "Y = ticks before triggering note",
+            "ED",
+            "Note Delay",
+            "Y = ticks before triggering note",
             format!("current: delay {} ticks", ticks),
         ),
         Effect::PatternDelay { ticks } => (
-            "EE", "Pattern Delay", "Y = extra ticks per row",
+            "EE",
+            "Pattern Delay",
+            "Y = extra ticks per row",
             format!("current: +{} ticks", ticks),
         ),
         Effect::ExtraFinePortamentoUp { speed } => (
-            "F1", "Extra Fine Porta Up", "Y = speed (0-F)",
+            "F1",
+            "Extra Fine Porta Up",
+            "Y = speed (0-F)",
             format!("current: {}", speed),
         ),
         Effect::ExtraFinePortamentoDown { speed } => (
-            "F2", "Extra Fine Porta Down", "Y = speed (0-F)",
+            "F2",
+            "Extra Fine Porta Down",
+            "Y = speed (0-F)",
             format!("current: {}", speed),
         ),
         Effect::FinePortamentoUp { speed } => (
-            "E1", "Fine Porta Up", "Y = speed (0-F)",
+            "E1",
+            "Fine Porta Up",
+            "Y = speed (0-F)",
             format!("current: {}", speed),
         ),
         Effect::FinePortamentoDown { speed } => (
-            "E2", "Fine Porta Down", "Y = speed (0-F)",
+            "E2",
+            "Fine Porta Down",
+            "Y = speed (0-F)",
             format!("current: {}", speed),
         ),
         Effect::FineVolumeSlideUp { amount } => (
-            "EA", "Fine Vol Up", "Y = amount",
+            "EA",
+            "Fine Vol Up",
+            "Y = amount",
             format!("current: +{}", amount),
         ),
         Effect::FineVolumeSlideDown { amount } => (
-            "EB", "Fine Vol Down", "Y = amount",
+            "EB",
+            "Fine Vol Down",
+            "Y = amount",
             format!("current: -{}", amount),
         ),
         Effect::SetFilterCutoff { cutoff } => (
-            "Z", "Set Filter Cutoff", "XX = cutoff (0-FF)",
+            "Z",
+            "Set Filter Cutoff",
+            "XX = cutoff (0-FF)",
             format!("current: 0x{:02X}", cutoff),
         ),
         Effect::SetFilterResonance { resonance } => (
-            "R", "Set Filter Resonance", "XX = resonance (0-FF)",
+            "R",
+            "Set Filter Resonance",
+            "XX = resonance (0-FF)",
             format!("current: 0x{:02X}", resonance),
         ),
         Effect::SetFilterType { filter_type } => (
-            "X", "Set Filter Type", "00=LP 01=HP 02=BP 03=Notch",
-            format!("current: {}", match filter_type { 0 => "LP", 1 => "HP", 2 => "BP", _ => "Notch" }),
+            "X",
+            "Set Filter Type",
+            "00=LP 01=HP 02=BP 03=Notch",
+            format!(
+                "current: {}",
+                match filter_type {
+                    0 => "LP",
+                    1 => "HP",
+                    2 => "BP",
+                    _ => "Notch",
+                }
+            ),
         ),
         Effect::FilterCutoffSlide { amount } => (
-            "Y", "Filter Cutoff Slide", "XX = signed slide amount",
+            "Y",
+            "Filter Cutoff Slide",
+            "XX = signed slide amount",
             format!("current: {:+}", amount),
         ),
         Effect::SetSendLevel { send_index, level } => (
-            "S", "Set Send Level", "X = bus (0-3), Y = level (0-F)",
-            format!("current: bus {} at {}%", send_index, (*level as u16) * 100 / 15),
+            "S",
+            "Set Send Level",
+            "X = bus (0-3), Y = level (0-F)",
+            format!(
+                "current: bus {} at {}%",
+                send_index,
+                (*level as u16) * 100 / 15
+            ),
         ),
-        Effect::SetSendBusParam { bus, param, value: _ } => (
-            "P", "Set Send Bus Param",
+        Effect::SetSendBusParam {
+            bus,
+            param,
+            value: _,
+        } => (
+            "P",
+            "Set Send Bus Param",
             "X = bus (0-3), Y = param slot (0-3); value = volume col (00-FF)",
             format!("current: bus {} param {}", bus, param),
         ),
@@ -1525,5 +1950,3 @@ fn sub_column_rect(sub: SubColumn, metrics: GridMetrics, _col_vis: ColumnVisibil
         SubColumn::EffectParamLow => (metrics.effect_type_x + cw * 2.0, cw),
     }
 }
-
-

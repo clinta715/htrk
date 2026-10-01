@@ -23,7 +23,7 @@ use super::common::{get_i64, get_str};
 /// and detected BPM. Not undoable (structural merge, like `module.load`).
 pub(super) fn cmd_midi_import(core: &mut HtrkCore, params: &serde_json::Value) -> CmdResult {
     let path = get_str!(params, "path").ok_or("Missing 'path'")?;
-    let rows_per_beat = get_i64!(params, "rows_per_beat").unwrap_or(4).max(1).min(64) as u32;
+    let rows_per_beat = get_i64!(params, "rows_per_beat").unwrap_or(4).clamp(1, 64) as u32;
     let target_order = get_i64!(params, "target_order")
         .map(|v| v as usize)
         .unwrap_or(core.selected_order);
@@ -42,9 +42,7 @@ pub(super) fn cmd_midi_import(core: &mut HtrkCore, params: &serde_json::Value) -
 
     let base = arc_module.patterns.len();
     let take = imported.patterns.len().min(256usize.saturating_sub(base));
-    let patterns_added: Vec<u8> = (0..take)
-        .map(|i| (base + i) as u8)
-        .collect();
+    let patterns_added: Vec<u8> = (0..take).map(|i| (base + i) as u8).collect();
     for p in imported.patterns.into_iter().take(take) {
         arc_module.patterns.push(p);
     }
@@ -64,10 +62,14 @@ pub(super) fn cmd_midi_import(core: &mut HtrkCore, params: &serde_json::Value) -
     }
     // Grow channel arrays to fit imported channels.
     if arc_module.channel_panning.len() < channels_used {
-        arc_module.channel_panning.resize(channels_used, crate::sequencer::module::PANNING_CENTER);
+        arc_module
+            .channel_panning
+            .resize(channels_used, crate::sequencer::module::PANNING_CENTER);
     }
     if arc_module.channel_volume.len() < channels_used {
-        arc_module.channel_volume.resize(channels_used, crate::sequencer::module::VOLUME_MAX);
+        arc_module
+            .channel_volume
+            .resize(channels_used, crate::sequencer::module::VOLUME_MAX);
     }
 
     core.sync_channel_fields();

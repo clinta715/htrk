@@ -98,7 +98,8 @@ pub(super) fn cmd_phrase_generate(core: &mut HtrkCore, params: &serde_json::Valu
     let progression_str = get_str!(params, "progression").unwrap_or_else(|| "I-IV-V-I".into());
     let progression = parse_progression(&progression_str)?;
     let bars_per_chord = get_i64!(params, "bars_per_chord").unwrap_or(4) as u8;
-    let chord_channels = params.get("chord_channels")
+    let chord_channels = params
+        .get("chord_channels")
         .and_then(|v| v.as_array())
         .map(|arr| {
             let mut chs = [0usize; 4];
@@ -145,7 +146,10 @@ pub(super) fn cmd_phrase_generate(core: &mut HtrkCore, params: &serde_json::Valu
     }
 
     let notes = crate::tools::phrase_generator::generate_phrase(
-        &phrase_params, start_row, end_row, num_channels,
+        &phrase_params,
+        start_row,
+        end_row,
+        num_channels,
     );
 
     if notes.is_empty() {
@@ -160,8 +164,11 @@ pub(super) fn cmd_phrase_generate(core: &mut HtrkCore, params: &serde_json::Valu
         if let Some(arc_module) = Arc::get_mut(module) {
             // Auto-extend the order list if the requested order doesn't exist yet.
             if order >= arc_module.order_list.len() {
-                let fallback_pat: u8 = if arc_module.patterns.is_empty() { 0 }
-                                   else { (arc_module.patterns.len() - 1) as u8 };
+                let fallback_pat: u8 = if arc_module.patterns.is_empty() {
+                    0
+                } else {
+                    (arc_module.patterns.len() - 1) as u8
+                };
                 while arc_module.order_list.len() <= order {
                     arc_module.order_list.push(fallback_pat);
                 }
@@ -175,7 +182,8 @@ pub(super) fn cmd_phrase_generate(core: &mut HtrkCore, params: &serde_json::Valu
             let mut old_cells = Vec::new();
             let mut new_cells = Vec::new();
             // Per-channel placement counter for the response.
-            let mut per_channel: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+            let mut per_channel: std::collections::BTreeMap<usize, usize> =
+                std::collections::BTreeMap::new();
             for &(row, ch, cell) in &notes {
                 if row < pattern.num_rows && ch < MAX_CHANNELS {
                     old_cells.push((row, ch, pattern.data[row][ch]));
@@ -197,7 +205,9 @@ pub(super) fn cmd_phrase_generate(core: &mut HtrkCore, params: &serde_json::Valu
                 old_cells,
                 new_cells,
             });
-            let undo_id = core.undo_manager.execute_with_label(cmd, label.clone(), arc_module)
+            let undo_id = core
+                .undo_manager
+                .execute_with_label(cmd, label.clone(), arc_module)
                 .map_err(|e| format!("Phrase apply failed: {e:?}"))?;
             core.sync_module_to_audio();
             return Ok(serde_json::json!({
